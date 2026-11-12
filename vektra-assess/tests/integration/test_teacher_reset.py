@@ -76,7 +76,7 @@ async def test_reset_refusals_then_a_new_session_with_earlier_bytes_unchanged(
         ring = with_transcript_key(w)
         s = await seed_session(w, worker, "ACTIVE")
         await seed_teacher_gate(pg, w.site, s.cmid)
-        await seed_render(pg, w.site, s.sub, s.cmid, moodle_reasons=[])
+        await seed_render(pg, w.site, s.sub, s.cmid, lms_reasons=[])
 
         # an ACTIVE session: refused (terminate first)
         r = await reset(w, s.cmid, s.session_id)
@@ -243,7 +243,7 @@ async def test_service_failure_ticks_the_previous_turns_and_an_explicit_choice_w
             (7003, "service_failure"),
         ):
             await close(worker, seeded[student][0], reason)
-            await seed_render(pg, w.site, student, cmid, moodle_reasons=[])
+            await seed_render(pg, w.site, student, cmid, lms_reasons=[])
         r1 = await reset(w, cmid, seeded[7001][0])
         r2 = await reset(w, cmid, seeded[7002][0])
         r3 = await reset(w, cmid, seeded[7003][0], include_previous_turns=False)
@@ -288,19 +288,19 @@ async def test_the_moodle_half_comes_from_a_fresh_render_or_is_refreshed(
             == 1
         )
         # a stale one, or one computed without the Moodle half: the same
-        await seed_render(pg, w.site, 7101, cmid, moodle_reasons=[], age="1 hour")
+        await seed_render(pg, w.site, 7101, cmid, lms_reasons=[], age="1 hour")
         r = await reset(w, cmid, sid)
         assert err(r)["details"]["reason"] == "gate_inputs_stale"
-        await seed_render(pg, w.site, 7101, cmid, moodle_reasons=None)
+        await seed_render(pg, w.site, 7101, cmid, lms_reasons=None)
         r = await reset(w, cmid, sid)
         assert err(r)["details"]["reason"] == "gate_inputs_stale"
         # no longer eligible (the grade was hidden again): refused with the gate
-        await seed_render(pg, w.site, 7101, cmid, moodle_reasons=["not_released"])
+        await seed_render(pg, w.site, 7101, cmid, lms_reasons=["not_released"])
         r = await reset(w, cmid, sid)
         assert r.status_code == 409
         assert err(r)["details"] == {"reason": "gate", "gate": "not_released"}
         assert await grants(pg, w.site) == 0
-        await seed_render(pg, w.site, 7101, cmid, moodle_reasons=[])
+        await seed_render(pg, w.site, 7101, cmid, lms_reasons=[])
         r = await reset(w, cmid, sid)
         assert r.status_code == 201, r.text
 
@@ -312,7 +312,7 @@ async def test_concurrent_resets_of_one_session_yield_one(pg, worker) -> None:  
         sid = seeded[7201][0]
         await seed_teacher_gate(pg, w.site, cmid)
         await close(worker, sid)
-        await seed_render(pg, w.site, 7201, cmid, moodle_reasons=[])
+        await seed_render(pg, w.site, 7201, cmid, lms_reasons=[])
         got = await asyncio.gather(*(reset(w, cmid, sid) for _ in range(4)))
         assert sorted(r.status_code for r in got) == [201, 409, 409, 409]
         assert await grants(pg, w.site) == 1
@@ -328,7 +328,7 @@ async def test_a_session_of_another_activity_or_an_older_one_is_not_reset(
         await seed_teacher_gate(pg, w.site, cmid)
         await seed_teacher_gate(pg, w.site, cmid + 1000)
         await close(worker, sid)
-        await seed_render(pg, w.site, 7301, cmid, moodle_reasons=[])
+        await seed_render(pg, w.site, 7301, cmid, lms_reasons=[])
         # the session named under another activity the teacher grades: 404, nothing written
         r = await reset(w, cmid + 1000, sid)
         assert r.status_code == 404 and err(r)["code"] == "ERR-ASSESS-008"
@@ -472,9 +472,7 @@ async def test_a_render_made_before_the_fallback_moved_is_not_current(
                 {"s": w.site, "c": cmid},
             )
         )[0]
-        await seed_render(
-            pg, w.site, 7701, cmid, moodle_reasons=[], attested_at=attested
-        )
+        await seed_render(pg, w.site, 7701, cmid, lms_reasons=[], attested_at=attested)
         # the teacher moves the date (later): the render above no longer describes the gate
         await pg.run(
             "super",
@@ -486,7 +484,7 @@ async def test_a_render_made_before_the_fallback_moved_is_not_current(
         assert r.status_code == 409, r.text
         assert err(r)["details"]["reason"] == "gate_inputs_stale"
         await seed_render(
-            pg, w.site, 7701, cmid, moodle_reasons=[], attested_at=attested + 3600
+            pg, w.site, 7701, cmid, lms_reasons=[], attested_at=attested + 3600
         )
         r = await reset(w, cmid, sid)
         assert r.status_code == 201, r.text

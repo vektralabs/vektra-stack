@@ -11,7 +11,6 @@ import hashlib
 import pytest
 from sqlalchemy.exc import DBAPIError, IntegrityError
 
-from .conftest import _alembic
 from .test_transcript_schema import _transcript
 
 pytestmark = pytest.mark.integration
@@ -100,13 +99,6 @@ async def test_the_api_reads_the_status_but_never_the_ref(pg) -> None:  # type: 
     ):
         with pytest.raises(DBAPIError, match="permission denied"):
             await pg.run("api", sql)
-
-
-def test_round_trip_to_0034_and_back(pg) -> None:  # type: ignore[no-untyped-def]
-    down = _alembic(pg.super_url, "downgrade", "0034")
-    assert down.returncode == 0, down.stderr
-    up = _alembic(pg.super_url, "upgrade", "head")
-    assert up.returncode == 0, up.stderr
 
 
 async def test_a_duplicate_job_is_skipped_without_an_error_or_a_savepoint(pg) -> None:  # type: ignore[no-untyped-def]
@@ -246,26 +238,3 @@ async def test_a_notification_row_is_keyed_by_its_job_and_ref(pg) -> None:  # ty
     with pytest.raises(IntegrityError, match=r"ck_assess_deliveries_(kind|job)"):
         await _notify_row(pg, "student_notify", job=704, n=5)
     await pg.run("super", "DELETE FROM assess_deliveries WHERE job_id IS NOT NULL")
-
-
-async def test_round_trip_to_0038_and_back(pg) -> None:  # type: ignore[no-untyped-def]
-    """The downgrade removes the notification rows (0038 has no such kinds) and keeps every
-    transcript row (CodeRabbit nitpick on PR #190)."""
-    await pg.run("super", "DELETE FROM assess_deliveries WHERE job_id IS NOT NULL")
-    await _notify_row(pg, job=801, n=1)
-    await _notify_row(pg, "operator_notify", job=802, n=2)
-    tid = await _transcript(pg)
-    await _address(pg, tid, 9)
-    count = (
-        "SELECT kind, count(*) FROM assess_deliveries "
-        "WHERE kind IN ('teacher_notify', 'operator_notify') OR transcript_id = :t "
-        "GROUP BY kind ORDER BY kind"
-    )
-    before = [tuple(r) for r in await pg.run("super", count, {"t": tid})]
-    assert before == [("operator_notify", 1), ("teacher_notify", 1), ("transcript", 1)]
-    down = _alembic(pg.super_url, "downgrade", "0038")
-    assert down.returncode == 0, down.stderr
-    after = [tuple(r) for r in await pg.run("super", count, {"t": tid})]
-    assert after == [("transcript", 1)]
-    up = _alembic(pg.super_url, "upgrade", "head")
-    assert up.returncode == 0, up.stderr

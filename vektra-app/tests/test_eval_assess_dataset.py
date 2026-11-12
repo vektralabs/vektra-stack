@@ -36,7 +36,7 @@ def test_fixtures_cover_attempts_disciplines_kinds_and_releases() -> None:
     assert kinds == {"quiz", "assign"}
     assert {fid.split("-")[1] for fid in FIXTURES} >= {"math", "history"}
     raw = [json.loads(p.read_text()) for p in (A.ROOT / "fixtures").glob("*.json")]
-    assert {d["snapshot"]["header"]["moodle_release"] for d in raw} == {"4.3", "5.2"}
+    assert {d["snapshot"]["header"]["lms_release"] for d in raw} == {"4.3", "5.2"}
     items = sum(
         len(f.bundle.quiz_items) + len(f.bundle.criteria) for f in FIXTURES.values()
     )

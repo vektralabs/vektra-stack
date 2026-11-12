@@ -113,7 +113,7 @@ def smtp_probe_item(
             return missing("smtp_not_configured")
         row = await read()
         # at most ONE probe per item run, and that one capped at
-        # ``probe_timeout_s``: the rest of the 120 s budget belongs to the Moodle
+        # ``probe_timeout_s``: the rest of the 120 s budget belongs to the LMS
         # items, the capability probes and the report. Hitting the cap is UNVERIFIABLE.
         probed = False
         if probe is not None and (row is None or float(row.age) > SMTP_PROBE_MAX_AGE_S):

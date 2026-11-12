@@ -133,7 +133,7 @@ def _container(fixed_port: int | None) -> Iterator[Pg]:
         container = container.with_bind_ports(5432, fixed_port)
     with container as c:
         url = c.get_connection_url().replace("psycopg2", "asyncpg")
-        res = _alembic(url, "upgrade", "head")
+        res = _alembic(url, "upgrade", "heads")
         assert res.returncode == 0, res.stderr
         handle = Pg(url, c.get_wrapped_container().id)
         asyncio.run(_prepare(handle))
@@ -173,7 +173,7 @@ async def make_session(pg: Pg, state: str = "ACTIVE", *, epoch: int = 1) -> uuid
     async with pg.conn("super") as c:
         await c.execute(
             text(
-                "INSERT INTO assess_sites (id, moodle_site_uuid, base_url) "
+                "INSERT INTO assess_sites (id, lms_site_uuid, base_url) "
                 "VALUES (:i, :u, 'https://m.example')"
             ),
             {"i": site, "u": str(site)},
@@ -256,7 +256,7 @@ async def make_real_session(pg, kek, api_pub, *, close: bool = False) -> uuid.UU
     site, sid = uuid.uuid4(), uuid.uuid4()
     await pg.run(
         "super",
-        "INSERT INTO assess_sites (id, moodle_site_uuid, base_url) "
+        "INSERT INTO assess_sites (id, lms_site_uuid, base_url) "
         "VALUES (:i, :u, 'https://m')",
         {"i": site, "u": str(site)},
     )

@@ -11,7 +11,7 @@
 Only then may a route call ``load_material`` (the one caller of ``get_session_material``). Any
 failure is an in-session gate rejection: the transaction is rolled back (state unchanged), one
 content-free audit row is written in its own transaction, and the request is refused. Client-sent
-Moodle or attempt ids do not exist on any route: the attempt was selected server-side at Start.
+LMS or attempt ids do not exist on any route: the attempt was selected server-side at Start.
 
 ``session_tx`` runs steps 2-6 inside the caller's transaction and yields the locked row, so the
 route's own writes (a turn, a close) commit or roll back together with the gate's lock.

@@ -1,7 +1,7 @@
 """Request and response models of the student session routes (INT-001, ARCH-067).
 
 Requests are strict (``extra="forbid"``): an unknown field is a 400, so a client can never
-smuggle a Moodle attempt id or a client clock into a decision (BR-012, REQ-069). The login-as
+smuggle an LMS attempt id or a client clock into a decision (BR-012, REQ-069). The login-as
 fields are REQUIRED and checked positively by the mint route: absence is a refusal, not a default.
 Responses carry ids, states, timestamps and codes; the only text they ever carry is a session's
 own decrypted turns, returned to its owner.

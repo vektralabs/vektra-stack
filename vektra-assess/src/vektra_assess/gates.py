@@ -1,6 +1,6 @@
 """START gates (BR-006 (a)-(i), BR-007, BR-010, BR-014, REQ-091): one pure decision function.
 
-``evaluate_start_gates(inputs) -> GateDecision`` has no I/O, no clock of its own and no Moodle
+``evaluate_start_gates(inputs) -> GateDecision`` has no I/O, no clock of its own and no LMS
 client: the caller reads the inputs (the worker, from the plan-4 readers and the database) and
 passes ``now``. Every input that could not be read is ``None`` and fails closed. The gates are
 checked in a FIXED order and the first one that fails gives the content-free reason ``code``; the
@@ -94,7 +94,7 @@ _STATE: dict[Code, ButtonState] = {
 }
 
 #: the gates decided from Vektra's own database (the configuration, the sessions, privacy); every
-#: other failing code needs Moodle facts, which only the worker reads (render or pre-flight). A
+#: other failing code needs LMS facts, which only the worker reads (render or pre-flight). A
 #: teacher reset (REQ-087) re-checks these live and takes the others from a fresh render.
 DB_SIDE: frozenset[Code] = frozenset(
     {

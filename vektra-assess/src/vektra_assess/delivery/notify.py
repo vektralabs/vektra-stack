@@ -8,8 +8,8 @@ Producers (unchanged, all in the transaction of the event):
 - ``start_guard.after_rollback``, when a student's system-rollback streak reaches the threshold:
   ``teacher_notify`` and ``operator_notify`` with ``{site_id, cmid, student_userid, reason:
   rollback_cap}``;
-- ``start_guard.alert_moodle_unreachable``: ``operator_notify`` with ``{site_id, reason, kind:
-  moodle_unreachable}`` (one per site per 15 minutes).
+- ``start_guard.alert_lms_unreachable``: ``operator_notify`` with ``{site_id, reason, kind:
+  lms_unreachable}`` (one per site per 15 minutes).
 
 Recipients: the teacher side is the activity's configured transcript recipients (the sealed
 ``transcript_recipients`` field, re-read on every run, the same domain allowlist); the operator
@@ -80,7 +80,7 @@ ROLLBACK_CAP = "rollback_cap"
 #: for the relay (activity, student id and session number travel in the job: the session's
 #: content is gone by the time the notice runs)
 PURGE_ABANDONED = "delivery_abandoned_on_purge"
-LMS_UNREADABLE = "moodle_unreachable"
+LMS_UNREADABLE = "lms_unreachable"
 NO_RECIPIENTS = "no_recipients"
 RECIPIENT_WITHDRAWN = "recipient_withdrawn"
 #: a busy relay is tried again after this long (no attempt was made, nothing to back off from)
@@ -225,7 +225,7 @@ def _text(kind: JobKind, e: Event) -> tuple[str, str]:
             "la discussione di valutazione indicata sotto e' stata chiusa per un guasto del "
             "servizio: il modello non ha risposto.\n\n"
             f"  attivita': {e.cmid}\n"
-            f"  studente (id Moodle): {e.student_userid}\n"
+            f"  studente (id LMS): {e.student_userid}\n"
             f"  sessione: #{e.session_no}\n\n"
             "Dall'elenco delle sessioni dell'attivita' potete concedere allo studente un nuovo "
             "tentativo.\n" + _FOOTER,
@@ -238,7 +238,7 @@ def _text(kind: JobKind, e: Event) -> tuple[str, str]:
             "lo studente indicato sotto non e' riuscito ad avviare la discussione di "
             "valutazione piu' volte di seguito, per un problema tecnico.\n\n"
             f"  attivita': {e.cmid}\n"
-            f"  studente (id Moodle): {e.student_userid}\n\n"
+            f"  studente (id LMS): {e.student_userid}\n\n"
             "L'amministratore della piattaforma ha ricevuto lo stesso avviso.\n"
             + _FOOTER,
         )
@@ -251,7 +251,7 @@ def _text(kind: JobKind, e: Event) -> tuple[str, str]:
             "consegnata quando il periodo di conservazione e' scaduto: la trascrizione e' "
             "stata cancellata e la copia non verra' piu' inviata.\n\n"
             f"  attivita': {e.cmid}\n"
-            f"  studente (id Moodle): {e.student_userid}\n"
+            f"  studente (id LMS): {e.student_userid}\n"
             f"  sessione: #{e.session_no}\n" + _FOOTER,
         )
     if kind is OPERATOR and e.code == ROLLBACK_CAP:
@@ -265,11 +265,11 @@ def _text(kind: JobKind, e: Event) -> tuple[str, str]:
         )
     if kind is OPERATOR and e.code == LMS_UNREADABLE:
         return (
-            f"Vektra: Moodle non leggibile - sito {e.site_id}",
-            "Il controllo prima dell'avvio di una discussione non ha potuto leggere Moodle.\n\n"
+            f"Vektra: LMS non leggibile - sito {e.site_id}",
+            "Il controllo prima dell'avvio di una discussione non ha potuto leggere l'LMS.\n\n"
             f"  sito: {e.site_id}\n"
             f"  motivo: {e.reason}\n\n"
-            "Controllare che Moodle sia raggiungibile e che il token del web service sia "
+            "Controllare che l'LMS sia raggiungibile e che la credenziale del provider sia "
             "valido. L'avviso arriva al massimo una volta ogni 15 minuti per sito.\n"
             + _FOOTER,
         )

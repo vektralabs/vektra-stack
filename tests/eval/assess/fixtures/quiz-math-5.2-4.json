@@ -53,9 +53,9 @@
    "grade_method": "highest",
    "grade_modified_at": 1800000000,
    "grade_released": true,
-   "moodle_release": "5.2",
+   "lms_release": "5.2",
    "review_options_closed": true,
-   "schema_version": 2
+   "schema_version": 3
   },
   "overall": {
    "grade": "6",

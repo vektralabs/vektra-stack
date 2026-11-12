@@ -68,7 +68,7 @@ def bench_db_url():
         env["VEKTRA_DATABASE_URL"] = async_url
         project_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
         result = subprocess.run(
-            ["uv", "run", "alembic", "upgrade", "head"],
+            ["uv", "run", "alembic", "upgrade", "platform@head"],
             capture_output=True,
             text=True,
             cwd=project_root,

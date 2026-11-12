@@ -63,6 +63,36 @@ def test_changing_a_string_file_or_the_lexicon_changes_the_version(
     assert compute_prompt_version(t, s, "lex1") != edited
 
 
+def test_a_comment_or_layout_change_of_a_string_file_keeps_the_version(
+    tmp_path: Path,
+) -> None:
+    """Review of #206: the version covers what the strings SAY (their parsed values, in a
+    canonical serialisation), not their bytes: a comment, a quoting style or key order changes
+    nothing the model or the student reads, and needs no new NFR-023 activation."""
+    t, s = _copy(tmp_path)
+    (s / "it.yaml").write_text("a: b\nc: [1, 2]\n", encoding="utf-8")
+    before = compute_prompt_version(t, s, "lex1")
+    (s / "it.yaml").write_text(
+        "# a header comment, edited\nc:\n  - 1\n  - 2  # inline\na: 'b'\n",
+        encoding="utf-8",
+    )
+    assert compute_prompt_version(t, s, "lex1") == before
+    (s / "it.yaml").write_text("a: b\nc: [1, 3]\n", encoding="utf-8")
+    assert compute_prompt_version(t, s, "lex1") != before  # a value still counts
+
+
+def test_the_shipped_string_files_hash_by_value() -> None:
+    """The shipped files: their header comments do not enter the version."""
+    import yaml
+
+    for path in sorted(STRINGS_DIR.glob("*.yaml")):
+        text = path.read_text(encoding="utf-8")
+        assert yaml.safe_load(text) == yaml.safe_load("# x\n" + text)
+    assert PromptRenderer("x").prompt_version == compute_prompt_version(
+        TEMPLATES_DIR, STRINGS_DIR, "x"
+    )
+
+
 def test_the_payload_version_changes_the_prompt_version(tmp_path: Path) -> None:
     """The model reads the payload's vocabulary too (ADR-0033 D2 changed an item type's
     spelling): a bump of ``PAYLOAD_VERSION`` needs a new NFR-023 activation."""

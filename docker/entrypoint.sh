@@ -15,10 +15,26 @@ set -e
 # always passes CMD as $1, so a CMD would permanently win over the env var.
 CMD_TARGET="${1:-${CMD_TARGET:-server}}"
 
+# Two Alembic branches (ADR-0033 D7). The platform is always migrated. The assess schema (its
+# tables, the three vektra_assess_* roles, the SECURITY DEFINER functions, and with them the
+# CREATEROLE requirement) only where assess is enabled: a deployment that never enables it gets
+# none of them. Which branches is decided by Python, by the same helper the API's schema step
+# uses (vektra_app.assess_switch), never by re-parsing VEKTRA_ASSESS_ENABLED here.
+run_migrations() {
+  branches="$(python -m vektra_app.assess_switch)"
+  for branch in $branches; do
+    echo "Running database migrations ($branch)..."
+    alembic upgrade "$branch@head"
+  done
+  case " $(echo $branches) " in
+    *" assess "*) ;;
+    *) echo "Assess is disabled (VEKTRA_ASSESS_ENABLED is not true): its schema is not migrated." ;;
+  esac
+}
+
 case "$CMD_TARGET" in
   server)
-    echo "Running database migrations..."
-    alembic upgrade head
+    run_migrations
 
     echo "Starting Vektra API server..."
     # main() validates (ARCH-057) before calling uvicorn, so a misconfiguration
@@ -29,8 +45,7 @@ case "$CMD_TARGET" in
     ;;
 
   migrate)
-    echo "Running database migrations..."
-    exec alembic upgrade head
+    run_migrations
     ;;
 
   # Assess processes (ARCH-066). Each has its own target and never runs

@@ -271,7 +271,7 @@ class LmsStartSource:
             "close_at": None,
             "team_submission": None,
             "grading_method": None,
-            "moodle_rubric": None,
+            "lms_rubric": None,
             "override_holder": None,
             "override_viewers": None,
             "automatic_close_at": None,
@@ -302,7 +302,7 @@ class LmsStartSource:
                 out["team_submission"] = bool(settings.value.team_submission)
             if isinstance(grading, Readable):
                 out["grading_method"] = grading.value.method
-                out["moodle_rubric"] = (
+                out["lms_rubric"] = (
                     grading.value.method == "rubric"
                     and grading.value.rubric is not None
                 )
@@ -568,7 +568,7 @@ class LmsStartSource:
                 self._parser,
                 teacher,
                 caps,
-                moodle_release=release,
+                lms_release=release,
             )
         return await capture_assign(
             AssignTarget(
@@ -578,7 +578,7 @@ class LmsStartSource:
             self._parser,
             teacher,
             caps,
-            moodle_release=release,
+            lms_release=release,
         )
 
 

@@ -128,6 +128,9 @@ COPY --from=builder /app/.venv /app/.venv
 # Alembic migrations (run via entrypoint: CMD_TARGET=migrate)
 COPY alembic.ini /app/alembic.ini
 COPY migrations/ /app/migrations/
+# the assess branch (ADR-0033 D7), at the path alembic.ini's version_locations names; applied by
+# the entrypoint only with VEKTRA_ASSESS_ENABLED=true
+COPY vektra-assess/src/vektra_assess/migrations/ /app/vektra-assess/src/vektra_assess/migrations/
 
 # Chatbot widget bundle (built in widget-builder stage)
 COPY --from=widget-builder /static/vektra-chat.js /app/vektra-learn/static/vektra-chat.js

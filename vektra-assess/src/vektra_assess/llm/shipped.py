@@ -3,7 +3,7 @@
 Loaded once at import from ``strings/{it,en}.yaml`` and validated: every behaviour class has a core
 sentence and an alternative clause in every language, and every other key is present. A missing
 string is an import error, never a silent fallback. The plan-9 UI and the plan-P2 plugin read them
-through ``get`` (a read-only view): Moodle strings cannot override them.
+through ``get`` (a read-only view): the LMS's own strings cannot override them.
 """
 
 from __future__ import annotations

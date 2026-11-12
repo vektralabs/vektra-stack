@@ -40,11 +40,11 @@ BODY_TEMPLATE = (
     "\n"
     "  corso: {course}\n"
     "  attivita': {cmid}\n"
-    "  studente (id Moodle): {student}\n"
+    "  studente (id LMS): {student}\n"
     "  sessione: #{session_no}\n"
     "\n"
     "Il file e' in formato HTML: apritelo con un browser. Lo stesso file si scarica dalla "
-    "pagina dell'attivita' in Moodle.\n"
+    "pagina dell'attivita' nell'LMS.\n"
     "\n"
     "Messaggio automatico di Vektra: non rispondere a questo indirizzo.\n"
 )
@@ -72,7 +72,7 @@ def message_id(
 
 @dataclass(frozen=True)
 class TranscriptMail:
-    """Everything one transcript email carries. ``course`` may be anything a Moodle course
+    """Everything one transcript email carries. ``course`` may be anything an LMS course
     short name can be (it is sanitised here, never trusted)."""
 
     sender: str
@@ -88,7 +88,7 @@ class TranscriptMail:
 
 
 def subject(mail: TranscriptMail) -> str:
-    """REQ-075: course, activity and student in the subject (the student by Moodle id until the
+    """REQ-075: course, activity and student in the subject (the student by LMS id until the
     DPO rules on full names, OQ-020)."""
     head = "Trascrizione discussione - "
     tail = (

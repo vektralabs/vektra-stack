@@ -1,4 +1,4 @@
-"""Server-side item references (REQ-095): labels are snapshot-local, never Moodle ids.
+"""Server-side item references (REQ-095): labels are snapshot-local, never LMS ids.
 
 ``resolve_reference(bundle, ref, source=...)``:
 - ``Resolved(label)`` for a canonical label ("Domanda 3", "D3", "3", "Criterio 2", "C2",
@@ -6,7 +6,7 @@
   keyword set that matches exactly one item's question text;
 - ``Ambiguous(candidates)`` with at most 3 candidates: the bot asks, it never guesses;
 - ``NotFound(text, labels)`` with the fixed text and the valid list, for free text;
-- ``Rejected(reason)`` for anything shaped like a Moodle id (``slot``, ``cmid``, ``attemptid``,
+- ``Rejected(reason)`` for anything shaped like a LMS id (``slot``, ``cmid``, ``attemptid``,
   a bare number that is not a label...) and, from the picker, for a label outside the snapshot.
   The caller audits it as ``assess_item_ref_rejected`` with ``audit_data()`` (reason only).
 """
@@ -69,7 +69,7 @@ class NotFound:
 
 @dataclass(frozen=True)
 class Rejected:
-    reason: Literal["moodle_id", "out_of_snapshot", "empty"]
+    reason: Literal["lms_id", "out_of_snapshot", "empty"]
 
     def audit_data(self) -> dict[str, str]:
         return {"reason_code": self.reason}
@@ -194,7 +194,7 @@ def resolve_reference(
     if not ref or not ref.strip():
         return Rejected("empty")
     if _ID_KEYS.search(ref) or _ID_WORDS.search(ref):
-        return Rejected("moodle_id")
+        return Rejected("lms_id")
     direct = _direct(bundle, ref)
     if direct is not None:
         return Resolved(direct)
@@ -202,9 +202,7 @@ def resolve_reference(
         # the picker only ever offers snapshot labels: anything else is forged
         return Rejected("out_of_snapshot")
     if re.fullmatch(r"\s*#?\d+\s*", ref):
-        return Rejected(
-            "moodle_id"
-        )  # a bare number that is not a label looks like an id
+        return Rejected("lms_id")  # a bare number that is not a label looks like an id
     for step in (_ordinal, _keywords):
         res = step(bundle, ref)
         if res is not None:

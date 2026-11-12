@@ -236,7 +236,7 @@ async def evaluate(
     *,
     registry: ItemRegistry | None = None,
     probe_flags: bool = True,
-    moodle_origin: str | None = None,
+    lms_origin: str | None = None,
 ) -> CheckOutcome:
     """Network only: no database. Reads site_info once, runs the items, then the probes.
 
@@ -249,7 +249,7 @@ async def evaluate(
     if isinstance(info, Readable):
         release = info.value.release
         ref = replace(site, release=release)
-    ctx = CheckContext(ref, settings, manifest, info, moodle_origin, provider)
+    ctx = CheckContext(ref, settings, manifest, info, lms_origin, provider)
     items = await run_items(ctx, registry)
     flags: tuple[CapabilityResult, ...] = ()
     if probe_flags and release is not None and provider is not None:
@@ -290,7 +290,7 @@ async def run_setup_check(
         site_row = (
             await conn.execute(
                 text(
-                    "SELECT base_url, probe_manifest, last_seen_release, moodle_origin "
+                    "SELECT base_url, probe_manifest, last_seen_release, lms_origin "
                     "FROM assess_sites "
                     "WHERE id = :s"
                 ),
@@ -330,7 +330,7 @@ async def run_setup_check(
             settings,
             manifest,
             registry=registry,
-            moodle_origin=framing_origin,
+            lms_origin=framing_origin,
         )
         async with engine.begin() as conn:
             # a site disabled while the network part ran gets nothing written:
@@ -422,7 +422,7 @@ async def _persist(
     await conn.execute(
         text(
             "UPDATE assess_setup_check_reports SET status = 'done', "
-            "moodle_release = :rel, items = CAST(:items AS jsonb), "
+            "lms_release = :rel, items = CAST(:items AS jsonb), "
             "finished_at = now() WHERE id = :r"
         ),
         {

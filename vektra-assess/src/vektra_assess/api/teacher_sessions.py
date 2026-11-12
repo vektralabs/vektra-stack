@@ -5,7 +5,7 @@ refresh hints and the page cursor as headers (``X-Assess-Actor``, ``X-Assess-Cou
 ``X-Assess-Activity-Type``, ``X-Assess-Cursor``: no assess route reads the query string), the
 actor verified as a fresh GRADER of the activity.
 
-Per student (Moodle user id only: the plugin resolves names), in user-id order, ``PAGE_SIZE``
+Per student (LMS user id only: the plugin resolves names), in user-id order, ``PAGE_SIZE``
 students per page (``next_cursor`` = the last user id of the page, or null): sessions #1..#N with
 state, close reason, the transcript id and its delivery status per recipient (``recipient_kind``
 and ``status``, ``smtp_code`` and the error class; never an address nor its ref), the resets

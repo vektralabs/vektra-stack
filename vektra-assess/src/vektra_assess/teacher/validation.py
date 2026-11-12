@@ -1,7 +1,7 @@
 """BR-013 and REQ-077 rules as pure functions (plan assess-teacher-ops, validation in Vektra).
 
 The plugin's form is a convenience; these rules are the authority. Every function takes plain
-values (the request, the current configuration, the worker-written Moodle facts, the privacy and
+values (the request, the current configuration, the worker-written LMS facts, the privacy and
 setup-check status) and returns ``FieldError`` items: codes and bounds, never the input.
 
 Text (solution, pasted rubric): normalised to NFC, control characters removed except ``\\n`` and
@@ -36,8 +36,8 @@ CAP_RANGE = f"{CAP_MIN}-{CAP_MAX}"
 RECIPIENTS_RANGE = f"1-{MAX_RECIPIENTS}"
 REASON_RANGE = f"1-{MAX_REASON_CHARS}"
 
-#: rubric sources a type may use (REQ-077: Moodle rubric for assignments, pasted text for quizzes)
-SOURCES = {"quiz": ("none", "pasted"), "assign": ("none", "pasted", "moodle")}
+#: rubric sources a type may use (REQ-077: LMS rubric for assignments, pasted text for quizzes)
+SOURCES = {"quiz": ("none", "pasted"), "assign": ("none", "pasted", "lms")}
 
 
 # --- text ------------------------------------------------------------------------------------
@@ -96,13 +96,13 @@ def check_rag(value: bool) -> list[FieldError]:
 
 
 def default_rubric_source(activity_type: str) -> str:
-    return "moodle" if activity_type == "assign" else "none"
+    return "lms" if activity_type == "assign" else "none"
 
 
 def rubric_source_of(flags: Mapping[str, Any], activity_type: str) -> str:
     """The effective rubric source of a stored config (``flags.rubric_source``): the stored one
     when this activity type may use it, else the type's default. The ONE rule the config view
-    and the snapshot capture share (a quiz never reads "moodle")."""
+    and the snapshot capture share (a quiz never reads "lms")."""
     source = flags.get("rubric_source")
     if isinstance(source, str) and source in SOURCES.get(activity_type, ()):
         return source
@@ -323,11 +323,11 @@ def reset_gate(
     cap_set: bool,
     end_at: int | None,
     privacy_configured: bool,
-    moodle_reasons: Sequence[str],
+    lms_reasons: Sequence[str],
 ) -> str | None:
     """The START gates a reset re-runs (REQ-087), in the evaluator's order: the ones Vektra
     decides from its own rows, checked live (the activity enabled and configured, the end date,
-    privacy), then the Moodle-side failures of the student's fresh render evaluation. The
+    privacy), then the LMS-side failures of the student's fresh render evaluation. The
     session gate (g) is the reset's own precondition (the latest session CLOSED) and the very
     thing a reset lifts. Returns the first refusing code, or None."""
     if not enabled or not cap_set:
@@ -336,7 +336,7 @@ def reset_gate(
         return Code.END_DATE_PASSED.value
     if not privacy_configured:
         return Code.PRIVACY_NOT_CONFIGURED.value
-    for raw in moodle_reasons:
+    for raw in lms_reasons:
         try:
             code = Code(raw)
         except ValueError:
@@ -422,7 +422,7 @@ class ActivityFacts:
     close_at: int | None = None
     team_submission: bool | None = None
     grading_method: str | None = None
-    moodle_rubric: bool | None = None
+    lms_rubric: bool | None = None
     #: BR-006(d) automatic close when every close input was readable (a quiz on 5.2 while open)
     automatic_close_at: int | None = None
 
@@ -447,13 +447,13 @@ def enable_refusals(
     turning_on: bool = True,
 ) -> list[FieldError]:
     """Why the discussion may NOT be enabled (REQ-077), each a field error on ``enabled`` (or on
-    the field to fix). Empty when it may. Unreadable Moodle facts refuse (fail closed). The empty
+    the field to fix). Empty when it may. Unreadable LMS facts refuse (fail closed). The empty
     pasted rubric is ``check_pasted_rubric`` (refused whether enabled or not).
 
     ``turning_on``: the request itself sets ``enabled=true``. A save of an activity that is
     already enabled re-checks only what that save can break (cap, rubric source, recipients); the
-    Moodle facts, privacy and setup check are the gate of switching it on (and the Start gates
-    re-check the Moodle facts at every Start)."""
+    LMS facts, privacy and setup check are the gate of switching it on (and the Start gates
+    re-check the LMS facts at every Start)."""
     if not p.enabled:
         return []
     errs: list[FieldError] = []
@@ -462,12 +462,10 @@ def enable_refusals(
         errs.append(FieldError(fld, code, range_))
 
     if not turning_on:
-        facts = ActivityFacts(
-            facts.activity_type, 1, False, "none", facts.moodle_rubric
-        )
+        facts = ActivityFacts(facts.activity_type, 1, False, "none", facts.lms_rubric)
         privacy_configured = setup_green = True
     if facts.close_at is None:
-        refuse("moodle_facts_unreadable")
+        refuse("lms_facts_unreadable")
     elif facts.close_at == 0:  # BR-007
         refuse(
             "quiz_without_close_date"
@@ -477,13 +475,13 @@ def enable_refusals(
     if facts.activity_type == "assign":
         if facts.team_submission is None or facts.grading_method is None:
             if facts.close_at is not None:
-                refuse("moodle_facts_unreadable")
+                refuse("lms_facts_unreadable")
         elif facts.team_submission:
             refuse("team_submission")
         elif facts.grading_method == "guide":  # EX-023
             refuse("marking_guide")
-    if p.rubric_source == "moodle" and facts.moodle_rubric is not True:
-        refuse("moodle_rubric_missing", "rubric_source")
+    if p.rubric_source == "lms" and facts.lms_rubric is not True:
+        refuse("lms_rubric_missing", "rubric_source")
     if p.cap_minutes is None:
         refuse("required", "cap_minutes", CAP_RANGE)
     if p.recipients_count < 1:

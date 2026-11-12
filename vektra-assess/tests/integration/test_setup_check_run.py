@@ -74,7 +74,7 @@ async def make_site(pg, *, release: str | None = None) -> uuid.UUID:
     site = uuid.uuid4()
     await pg.run(
         "super",
-        "INSERT INTO assess_sites (id, moodle_site_uuid, base_url, last_seen_release, "
+        "INSERT INTO assess_sites (id, lms_site_uuid, base_url, last_seen_release, "
         "probe_manifest) VALUES (:i, :u, :b, :r, CAST(:p AS jsonb))",
         {
             "i": site,
@@ -137,7 +137,7 @@ async def test_a_run_writes_the_matrix_and_a_done_report_and_the_site_is_ready(p
     ) == len(FLAGS)
     rep = await pg.run(
         "super",
-        "SELECT status, moodle_release, items, finished_at FROM assess_setup_check_reports WHERE site_id=:s",
+        "SELECT status, lms_release, items, finished_at FROM assess_setup_check_reports WHERE site_id=:s",
         {"s": site},
     )
     assert len(rep) == 1
@@ -282,7 +282,7 @@ async def test_a_revoked_token_makes_the_site_not_ready_with_one_audit_row_and_o
     rep = (
         await pg.run(
             "super",
-            "SELECT status, moodle_release, items FROM assess_setup_check_reports "
+            "SELECT status, lms_release, items FROM assess_setup_check_reports "
             "WHERE site_id=:s ORDER BY finished_at DESC LIMIT 1",
             {"s": site},
         )

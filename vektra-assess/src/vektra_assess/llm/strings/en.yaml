@@ -1,4 +1,4 @@
-# Vektra-shipped English strings of the discussion (REQ-098, BR-009). Moodle strings never override
+# Vektra-shipped English strings of the discussion (REQ-098, BR-009). The LMS's strings never override
 # them. Final wording is by UX and is validated in the moderated student pilot. Any change here
 # changes prompt_version and requires a new NFR-023 activation.
 br009: "Recorded grade: {grade} (read on {date}). The grade has NOT been changed by this discussion; the oral decides"

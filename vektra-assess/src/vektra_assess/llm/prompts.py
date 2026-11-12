@@ -16,10 +16,12 @@ NFR-023 activation.
 from __future__ import annotations
 
 import hashlib
+import json
 from collections.abc import Sequence
 from pathlib import Path
 
 import jinja2
+import yaml
 from jinja2.sandbox import SandboxedEnvironment
 
 from vektra_assess.context.bundle import ContextBundle
@@ -37,6 +39,15 @@ PART_B_MAX_WORDS = 120  # REQ-094
 PART_B_MAX_LABELS = 3
 
 
+def _canonical_strings(path: Path) -> bytes:
+    """A string file's values: parsed YAML as sorted, compact JSON (comments, quoting and key
+    order do not survive parsing; every value does)."""
+    data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    return json.dumps(
+        data, sort_keys=True, ensure_ascii=False, separators=(",", ":")
+    ).encode()
+
+
 def compute_prompt_version(
     templates_dir: Path,
     strings_dir: Path,
@@ -46,8 +57,11 @@ def compute_prompt_version(
     """SHA-256[:8] over the template sources, the string files, the lexicon version and the
     model payload's version (``context.payload.PAYLOAD_VERSION``).
 
-    Each file enters as its name and its bytes, in name order, so renaming, editing, adding or
-    removing a file all change the version; a missing strings directory counts as empty. The
+    Each file enters as its name and its content, in name order, so renaming, editing, adding or
+    removing a file all change the version; a missing strings directory counts as empty. A
+    template enters as its bytes (the model reads them as written); a string file as its parsed
+    values in a canonical serialisation (``_canonical_strings``), so a comment or a layout
+    change of a string file needs no new activation. The
     payload version covers what the templates wrap: a change of the data vocabulary the model
     reads (an item type's spelling, say) needs a new activation as much as a template edit.
     """
@@ -59,7 +73,7 @@ def compute_prompt_version(
     strings = sorted(strings_dir.glob("*.yaml")) if strings_dir.is_dir() else []
     for path in strings:
         h.update(f"\0strings:{path.name}\0".encode())
-        h.update(path.read_bytes())
+        h.update(_canonical_strings(path))
     h.update(f"\0lexicon:{lexicon_version}".encode())
     h.update(f"\0payload:{payload_version}".encode())
     return h.hexdigest()[:8]

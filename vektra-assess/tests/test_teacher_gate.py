@@ -137,11 +137,11 @@ async def test_assignment_facts() -> None:
     assert team["grading_method"] is None  # no grading definition for it: unreadable
     nocut = await src.teacher_facts(SITE, ASSIGN_ACTIVITY, COURSE, "assign")
     assert nocut["close_at"] == 0 and nocut["team_submission"] is False
-    assert nocut["grading_method"] == "rubric" and nocut["moodle_rubric"] is True
+    assert nocut["grading_method"] == "rubric" and nocut["lms_rubric"] is True
     guide = await src.teacher_facts(SITE, GUIDE_ACTIVITY, COURSE, "assign")
-    assert guide["grading_method"] == "guide" and guide["moodle_rubric"] is False
+    assert guide["grading_method"] == "guide" and guide["lms_rubric"] is False
     simple = await src.teacher_facts(SITE, SIMPLE_ACTIVITY, COURSE, "assign")
-    assert simple["moodle_rubric"] is False
+    assert simple["lms_rubric"] is False
     # ids and flags only: no names, no roles, no addresses
     blob = json.dumps(team)
     assert "@" not in blob and "Staff" not in blob and "teacher" not in blob
@@ -195,7 +195,7 @@ async def test_the_override_holder_is_read_only_where_overrides_are() -> None:
     # ids and flags only: never an override's reason, a name or a date of another student
     assert set(got) == {
         "resolved", "courseid", "activity_type", "editors", "graders", "close_at",
-        "team_submission", "grading_method", "moodle_rubric", "override_holder",
+        "team_submission", "grading_method", "lms_rubric", "override_holder",
         "override_viewers", "automatic_close_at",
     }  # fmt: skip
 

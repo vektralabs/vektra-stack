@@ -166,8 +166,9 @@ Three things to know before turning it on:
 
 ## Assessment discussion (vektra-assess)
 
-Dormant by default. With `VEKTRA_ASSESS_ENABLED=false` no `/api/v1/assess` route is mounted, and the
-`assess-worker` / `assess-parser` entrypoints exit with code 2. Enable it with the Compose overlay:
+Dormant by default. With `VEKTRA_ASSESS_ENABLED=false` no `/api/v1/assess` route is mounted, the
+`assess-worker` / `assess-parser` entrypoints exit with code 2, and the entrypoint does not migrate
+the assess schema (its own Alembic branch, ADR-0033 D7): no assess table, role or function exists. Enable it with the Compose overlay:
 `make assess-keys`, then `docker compose -f docker-compose.yml -f docker-compose.assess.yml --profile assess up -d`.
 A production worker refuses to start while any job handler is unbound; in the current tree none is. Development and CI
 also use `-f docker-compose.assess.dev.yml`, which sets `VEKTRA_ASSESS_WORKER_ALLOW_UNBOUND` and `VEKTRA_ENV=development`
@@ -185,7 +186,7 @@ printed, because some settings carry connection strings.
 
 | Variable | Type | Default | Description |
 |----------|------|---------|-------------|
-| `VEKTRA_ASSESS_ENABLED` | bool | `false` | Master switch (see above). |
+| `VEKTRA_ASSESS_ENABLED` | bool | `false` | Master switch (see above). Also decides the migrations: `docker/entrypoint.sh` asks `python -m vektra_app.assess_switch` (the helper the API uses for its routes and schema step) and runs `alembic upgrade assess@head` only when it is true. An assess configuration that does not validate reads as off. |
 | `VEKTRA_ASSESS_API_DATABASE_URL` | str | - | DSN of the `vektra_assess_api` role, **without a password** (read from the `assess_db_api_password` secret). A DSN with a password, or one that logs in as the `VEKTRA_DATABASE_URL` user, is refused at startup. |
 | `VEKTRA_ASSESS_WORKER_DATABASE_URL` | str | - | DSN of the `vektra_assess_worker` role, without a password (`assess_db_worker_password` secret). Worker only. |
 | `VEKTRA_ASSESS_SECRETS_DIR` | path | `/run/secrets` | Directory holding the assess secret files. |
@@ -235,7 +236,7 @@ printed, because some settings carry connection strings.
 | `VEKTRA_ASSESS_OUTAGE_G_S` | int | `20` | REQ-086 G. An outage moves the session to OUTAGE (timer frozen, input locked); the worker probes the provider every 5-10 s with one `max_tokens=1` call while any session is in OUTAGE. At the first success the outage ends: an interval of at least G seconds is credited in full, a shorter one earns nothing, and the cumulative credit never exceeds C = min(15 min, half the session duration). Cumulative outage above C, or a third consecutive failed call, closes the session `service_failure`. |
 | `VEKTRA_ASSESS_PRIVACY_NOTICE_URL` | url | unset | URL of the privacy notice, returned to the plugin in `GET /state` `pre_session.privacy.notice_url` (with `VEKTRA_ASSESS_PRIVACY_NOTICE_VERSION`). |
 | `VEKTRA_ASSESS_RETRY_RPM` | int | `6` | `POST /sessions/{sid}/retry` calls per minute per session; above it 429 (`retry_rate`). The retry only makes the API try the pending turn now; it never ends an OUTAGE or changes the state. |
-| `VEKTRA_ASSESS_UI_PAGE_RPM` | int | `60` | Plan 9: `GET /api/v1/assess/ui` (the public discussion page) per minute per client address; above it 429 with `Retry-After`, before any database read. A site's framing origin is cached 30 s per API process, so a repeated request costs no database connection and a change of `moodle_origin` or a disabled site is honoured within 30 s. |
+| `VEKTRA_ASSESS_UI_PAGE_RPM` | int | `60` | Plan 9: `GET /api/v1/assess/ui` (the public discussion page) per minute per client address; above it 429 with `Retry-After`, before any database read. A site's framing origin is cached 30 s per API process, so a repeated request costs no database connection and a change of `lms_origin` or a disabled site is honoured within 30 s. |
 | `VEKTRA_ASSESS_FLAG_RPM` | int | `10` | REQ-103: `POST /sessions/{sid}/turns/{turn_no}/flag` calls per minute per session; above it 429 `flag_rate`. |
 | `VEKTRA_ASSESS_MESSAGES_PER_MIN` | int | `4` | REQ-083: student messages per minute per session; above it 429 `ERR-ASSESS-012` ("Attendi qualche secondo"), before any model call, deadline unchanged. Sized in plan 8 M5.1 (see below). |
 | `VEKTRA_ASSESS_SESSION_TOKEN_BUDGET` | int | `500000` | REQ-083: estimated tokens (prompt + completion, from `TurnUsage`) one session may use; `budget_warning` at 80%, close `budget_exhausted` at 100% (one transcript job). Outage retries and earlier sessions do not count. Sized in plan 8 M5.1 (see below). |

@@ -1,6 +1,6 @@
 """Per-pool and per-kind job policy: defaults plus validated environment overrides.
 
-Concurrency belongs to a **pool** (several kinds share one ``asyncio`` limit, so a stalled Moodle
+Concurrency belongs to a **pool** (several kinds share one ``asyncio`` limit, so a stalled LMS
 call cannot starve pre-flight); budget, lease and attempts belong to a **kind**. Overrides:
 
 - ``VEKTRA_ASSESS_POOL_<POOL>_CONCURRENCY`` (the pre-flight pool also answers to the older
@@ -89,7 +89,7 @@ KIND_DEFAULTS: dict[JobKind, KindPolicy] = {
     # the operator's test send (plan 12b): one message, one attempt: a test reports what the
     # relay did the first time, it is never retried behind the operator's back
     JobKind.SMTP_TEST_SEND: KindPolicy("delivery", 120, 240, 1),
-    # the setup check makes about twenty live Moodle calls: own pool, 120 s hard timeout
+    # the setup check makes about twenty live LMS calls: own pool, 120 s hard timeout
     JobKind.SETUP_CHECK: KindPolicy("setup", 120, 240),
     JobKind.PURGE: _MAINT,
     JobKind.ERASURE: _MAINT,
@@ -132,7 +132,7 @@ def _number(
     return float(value)
 
 
-#: a teacher_gate refresh is at most three sequential Moodle calls (resolve the cmid; then,
+#: a teacher_gate refresh is at most three sequential LMS calls (resolve the cmid; then,
 #: concurrently with the editors, the quiz settings followed by the quiz overrides inside
 #: ``read_quiz_close_inputs``), each bounded by the WS call deadline, plus its DB statements
 TEACHER_GATE_STAGES = 3

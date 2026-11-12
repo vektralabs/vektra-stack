@@ -11,7 +11,7 @@ contract are in the [API reference](../../reference/api.md#assess-ui-the-discuss
 |---|---|---|
 | API | `VEKTRA_ASSESS_API_PUBLIC_ORIGIN` (e.g. `https://vektra.uni.example`) | the plugin's server-side calls (token mint, teacher, privacy), admin, health, every non-UI route; `X-Frame-Options: DENY` on every response |
 | UI | `VEKTRA_ASSESS_UI_ORIGIN` (e.g. `https://assess.vektra-chat.example`) | `GET /api/v1/assess/ui`, its assets, and only the student routes the page calls on its own origin (CSP `connect-src 'self'`): `GET /state`, `/sessions...`, `GET /transcripts/{tid}`; no `X-Frame-Options` |
-| LMS | each site's `moodle_origin` (e.g. `https://moodle.uni.example`) | the page that frames the UI; the only origin allowed in the UI's CSP `frame-ancestors` and the only peer of its postMessage |
+| LMS | each site's `lms_origin` (e.g. `https://moodle.uni.example`) | the page that frames the UI; the only origin allowed in the UI's CSP `frame-ancestors` and the only peer of its postMessage |
 
 One backend serves both Vektra origins; the reverse proxy decides which routes each one exposes.
 
@@ -25,10 +25,10 @@ that frames it. The code enforces, and the setup check reports:
   outside development. Otherwise the API refuses to start (`ui_origin_invalid`,
   `ui_origin_not_https`).
 - It is not equal to any site's LMS origin, and every LMS origin is `https` outside development
-  (`ui_origin_equals_moodle_origin`, `moodle_origin_not_https`); the API refuses to start.
+  (`ui_origin_equals_lms_origin`, `lms_origin_not_https`); the API refuses to start.
 - It is another **site** than the API origin and than each LMS origin (the setup check items
   `ui_not_same_origin` and `ui_origin_distinct`, reasons `same_site_as_api`,
-  `same_site_as_moodle`, `same_site_as_moodle_origin`). "Same site" here means the same host, one
+  `same_site_as_lms`, `same_site_as_lms_origin`). "Same site" here means the same host, one
   host a subdomain of the other, or the same last two host labels. The last rule is an
   approximation of the registrable domain: under a public suffix of more than one label (for
   example `ac.example-cc`) two different institutions' hosts can be refused as the same site.
@@ -36,16 +36,16 @@ that frames it. The code enforces, and the setup check reports:
   route check equality and `https` (the two items above), not same-site, so an API whose UI is
   on a subdomain of the API's domain starts and serves the page. A green report stays green until
   the next check, so **re-run the setup check after every change of `VEKTRA_ASSESS_UI_ORIGIN`,
-  `VEKTRA_ASSESS_API_PUBLIC_ORIGIN` or a site's `moodle_origin` / `base_url`**. In practice: put
+  `VEKTRA_ASSESS_API_PUBLIC_ORIGIN` or a site's `lms_origin` / `base_url`**. In practice: put
   the UI on a domain of its own, not on a subdomain of the API's or the LMS's domain.
 
 ## Set each site's LMS origin
 
-The framing origin is per site, stored in `assess_sites.moodle_origin` (revision `0033`). No API
+The framing origin is per site, stored in `assess_sites.lms_origin` (the assess base revision). No API
 route writes it; set it as the database owner:
 
 ```sql
-UPDATE assess_sites SET moodle_origin = 'https://moodle.uni.example' WHERE id = '<site id>';
+UPDATE assess_sites SET lms_origin = 'https://moodle.uni.example' WHERE id = '<site id>';
 ```
 
 The column accepts only a bare origin (a CHECK constraint with the same pattern as the code,
@@ -102,7 +102,7 @@ listed above, forwards the client's `Host`, and adds no frame-related header mid
 1. The API starts. A wrong UI origin, or a wrong LMS origin already stored at startup, is a
    startup refusal. An LMS origin changed afterwards to the UI origin, or to `http` outside
    development, shows instead as `503 ERR-ASSESS-001` (`site_origin`) on that site's page, at
-   most 30 s after the change. Wait 30 s after any `moodle_origin` change before the next step.
+   most 30 s after the change. Wait 30 s after any `lms_origin` change before the next step.
 2. Headers on the UI origin (no credential needed: the page is public and carries no data):
 
    ```bash
@@ -124,7 +124,7 @@ listed above, forwards the client's `Host`, and adds no frame-related header mid
    `UNVERIFIABLE` while `VEKTRA_ASSESS_API_PUBLIC_ORIGIN` is unset.
 5. Open the activity in the LMS as a test student: the discussion iframe loads. A blank frame
    with a CSP or `X-Frame-Options` error in the browser console points to the proxy or to
-   `moodle_origin`.
+   `lms_origin`.
 
 Step 5 is a manual check; the automated equivalent is the browser e2e
 (`make test-assess-e2e`), which frames the UI from a stub on a second origin and checks that a

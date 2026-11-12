@@ -13,7 +13,7 @@ capability selects the fallback, an unreleased grade makes the attempt not eligi
 step projects the readers' output through the result, and excluded fields are dropped inside the
 capture frame as soon as a reader returns.
 
-Pure and dependency-free (no Moodle client, no DB): the API process imports it to read a session's
+Pure and dependency-free (no LMS client, no DB): the API process imports it to read a session's
 frozen policy.
 """
 
@@ -89,7 +89,7 @@ class DisclosurePolicy(BaseModel):
     pasted_rubric: bool  # student-visible by definition when the source is "pasted"
 
     def removal_classes(self) -> tuple[str, ...]:
-        """Moodle question-part CSS classes the sanitizer must remove (filterable path)."""
+        """The provider's question-part CSS classes the sanitizer must remove (filterable path)."""
         out = []
         if not self.right_answer:
             out.append("rightanswer")

@@ -91,7 +91,9 @@ def grade_text(bundle: ContextBundle) -> str:
         return ov.scale_label or ""
     if ov.grade is None:
         return ""
-    shown = fmt_number(ov.grade_display or ov.grade)  # as the student sees it in Moodle
+    shown = fmt_number(
+        ov.grade_display or ov.grade
+    )  # as the student sees it in the LMS
     return f"{shown}/{fmt_number(ov.grade_max)}" if ov.grade_max else shown
 
 

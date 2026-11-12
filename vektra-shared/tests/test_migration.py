@@ -70,7 +70,7 @@ def migrated_db(postgres_url):
 
     project_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
     result = subprocess.run(
-        ["uv", "run", "alembic", "upgrade", "head"],
+        ["uv", "run", "alembic", "upgrade", "platform@head"],
         capture_output=True,
         text=True,
         cwd=project_root,
@@ -242,7 +242,7 @@ async def test_migration_idempotent(migrated_db):
 
     project_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
     result = subprocess.run(
-        ["uv", "run", "alembic", "upgrade", "head"],
+        ["uv", "run", "alembic", "upgrade", "platform@head"],
         capture_output=True,
         text=True,
         cwd=project_root,
@@ -534,7 +534,7 @@ async def test_downgrade_removes_phase2_tables(migrated_db):
 
     # Re-upgrade to head for subsequent tests (idempotent fixture)
     result = subprocess.run(
-        ["uv", "run", "alembic", "upgrade", "head"],
+        ["uv", "run", "alembic", "upgrade", "platform@head"],
         capture_output=True,
         text=True,
         cwd=project_root,

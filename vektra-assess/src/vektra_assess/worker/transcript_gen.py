@@ -12,7 +12,7 @@ session: an existing transcript makes the job a no-op, and the insert is ``ON CO
    broken turn only), an ERROR ``assess.transcript.alert`` log line, and the job goes dead at
    once (``PermanentJobError("integrity_mismatch")``): a transcript that does not match its
    turns is never generated, let alone delivered.
-3. Read the close facts from Moodle (course short name, the grade as the student sees it now),
+3. Read the close facts from the LMS (course short name, the grade as the student sees it now),
    outside any transaction; each part may be unreadable. Read the transcript recipients from the
    activity's sealed teacher config (REQ-082 as amended: 1..3 teacher-entered addresses).
 4. Render, run the allowlist (a violation is permanent too: fail closed), seal under a fresh DEK
@@ -86,7 +86,7 @@ class GenerationDeps:
     recipients: ConfigRecipients | None = None
     tz: str = "Europe/Rome"
     br009_template: str = render.BR009_TEMPLATE
-    #: Moodle's share of the 30 s job budget (review #4): past it the header says "non
+    #: The LMS's share of the 30 s job budget (review #4): past it the header says "non
     #: disponibile" and the transcript is still generated, well inside the budget
     facts_timeout_s: float = 12.0
 
@@ -414,7 +414,7 @@ async def _close_facts(deps: GenerationDeps, row: Any) -> CloseFacts:
                 activity_type=str(row.activity_type or "assign"),
                 sink=sink,
             )
-    # Moodle down, or slower than its share (an inner TimeoutError, never the job's own
+    # the LMS down, or slower than its share (an inner TimeoutError, never the job's own
     # cancellation): what was read is kept, the rest says "non disponibile", never a guess
     except Exception as exc:
         log.warning("assess_transcript_facts_error", error_type=type(exc).__name__)

@@ -110,7 +110,7 @@ async def test_extra_time_is_immutable_once_started_and_has_no_reason(
         r = await put(minutes=10)
         assert err(r)["details"]["fields"][0]["state"] == "CLOSED"
         # a reset pending: the next session may get extra time
-        await seed_render(pg, w.site, 8101, cmid, moodle_reasons=[])
+        await seed_render(pg, w.site, 8101, cmid, lms_reasons=[])
         g = await w.client.post(
             f"/api/v1/assess/activities/{cmid}/sessions/{sid}/reset",
             json=body(reason="DSA certificata"),

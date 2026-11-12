@@ -27,7 +27,7 @@ async def make_site(pg, release: str | None = REL) -> uuid.UUID:
     site = uuid.uuid4()
     await pg.run(
         "super",
-        "INSERT INTO assess_sites (id, moodle_site_uuid, base_url, last_seen_release) "
+        "INSERT INTO assess_sites (id, lms_site_uuid, base_url, last_seen_release) "
         "VALUES (:i, :u, 'https://m', :r)",
         {"i": site, "u": str(site), "r": release},
     )
@@ -48,7 +48,7 @@ async def put_flag(pg, site, flag, state="readable", release=REL, age_h=1, reaso
 async def put_report(pg, site, items, status="done", release=REL):
     await pg.run(
         "worker",
-        "INSERT INTO assess_setup_check_reports (site_id, status, moodle_release, items, "
+        "INSERT INTO assess_setup_check_reports (site_id, status, lms_release, items, "
         "finished_at) VALUES (:s, :st, :r, CAST(:i AS jsonb), now())",
         {"s": site, "st": status, "r": release, "i": __import__("json").dumps(items)},
     )

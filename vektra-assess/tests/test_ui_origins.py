@@ -81,7 +81,7 @@ def test_the_distinct_check_compares_normalised_origins() -> None:
         ui_origin_problem(
             "HTTPS://M.EXAMPLE:443", ["https://m.example"], development=False
         )
-        == "ui_origin_equals_moodle_origin"
+        == "ui_origin_equals_lms_origin"
     )
     assert (
         ui_origin_problem(
@@ -108,6 +108,4 @@ def test_the_nginx_example_domains_pass_the_same_site_items() -> None:
     assert not same_site(
         ui_origin, f"https://{examples['YOUR_DOMAIN']}"
     )  # same_site_as_api
-    assert not same_site(
-        ui_origin, f"https://{examples['MOODLE']}"
-    )  # same_site_as_moodle
+    assert not same_site(ui_origin, f"https://{examples['MOODLE']}")  # same_site_as_lms

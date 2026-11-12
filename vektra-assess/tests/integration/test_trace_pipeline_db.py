@@ -1,7 +1,9 @@
-"""Revision 0019: query_traces.pipeline and the reserved assess-discussion namespace (plan 7, C).
+"""query_traces.pipeline and the reserved assess-discussion namespace (plan 7, C; formerly 0019,
+now the assess base revision).
 
-Real Postgres: the column and the seed row are counted after upgrade, an assess trace round-trips
-with its pipeline, and the downgrade removes the assess traces, the namespace and the column.
+Real Postgres: the column (the platform's, revision 0009) and the seed row are counted after
+upgrade, an assess trace round-trips with its pipeline, and the assess downgrade removes the
+assess traces and the namespace, and keeps the column.
 """
 
 from __future__ import annotations
@@ -115,7 +117,10 @@ async def test_assess_traces_do_not_move_the_rag_analytics(pg: Pg) -> None:
         await engine.dispose()
 
 
-async def test_downgrade_removes_assess_traces_namespace_and_column(pg: Pg) -> None:
+async def test_downgrade_removes_assess_traces_and_namespace_and_keeps_the_column(
+    pg: Pg,
+) -> None:
+    """The column is the platform's (revision 0009): the assess downgrade keeps it."""
     rag_id = uuid.uuid4()
     await pg.run("super", _INSERT, {"rid": rag_id, "ns": "default", "pipeline": None})
     await pg.run(
@@ -127,7 +132,7 @@ async def test_downgrade_removes_assess_traces_namespace_and_column(pg: Pg) -> N
             "pipeline": "assess-discussion",
         },
     )
-    res = _alembic(pg.super_url, "downgrade", "0018")
+    res = _alembic(pg.super_url, "downgrade", "assess@base")
     assert res.returncode == 0, res.stderr
     try:
         assert await pg.run(
@@ -138,7 +143,7 @@ async def test_downgrade_removes_assess_traces_namespace_and_column(pg: Pg) -> N
             "SELECT count(*) FROM information_schema.columns "
             "WHERE table_name = 'query_traces' AND column_name = 'pipeline'",
         )
-        assert cols == [(0,)]
+        assert cols == [(1,)]
         # only the assess traces go: a RAG trace survives the downgrade
         assert await pg.run(
             "super",
@@ -146,7 +151,7 @@ async def test_downgrade_removes_assess_traces_namespace_and_column(pg: Pg) -> N
             {"r": rag_id},
         ) == [(1,)]
     finally:
-        res = _alembic(pg.super_url, "upgrade", "head")
+        res = _alembic(pg.super_url, "upgrade", "heads")
         assert res.returncode == 0, res.stderr
 
 
@@ -156,14 +161,16 @@ _NS_ROW = (
 
 
 async def _revision(pg: Pg) -> str:
-    return str((await pg.run("super", "SELECT version_num FROM alembic_version"))[0][0])
+    rows = await pg.run("super", "SELECT version_num FROM alembic_version")
+    return ",".join(sorted(str(r[0]) for r in rows))
 
 
 async def _restore_head(pg: Pg) -> None:
-    """Cleanup that works whatever assertion failed: the test-owned row is removed (at 0018 any
-    ``assess-discussion`` row is the test's, the reserved one went with the downgrade) or, if
+    """Cleanup that works whatever assertion failed: the test-owned row is removed (with the
+    assess branch down, any ``assess-discussion`` row is the test's, the reserved one went with
+    the downgrade) or, if
     the downgrade never ran, the reserved marker is put back; then the schema returns to head."""
-    if await _revision(pg) == "0018":
+    if await _revision(pg) == "0009":
         await pg.run("super", "DELETE FROM namespaces WHERE id = 'assess-discussion'")
     else:
         await pg.run(
@@ -171,7 +178,7 @@ async def _restore_head(pg: Pg) -> None:
             "UPDATE namespaces SET config = '{\"reserved\": true}'::jsonb "
             "WHERE id = 'assess-discussion'",
         )
-    res = _alembic(pg.super_url, "upgrade", "head")
+    res = _alembic(pg.super_url, "upgrade", "heads")
     assert res.returncode == 0, res.stderr
 
 
@@ -180,7 +187,7 @@ async def test_upgrade_refuses_a_pre_existing_namespace_and_leaves_it_untouched(
 ) -> None:
     """A deployment's own ``assess-discussion`` namespace is never adopted as the reserved one
     (it would be frozen read-only) and never deleted by a later downgrade: the upgrade stops."""
-    res = _alembic(pg.super_url, "downgrade", "0018")
+    res = _alembic(pg.super_url, "downgrade", "assess@base")
     assert res.returncode == 0, res.stderr
     try:
         await pg.run(
@@ -188,21 +195,21 @@ async def test_upgrade_refuses_a_pre_existing_namespace_and_leaves_it_untouched(
             "INSERT INTO namespaces (id, display_name, config) "
             "VALUES ('assess-discussion', 'a user namespace', '{\"top_k\": 3}'::jsonb)",
         )
-        res = _alembic(pg.super_url, "upgrade", "head")
+        res = _alembic(pg.super_url, "upgrade", "heads")
         assert res.returncode != 0
         assert "reserves the namespace id 'assess-discussion'" in res.stderr
         assert (
             "re-ingest its documents into a namespace with another name" in res.stderr
         )
         # nothing of the run was applied, and the user's row is exactly as it was
-        assert await _revision(pg) == "0018"
+        assert await _revision(pg) == "0009"
         assert await pg.run("super", _NS_ROW) == [("a user namespace", '{"top_k": 3}')]
         cols = await pg.run(
             "super",
             "SELECT count(*) FROM information_schema.columns "
             "WHERE table_name = 'query_traces' AND column_name = 'pipeline'",
         )
-        assert cols == [(0,)]
+        assert cols == [(1,)]  # the platform's column, untouched by the refused run
     finally:
         # the documented way out (delete the row, upgrade again), and the cleanup too
         await _restore_head(pg)
@@ -225,14 +232,14 @@ async def test_downgrade_deletes_only_the_reserved_row_the_upgrade_created(
         {"c": config},
     )
     try:
-        res = _alembic(pg.super_url, "downgrade", "0018")
+        res = _alembic(pg.super_url, "downgrade", "assess@base")
         assert res.returncode == 0, res.stderr
         assert await pg.run("super", _NS_ROW) == [
             ("Assess discussion traces (reserved)", config)
         ]
-        res = _alembic(pg.super_url, "upgrade", "head")
+        res = _alembic(pg.super_url, "upgrade", "heads")
         assert res.returncode != 0
-        assert await _revision(pg) == "0018"
+        assert await _revision(pg) == "0009"
     finally:
         await _restore_head(pg)
     assert await pg.run("super", _NS_ROW) == [

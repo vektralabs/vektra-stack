@@ -1,6 +1,6 @@
 """Is this teacher an EDITOR of this activity, NOW? (plan assess-teacher-ops, INT-001, REQ-077.)
 
-The plugin names the acting Moodle user (``actor_userid``); Vektra never trusts that claim on its
+The plugin names the acting LMS user (``actor_userid``); Vektra never trusts that claim on its
 own. It reads the activity-level facts the worker last wrote into ``assess_teacher_gate`` for
 (site, cmid) (``worker.teacher_gate``: the cmid resolved inside the hinted course, its editors,
 graders and REQ-077 enable facts) and accepts them only while at most ``max_age_s`` old.
@@ -11,11 +11,11 @@ graders and REQ-077 enable facts) and accepts them only while at most ``max_age_
   promises a check that was not queued);
 - fresh but the cmid was not found in the hinted course (``activity_not_in_course``, the one
   definitive unresolved answer): refused, nothing queued; when the hint differs from the one that
-  failed, or the row records a transient failure (site, reader, Moodle), a refresh is queued and
+  failed, or the row records a transient failure (site, reader, LMS), a refresh is queued and
   the request is told to retry (a wrong hint never blocks a right one for long);
-- fresh and the actor is not listed: refused, nothing queued (Moodle must change first).
+- fresh and the actor is not listed: refused, nothing queued (the LMS must change first).
 
-The same row answers both roles: ``editors`` (``moodle/course:manageactivities``: the
+The same row answers both roles: ``editors`` (the LMS's activity-editor capability: the
 configuration, REQ-077) and, since 11b, ``graders`` (``mod/assign:grade``: the session list,
 reset, terminate, extra time and opening fallback, REQ-076). ``can_view_overrides`` reads the
 ``override_viewers`` list of the same row (fail closed: absent or unreadable is False). The
@@ -43,8 +43,8 @@ from vektra_assess.jobs import JobKind, enqueue_job, teacher_gate_dedupe_key
 
 KINDS = ("quiz", "assign")
 #: the only unresolved outcome that is an answer: the worker read the hinted course and the cmid
-#: is not among its activities of that type (``moodle.readers.resolve.resolve_in_course``). Every
-#: other unresolved reason (site unknown, reader error, Moodle unreachable) is transient: retried.
+#: is not among its activities of that type (the provider's in-course resolution). Every
+#: other unresolved reason (site unknown, reader error, LMS unreachable) is transient: retried.
 NOT_IN_COURSE = "activity_not_in_course"
 
 _GATE = text(

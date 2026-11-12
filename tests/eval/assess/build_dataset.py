@@ -166,7 +166,7 @@ def _quiz(
     snap = Snapshot(
         header=SnapshotHeader(
             activity_kind=ActivityKind.QUIZ,
-            moodle_release=release,
+            lms_release=release,
             attempt_number=1 + n % 3,
             attempt_count=3,
             grade_method=GradeMethod.HIGHEST,
@@ -220,7 +220,7 @@ def _assign(n: int, release: str) -> dict[str, Any]:
     snap = Snapshot(
         header=SnapshotHeader(
             activity_kind=ActivityKind.ASSIGN,
-            moodle_release=release,
+            lms_release=release,
             attempt_number=1,
             attempt_count=1,
             grade_method=None,

@@ -46,7 +46,7 @@ class SiteOrm(Base):
     id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True), primary_key=True, server_default=_GEN_UUID
     )
-    moodle_site_uuid: Mapped[str] = mapped_column(TEXT, unique=True)
+    lms_site_uuid: Mapped[str] = mapped_column(TEXT, unique=True)
     base_url: Mapped[str] = mapped_column(TEXT)
     release: Mapped[str | None] = mapped_column(TEXT)
     min_plugin_version: Mapped[str | None] = mapped_column(TEXT)
@@ -56,7 +56,7 @@ class SiteOrm(Base):
     disabled_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
     probe_manifest: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
     last_seen_release: Mapped[str | None] = mapped_column(TEXT)
-    moodle_origin: Mapped[str | None] = mapped_column(TEXT)  # revision 0033 (plan 9)
+    lms_origin: Mapped[str | None] = mapped_column(TEXT)  # revision 0033 (plan 9)
 
 
 class SiteKeyOrm(Base):
@@ -131,7 +131,7 @@ class ActivityConfigOrm(Base):
     )
     # revision 0022: the session cap BR-013 (5-120 min); NULL = activity not configured yet
     cap_minutes: Mapped[int | None] = mapped_column(INTEGER)
-    # revision 0036 (plan 11): optimistic concurrency of the config PUT, last editor (Moodle id)
+    # revision 0036 (plan 11): optimistic concurrency of the config PUT, last editor (the LMS user id)
     version: Mapped[int] = mapped_column(INTEGER, server_default=text("0"))
     updated_by: Mapped[int | None] = mapped_column(BIGINT)
 
@@ -666,7 +666,7 @@ class SetupCheckReportOrm(Base):
     )
     requested_by_key_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True))
     status: Mapped[str] = mapped_column(TEXT, server_default=text("'queued'"))
-    moodle_release: Mapped[str | None] = mapped_column(TEXT)
+    lms_release: Mapped[str | None] = mapped_column(TEXT)
     items: Mapped[list[Any]] = mapped_column(JSONB, server_default=text("'[]'::jsonb"))
     created_at: Mapped[datetime] = _ts(default=True)
     finished_at: Mapped[datetime | None] = _ts(nullable=True)

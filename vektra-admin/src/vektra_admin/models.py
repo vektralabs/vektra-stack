@@ -112,7 +112,8 @@ class ApiKeyOrm(Base):
     )
 
     __table_args__ = (
-        # Mirrors migration 0009 (vektra_shared.auth.ALL_SCOPES / ASSESS_SCOPES).
+        # Mirrors the assess base revision a0001 (vektra_shared.auth.ALL_SCOPES / ASSESS_SCOPES);
+        # with assess off the database has the platform's LEGACY_SCOPES CHECK only.
         CheckConstraint(
             "scopes <@ ARRAY['admin','ingest','query','assess:mint','assess:teacher',"
             "'assess:privacy-export','assess:privacy-erase']::text[]",

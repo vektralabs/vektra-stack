@@ -8,7 +8,7 @@ function env(name: string): string {
   return v;
 }
 
-/** The Moodle stub (the plugin's origin, the site's moodle_origin). */
+/** The Moodle stub (the plugin's origin, the site's lms_origin). */
 export const HOST = env("E2E_HOST");
 /** Another origin that is not the site's: it must not be able to frame the UI. */
 export const THIRD = env("E2E_THIRD");

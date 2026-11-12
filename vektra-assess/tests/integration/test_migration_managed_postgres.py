@@ -1,13 +1,16 @@
-"""Migrating as a managed-Postgres user: no superuser, no CREATEROLE (migrations 0009, 0012, 0014).
+"""Migrating as a managed-Postgres user: no superuser, no CREATEROLE (the assess base revision).
 
-The CHANGELOG upgrade note and the 0009 error message tell an operator on managed Postgres what
-the user Vektra migrates as needs. This proves that guidance on a real server instead of trusting
-it: a migration user that is neither superuser nor CREATEROLE, owning its database, with the
-extensions and the three assess roles created beforehand by an administrator, migrates to head
-once it is granted membership of ``vektra_assess_definer`` (so it can ``SET ROLE`` to it, which
-``ALTER FUNCTION ... OWNER TO`` needs in 0014). The two controls show each requirement is real:
-without the roles the upgrade stops at 0009 with the message naming all three, and without the
-membership it fails.
+The CHANGELOG upgrade note and the assess base revision's error message tell an operator on
+managed Postgres what the user Vektra migrates as needs. This proves that guidance on a real
+server instead of trusting it: a migration user that is neither superuser nor CREATEROLE, owning
+its database, with the extensions and the three assess roles created beforehand by an
+administrator, migrates both branches to head once it is granted membership of
+``vektra_assess_definer`` (so it can ``SET ROLE`` to it, which ``ALTER FUNCTION ... OWNER TO``
+needs). The two controls show each requirement is real: without the roles the assess branch stops
+with the message naming all three, and without the membership it fails.
+
+With assess disabled none of it applies (ADR-0033 D7): the same user migrates the platform branch
+with no role and no membership, and the database gets no assess object.
 """
 
 from __future__ import annotations
@@ -75,9 +78,9 @@ async def _admin(url: str, *statements: str, database: str | None = None) -> lis
 
 
 async def _managed_database(
-    server: str, *, roles: bool, membership: bool
+    server: str, *, roles: bool, membership: bool, createrole: bool = False
 ) -> tuple[str, str]:
-    """A database owned by a fresh non-superuser, non-CREATEROLE migration user.
+    """A database owned by a fresh non-superuser migration user (CREATEROLE only if asked).
 
     Returns (the migration user's async URL, the database name). The roles are cluster-level,
     so they are created once and reused; ``roles=False`` is only meaningful on a fresh server,
@@ -88,7 +91,7 @@ async def _managed_database(
     await _admin(
         server,
         f"CREATE ROLE {user} LOGIN PASSWORD '{PASSWORD}' "
-        "NOSUPERUSER NOCREATEROLE NOCREATEDB NOBYPASSRLS",
+        f"NOSUPERUSER {'CREATEROLE' if createrole else 'NOCREATEROLE'} NOCREATEDB NOBYPASSRLS",
         f"CREATE DATABASE {db} OWNER {user}",
     )
     # what a managed service's administrator does for the application: the extensions
@@ -127,25 +130,80 @@ async def _flags(server: str, user: str) -> tuple[bool, bool]:
     return bool(rows[0][0]), bool(rows[0][1])
 
 
-async def test_a_1_without_the_roles_the_upgrade_stops_at_0009_naming_all_three(
+async def test_a_0_with_assess_off_the_platform_migrates_without_createrole(
+    server: str,
+) -> None:
+    """The review's managed-Postgres case: the platform branch alone needs no CREATEROLE and no
+    assess role, and creates none of the assess objects (counted)."""
+    url, db = await _managed_database(server, roles=False, membership=False)
+    user = make_url(url).username
+    assert user is not None
+    assert await _flags(server, user) == (False, False)
+    res = _alembic(url, "upgrade", "platform@head")
+    assert res.returncode == 0, res.stderr
+    counts = await _admin(
+        server,
+        "SELECT (SELECT count(*) FROM pg_tables WHERE schemaname = 'public' "
+        "        AND tablename LIKE 'assess\\_%'), "
+        "(SELECT count(*) FROM pg_roles WHERE rolname LIKE 'vektra\\_assess\\_%'), "
+        "(SELECT count(*) FROM pg_proc WHERE pronamespace = 'public'::regnamespace "
+        "        AND (proname LIKE 'assess\\_%' OR proname = 'get_session_material'))",
+        database=db,
+    )
+    assert tuple(counts[0]) == (0, 0, 0)
+
+
+async def test_a_1_without_the_roles_the_upgrade_stops_naming_all_three(
     server: str,
 ) -> None:
     url, _ = await _managed_database(server, roles=False, membership=False)
-    res = _alembic(url, "upgrade", "head")
+    res = _alembic(url, "upgrade", "heads")
     assert res.returncode != 0
-    assert "migration 0009: cannot create role" in res.stderr
+    assert "assess base revision a0001: cannot create role" in res.stderr
     for role in ROLES:
-        assert role in res.stderr, f"the 0009 message does not name {role}"
+        assert role in res.stderr, f"the message does not name {role}"
     assert "SET ROLE vektra_assess_definer" in res.stderr
 
 
-async def test_b_without_the_definer_membership_the_upgrade_fails(server: str) -> None:
+async def test_a_2_a_createrole_user_without_pre_created_roles_reaches_head(
+    server: str,
+) -> None:
+    """PG16: a CREATEROLE non-superuser that creates ``vektra_assess_definer`` gets only ADMIN
+    on it, not SET, so ``ALTER FUNCTION ... OWNER TO`` would fail. The revision grants the
+    role it just created to the migration user, and the upgrade reaches both heads. Runs while
+    the roles do not exist yet (after the two tests that need a server without them)."""
+    rows = await _admin(
+        server, "SELECT count(*) FROM pg_roles WHERE rolname LIKE 'vektra\\_assess\\_%'"
+    )
+    assert rows[0][0] == 0, "the precondition: no assess role on the server yet"
+    url, db = await _managed_database(
+        server, roles=False, membership=False, createrole=True
+    )
+    user = make_url(url).username
+    assert user is not None
+    assert await _flags(server, user) == (False, True)
+    res = _alembic(url, "upgrade", "heads")
+    assert res.returncode == 0, res.stderr[-2000:]
+    owners = await _admin(
+        server,
+        "SELECT DISTINCT pg_get_userbyid(proowner) FROM pg_proc "
+        "WHERE prosecdef AND pronamespace = 'public'::regnamespace",
+        database=db,
+    )
+    assert [r[0] for r in owners] == ["vektra_assess_definer"]
+
+
+async def test_b_without_the_definer_membership_the_upgrade_stops_with_the_recipe(
+    server: str,
+) -> None:
+    """Pre-created roles but no membership: the revision checks up front and stops with the
+    recipe, not with the raw ``ALTER FUNCTION`` error."""
     url, _ = await _managed_database(server, roles=True, membership=False)
-    res = _alembic(url, "upgrade", "head")
+    res = _alembic(url, "upgrade", "heads")
     assert res.returncode != 0
-    assert 'must be able to SET ROLE "vektra_assess_definer"' in res.stderr, res.stderr[
-        -1500:
-    ]
+    assert "cannot SET ROLE vektra_assess_definer" in res.stderr, res.stderr[-1500:]
+    assert "GRANT vektra_assess_definer TO" in res.stderr
+    assert "must be able to SET ROLE" not in res.stderr  # the raw error never surfaces
 
 
 async def test_c_pre_created_roles_and_the_membership_are_enough_for_head(
@@ -156,13 +214,15 @@ async def test_c_pre_created_roles_and_the_membership_are_enough_for_head(
     assert user is not None
     # the precondition is real: neither superuser nor CREATEROLE
     assert await _flags(server, user) == (False, False)
-    res = _alembic(url, "upgrade", "head")
+    res = _alembic(url, "upgrade", "heads")
     assert res.returncode == 0, res.stderr
     heads = _alembic(url, "heads")
     current = _alembic(url, "current")
     assert heads.returncode == 0 and current.returncode == 0, current.stderr
-    head = heads.stdout.split()[0]
-    assert head in current.stdout
+    want = sorted(line.split()[0] for line in heads.stdout.splitlines() if line.strip())
+    assert want == ["0009", "a0001"], heads.stdout
+    # the assess base is recorded; 0009, which it depends on, is implied
+    assert "a0001" in current.stdout, current.stdout
     # the definer functions really are owned by the definer
     owners = await _admin(
         server,

@@ -143,7 +143,7 @@ async def get_setup_check(
         row = (
             await conn.execute(
                 text(
-                    "SELECT status, moodle_release, items, created_at, finished_at "
+                    "SELECT status, lms_release, items, created_at, finished_at "
                     "FROM assess_setup_check_reports WHERE id = :r AND site_id = :s"
                 ),
                 {"r": report_id, "s": site_id},
@@ -160,7 +160,7 @@ async def get_setup_check(
         "report_id": str(report_id),
         "site_id": str(site_id),
         "status": row.status,
-        "moodle_release": row.moodle_release,
+        "lms_release": row.lms_release,
         "items": items,
         "created_at": _iso(row.created_at),
         "finished_at": _iso(row.finished_at),

@@ -118,9 +118,9 @@ _SEALED_API_UPDATE = (
     "sealed_blob", "kid", "refs", "item_count", "updated_by", "updated_at",
 )  # fmt: skip
 _SITES_API_READ = (
-    "id", "moodle_site_uuid", "base_url", "release", "min_plugin_version", "created_at",
+    "id", "lms_site_uuid", "base_url", "release", "min_plugin_version", "created_at",
     "disabled_at", "last_seen_release",
-    "moodle_origin",  # revision 0033 (plan 9): the one origin allowed to frame the UI
+    "lms_origin",  # revision 0033 (plan 9): the one origin allowed to frame the UI
 )  # fmt: skip
 #: columns of assess_deliveries the API may read: the status, never the recipient ref nor the
 #: Message-ID, which hashes the ref too (0035)

@@ -12,7 +12,7 @@ real elapsed time.
 Rows are content-free by construction: ``data`` accepts only short strings, integers, booleans
 and ``None`` (ids, counts, timestamps as epoch seconds, reason codes). A value that is not one of
 those, or a string longer than ``MAX_VALUE_CHARS``, raises before anything is written: a caller
-cannot slip a student's text or a Moodle value into the audit table by mistake.
+cannot slip a student's text or a value read from the LMS into the audit table by mistake.
 
 Plan assess-session-lifecycle owns the events below (M5.6 completes the set and its tests).
 """

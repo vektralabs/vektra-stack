@@ -339,10 +339,13 @@ def _fake_session(rows: list | None = None) -> MagicMock:
     return session
 
 
-async def _post_create(scopes: list[str]) -> tuple[object, MagicMock]:
+async def _post_create(
+    scopes: list[str], *, assess_enabled: bool = True
+) -> tuple[object, MagicMock]:
     from vektra_shared.db import get_session
 
     app = _make_app()
+    app.state.assess_enabled = assess_enabled  # set by the app's assess startup step
     session = _fake_session()
 
     async def _override():
@@ -376,3 +379,12 @@ async def test_create_key_accepts_a_lone_assess_scope():
     assert "Key created" in resp.text
     session.add.assert_called_once()
     assert session.add.call_args.args[0].scopes == ["assess:teacher"]
+
+
+async def test_create_key_refuses_an_assess_scope_while_assess_is_off():
+    """Review of #206: with assess off the database knows no assess scope; the form answers
+    with the flash, never with a 500 from the insert."""
+    resp, session = await _post_create(["assess:teacher"], assess_enabled=False)
+    assert resp.status_code == 200
+    assert "VEKTRA_ASSESS_ENABLED" in resp.text and "Key created" not in resp.text
+    session.add.assert_not_called()

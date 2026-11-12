@@ -1,16 +1,16 @@
 """Attempt snapshot: the permitted projection of one attempt, frozen at Start (BR-008, BR-015).
 
 The models are an ALLOWLIST. Every field a model may ever see is declared here, by item kind;
-there is no free-form ``dict`` or ``Any`` and no raw Moodle payload. New Moodle data reaches the
+there is no free-form ``dict`` or ``Any`` and no raw LMS payload. New LMS data reaches the
 model only through a change to these classes, and a change here needs a canary cell
-(``tests/canary``). Moodle ids (attempt, slot, cmid, user) are deliberately absent: items are
+(``tests/canary``). LMS ids (attempt, slot, cmid, user) are deliberately absent: items are
 addressed by snapshot-local labels only (REQ-095).
 
 Canonical form: sorted keys, marks as decimal strings, every string NFC-normalised;
 ``content_hash = sha256(canonical_bytes)``. The hash goes in the content-free commit audit event and
 is re-checked at transcript generation (BR-015).
 
-This module imports nothing from ``vektra_assess.moodle`` or the parser: the API process imports
+This module imports nothing from an LMS provider or the parser: the API process imports
 it to read a session's snapshot.
 """
 
@@ -32,7 +32,9 @@ from vektra_assess.parser_protocol import FileStatus
 #: ``QuestionState`` values (``multiple_choice``, ``final_marked``), no longer an LMS's own type
 #: and state names. Under OD-1 no assess data survives the separation, so there is no v1 reader:
 #: a v1 snapshot does not validate.
-SCHEMA_VERSION: Literal[2] = 2
+#: 3 (ADR-0033 D5, PR 2a-3): the header's release field is ``lms_release`` (was named after the
+#: LMS product). An older snapshot is ``UnsupportedSchemaError`` by its version, read first.
+SCHEMA_VERSION: Literal[3] = 3
 
 
 def mark_str(value: float | int | None) -> str | None:
@@ -41,7 +43,7 @@ def mark_str(value: float | int | None) -> str | None:
         return None
     if isinstance(value, bool) or not math.isfinite(float(value)):
         raise ValueError("a mark must be a finite number")
-    # Moodle stores marks as DECIMAL(12,7): 7 places is the precision that exists
+    # marks are kept to 7 decimal places (DECIMAL(12,7) in the LMS): the precision that exists
     text = format(Decimal(repr(round(float(value), 7))).normalize(), "f")
     return "0" if text in ("-0", "") else text
 
@@ -140,7 +142,7 @@ class OverallItem(_Frozen):
     grade_kind: GradeKind
     grade: Mark | None  # decimal string for points; None for a scale (see scale_label)
     grade_max: Mark | None
-    #: the grade exactly as Moodle shows it to the student ("2.31", "85.00"): what the BR-009
+    #: the grade exactly as the LMS shows it to the student ("2.31", "85.00"): what the BR-009
     #: statement quotes. ``grade`` keeps the full value for the regrade comparison.
     grade_display: str | None = None
     #: BR-014: a scale grade is its label, never "punti/max"
@@ -208,14 +210,14 @@ class FrozenFlags(_Frozen):
     """Config flags frozen at Start (BR-008): a later toggle never widens a running session."""
 
     show_solution: bool
-    rubric_source: Literal["none", "pasted", "moodle"]
+    rubric_source: Literal["none", "pasted", "lms"]
     course_material: bool = False  # RAG: locked OFF in v1 (NFR-015)
 
 
 class SnapshotHeader(_Frozen):
-    schema_version: Literal[2] = SCHEMA_VERSION
+    schema_version: Literal[3] = SCHEMA_VERSION
     activity_kind: ActivityKind
-    moodle_release: str
+    lms_release: str
     attempt_number: int  # "#k"
     attempt_count: int  # "di M"
     grade_method: GradeMethod | None  # quiz only

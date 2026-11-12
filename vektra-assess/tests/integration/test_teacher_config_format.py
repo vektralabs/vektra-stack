@@ -57,7 +57,7 @@ async def test_capture_and_delivery_read_their_own_sealed_fields(pg) -> None:  #
         src = LmsStartSource(None, None, engine.connect, teacher_private=priv)  # type: ignore[arg-type]
         got = await src._context(_target(site, 11, show=True, source="pasted"))
         assert got is not None and (got[2], got[3]) == (SOLUTION, RUBRIC)
-        hidden = await src._context(_target(site, 11, show=False, source="moodle"))
+        hidden = await src._context(_target(site, 11, show=False, source="lms"))
         assert hidden is not None and (hidden[2], hidden[3]) == (
             None,
             None,
@@ -182,7 +182,7 @@ async def test_without_the_private_key_a_stored_needed_field_fails_closed(pg) ->
 @pytest.mark.parametrize(
     ("show", "source", "fetched"),
     [
-        (False, "moodle", None),
+        (False, "lms", None),
         (False, "none", None),
         (True, "none", ["solution"]),
         (False, "pasted", ["pasted_rubric"]),

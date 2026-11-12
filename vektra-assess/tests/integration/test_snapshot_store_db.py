@@ -78,7 +78,7 @@ async def test_committed_hash_equals_the_recomputed_hash(pg: Pg) -> None:
         await c.commit()
     assert isinstance(res, Ok) and loaded == _snapshot()
     # the sealed snapshot is schema 2: neutral item kind and state (ADR-0033 D2)
-    assert loaded.header.schema_version == 2
+    assert loaded.header.schema_version == 3
     # the stored bytes are ciphertext: the canary is not in the row
     rows = await pg.run(
         "super",
@@ -234,7 +234,7 @@ async def test_persist_capture_writes_snapshot_and_exclusion_event_together(
         InProcessParser(),
         OFF,
         Capabilities(),
-        moodle_release=SCENARIO_RELEASE,
+        lms_release=SCENARIO_RELEASE,
         now=1,
     )
     assert isinstance(built, Built)
@@ -339,7 +339,7 @@ async def test_a_regrade_between_capture_and_close_changes_only_the_flag(
         InProcessParser(),
         OFF,
         Capabilities(),
-        moodle_release=SCENARIO_RELEASE,
+        lms_release=SCENARIO_RELEASE,
         now=1,
     )
     assert isinstance(built, Built)

@@ -4,7 +4,7 @@
   or the recipient refs (permission denied, SQLSTATE 42501: ARCH-071, OQ-034);
 - the database audits a teacher's write of a sealed field old/new from the row itself (set /
   replaced / cleared; recipient refs, never an address), and a key rotation is not audited;
-- RAG ON is unrepresentable (ARCH-072); the revision round-trips to 0035 and back.
+- RAG ON is unrepresentable (ARCH-072).
 """
 
 from __future__ import annotations
@@ -13,7 +13,6 @@ import json
 import uuid
 
 import pytest
-from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError, IntegrityError
 from support.recipients import config_pair
 from support.world import configure_activity, make_site
@@ -24,8 +23,6 @@ from vektra_assess.crypto.teacher_config import (
     store_sealed_field,
 )
 from vektra_assess.delivery.recipients import recipient_ref
-
-from .conftest import _alembic
 
 pytestmark = pytest.mark.integration
 
@@ -154,38 +151,6 @@ async def test_the_recipient_count_matches_the_refs(pg) -> None:  # type: ignore
                 conn, pub, site, 42, TRANSCRIPT_RECIPIENTS, "[]", actor_userid=1,
                 refs=["a" * 64] * 4, item_count=4,
             )  # fmt: skip
-
-
-def test_round_trip_to_0035_and_back(pg) -> None:  # type: ignore[no-untyped-def]
-    down = _alembic(pg.super_url, "downgrade", "0035")
-    assert down.returncode == 0, down.stderr
-    up = _alembic(pg.super_url, "upgrade", "head")
-    assert up.returncode == 0, up.stderr
-
-
-async def test_the_upgrade_refuses_a_composite_config_it_cannot_split(pg) -> None:  # type: ignore[no-untyped-def]
-    assert _alembic(pg.super_url, "downgrade", "0035").returncode == 0
-    site = await make_site(pg)
-    try:
-        await pg.run(
-            "super",
-            "INSERT INTO assess_activity_config (site_id, cmid, activity_type, "
-            "teacher_config_sealed, teacher_config_kid) VALUES (:s, 43, 'quiz', '\\x01', 'w1')",
-            {"s": site},
-        )
-        up = _alembic(pg.super_url, "upgrade", "head")
-        assert up.returncode != 0 and "composite sealed teacher config" in up.stderr
-    finally:
-        await pg.run(
-            "super",
-            "DELETE FROM assess_activity_config WHERE site_id = :s",
-            {"s": site},
-        )
-        assert _alembic(pg.super_url, "upgrade", "head").returncode == 0
-    async with pg.conn("super") as c:
-        assert (
-            await c.execute(text("SELECT count(*) FROM assess_activity_config_sealed"))
-        ).scalar() is not None
 
 
 async def test_a_direct_api_write_that_skips_updated_at_is_still_audited(pg) -> None:  # type: ignore[no-untyped-def]

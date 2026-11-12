@@ -60,7 +60,7 @@ async def seed_teacher_gate(
         "close_at": 1_700_000_000,
         "team_submission": False,
         "grading_method": "rubric" if kind == "assign" else None,
-        "moodle_rubric": kind == "assign",
+        "lms_rubric": kind == "assign",
         "override_holder": None,
         "override_viewers": None,
         "hint": [COURSE, kind],
@@ -81,11 +81,11 @@ async def seed_render(
     student: int,
     cmid: int,
     *,
-    moodle_reasons: list[str] | None = None,
+    lms_reasons: list[str] | None = None,
     age: str = "1 second",
     attested_at: Any = "current",
 ) -> None:
-    """A render evaluation as the worker stores it (``moodle_reasons``: the Moodle half,
+    """A render evaluation as the worker stores it (``lms_reasons``: the Moodle half,
     ``attested_at``: the REQ-091 date it was evaluated with; "current" = the stored one)."""
     if attested_at == "current":
         rows = await pg.run(
@@ -101,8 +101,8 @@ async def seed_render(
         "opens_at": None,
         "session_no_next": 2,
     }
-    if moodle_reasons is not None:
-        inputs["moodle_reasons"] = moodle_reasons
+    if lms_reasons is not None:
+        inputs["lms_reasons"] = lms_reasons
         inputs["attested_at"] = attested_at
     await pg.run(
         "worker",

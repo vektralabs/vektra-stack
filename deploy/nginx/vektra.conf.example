@@ -7,7 +7,7 @@
 #       the assess discussion UI only, framed by Moodle: VEKTRA_ASSESS_UI_ORIGIN is
 #       https://YOUR_UI_DOMAIN. It must be another SITE than the API and than Moodle
 #       (e.g. not a subdomain of either: the setup check refuses same_site_as_api and
-#       same_site_as_moodle), and another origin than every Moodle site (the plugin's
+#       same_site_as_lms), and another origin than every Moodle site (the plugin's
 #       iframe has allow-same-origin). The page calls the API on its OWN origin (CSP
 #       connect-src 'self'), so this server proxies the few student routes it needs to the
 #       same backend; nothing else is reachable on it.

@@ -1,4 +1,4 @@
-"""Revision 0018: job-loop runtime additions to ``assess_jobs`` (plan assess-job-loop A1-A2).
+"""The job-loop runtime shape of ``assess_jobs`` (plan assess-job-loop A1-A2; formerly 0018).
 
 Real Postgres (testcontainers), ``integration``. The schema is checked by what the catalog
 says, not by what the migration claims to have run.
@@ -39,7 +39,7 @@ def pg():
 
     with PostgresContainer("pgvector/pgvector:pg16") as c:
         url = c.get_connection_url().replace("psycopg2", "asyncpg")
-        res = _alembic(url, "upgrade", "head")
+        res = _alembic(url, "upgrade", "heads")
         assert res.returncode == 0, res.stderr
         yield url
 
@@ -107,39 +107,3 @@ async def test_storage_options_are_applied(pg):
     assert got["autovacuum_vacuum_scale_factor"] == "0.01"
     assert got["autovacuum_vacuum_threshold"] == "200"
     assert got["autovacuum_analyze_scale_factor"] == "0.02"
-
-
-async def test_downgrade_restores_the_0013_shape_and_upgrade_reapplies(pg):
-    assert _alembic(pg, "downgrade", "0017").returncode == 0
-    cols = {
-        r[0]
-        for r in await _fetch(
-            pg,
-            "SELECT column_name FROM information_schema.columns "
-            "WHERE table_name='assess_jobs'",
-        )
-    }
-    assert "last_error_code" not in cols
-    idx = {
-        r[0]
-        for r in await _fetch(
-            pg, "SELECT indexname FROM pg_indexes WHERE tablename='assess_jobs'"
-        )
-    }
-    assert "ix_assess_jobs_claim" in idx and "ix_assess_jobs_kind_claim" not in idx
-    opts = (
-        await _fetch(pg, "SELECT reloptions FROM pg_class WHERE relname='assess_jobs'")
-    )[0][0]
-    assert dict(o.split("=") for o in opts) == {
-        "autovacuum_vacuum_scale_factor": "0.02",
-        "autovacuum_vacuum_cost_delay": "0",
-    }
-    assert _alembic(pg, "upgrade", "head").returncode == 0
-    assert "last_error_code" in {
-        r[0]
-        for r in await _fetch(
-            pg,
-            "SELECT column_name FROM information_schema.columns "
-            "WHERE table_name='assess_jobs'",
-        )
-    }

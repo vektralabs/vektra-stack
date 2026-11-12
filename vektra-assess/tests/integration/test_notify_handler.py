@@ -29,7 +29,7 @@ from vektra_assess.delivery.backoff import parse_schedule
 from vektra_assess.delivery.recipients import ConfigRecipients
 from vektra_assess.delivery.smtp import SmtpSender
 from vektra_assess.jobs import JobKind, enqueue_job
-from vektra_assess.worker.start_guard import alert_moodle_unreachable
+from vektra_assess.worker.start_guard import alert_lms_unreachable
 
 pytestmark = pytest.mark.integration
 
@@ -181,7 +181,7 @@ async def test_a_service_failure_close_mails_every_configured_teacher_once(
             assert msg["Auto-Submitted"] == "auto-generated"
             body = msg.get_content()
             assert f"attivita': {s.cmid}" in body
-            assert f"studente (id Moodle): {number.student_userid}" in body
+            assert f"studente (id LMS): {number.student_userid}" in body
             assert f"sessione: #{number.session_no}" in body
             assert "guasto del servizio" in str(msg["Subject"])
             assert not list(msg.iter_attachments())  # a notice, never the transcript
@@ -243,7 +243,7 @@ async def test_an_unreadable_lms_alert_reaches_the_operator(pg, worker, sink) ->
     async with world(pg) as w:
         engine = create_async_engine(pg.url("worker"))
         async with engine.connect() as conn:
-            await alert_moodle_unreachable(
+            await alert_lms_unreachable(
                 conn, w.site, "capture_failed_attempt_unreadable"
             )
             await conn.commit()

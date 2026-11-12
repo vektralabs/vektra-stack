@@ -10,7 +10,7 @@ window T (``VEKTRA_ASSESS_START_T_S``), measured on the DATABASE clock.
 3. Model activation (NFR-023): ``is_activated`` on every Start, so a new activation row takes
    effect without a restart. ``VEKTRA_ASSESS_LLM_ALLOW_UNACTIVATED`` is honoured only with
    ``VEKTRA_ENV=development``.
-4. The START gates (BR-006 (a)-(i), BR-007, BR-010, BR-014, REQ-091): the Moodle half read fresh
+4. The START gates (BR-006 (a)-(i), BR-007, BR-010, BR-014, REQ-091): the LMS half read fresh
    through the ``StartSource`` port (plan-4 readers), the database half here, evaluated by the pure
    ``evaluate_start_gates``; a failed gate rolls back with its code (a team submission is also
    audited ``assess_team_submission_refused``). Then the snapshot (plan 6 capture), whose own
@@ -27,7 +27,7 @@ Any server-attributable failure runs ``rollback_start``: one transaction deletes
 that nothing of the session is left. Nothing on the client path triggers a rollback: a client that
 disconnects after Start still gets its session committed.
 
-Reason codes are fixed strings (``Reason``); no exception text, Moodle value or content is ever
+Reason codes are fixed strings (``Reason``); no exception text, LMS value or content is ever
 written, logged or returned.
 """
 
@@ -284,7 +284,7 @@ _ACTIVATE = text(
     "frozen_policy = CAST(:fp AS jsonb), starting_expires_at = NULL, last_activity_at = now() "
     "WHERE id = :s"
 )
-#: dated at the pre-flight's admission (database clock, before Moodle was read), never at the
+#: dated at the pre-flight's admission (database clock, before the LMS was read), never at the
 #: commit: the enrolment was observed then, and a slow capture must not make it look fresher
 #: than it is
 _ENROLLED = text(
@@ -699,7 +699,7 @@ async def _run(deps: PreflightDeps, acquire: AcquireDb, sid: UUID) -> None:
             deps.source.gate_facts(target), _remaining(deps, elapsed, t_load)
         )
         # the gate's "now" is the database's, read at admission, plus the time spent since (the
-        # Moodle reads): an end date that passed meanwhile closes the gate
+        # LMS reads): an end date that passed meanwhile closes the gate
         db = replace(db, now=db.now + int(deps.clock() - t_load))
         decision = evaluate_start_gates(gate_inputs(target, db, facts))
         if not decision.open:

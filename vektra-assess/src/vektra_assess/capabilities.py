@@ -196,7 +196,7 @@ async def site_readiness(
             await conn.execute(
                 text(
                     "SELECT items FROM assess_setup_check_reports WHERE site_id = :s "
-                    "AND status = 'done' AND moodle_release = :r "
+                    "AND status = 'done' AND lms_release = :r "
                     "ORDER BY finished_at DESC NULLS LAST, created_at DESC LIMIT 1"
                 ),
                 {"s": site_id, "r": release},

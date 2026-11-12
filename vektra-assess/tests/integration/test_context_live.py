@@ -103,7 +103,7 @@ async def test_live_quiz_all_types(branch: str) -> None:
     q = m["quizzes"]["types"]
     built = await capture_quiz(
         QuizTarget(m["courseid"], q["id"], q["cmid"], uid(branch, "stu1")),
-        readers, InProcessParser(), OFF, Capabilities(), moodle_release=m["release"],
+        readers, InProcessParser(), OFF, Capabilities(), lms_release=m["release"],
     )  # fmt: skip
     assert isinstance(built, Built), built
     sinks = await _sinks(built)
@@ -118,7 +118,7 @@ async def test_live_assignment_shapes(branch: str, name: str) -> None:
     a = m["assigns"][name]
     built = await capture_assign(
         AssignTarget(m["courseid"], a["id"], a["cmid"], uid(branch, "stu1")),
-        readers, InProcessParser(), OFF, Capabilities(), moodle_release=m["release"],
+        readers, InProcessParser(), OFF, Capabilities(), lms_release=m["release"],
     )  # fmt: skip
     assert isinstance(built, Built), (name, built)
     _clean(await _sinks(built), list(m["canaries"]))
@@ -129,6 +129,6 @@ async def test_live_unreleased_grade_is_not_eligible(branch: str) -> None:
     a = m["assigns"]["hiddengrade"]
     out = await capture_assign(
         AssignTarget(m["courseid"], a["id"], a["cmid"], uid(branch, "stu1")),
-        readers, InProcessParser(), OFF, Capabilities(), moodle_release=m["release"],
+        readers, InProcessParser(), OFF, Capabilities(), lms_release=m["release"],
     )  # fmt: skip
     assert out == CaptureNotEligible(NotEligibleReason.NOT_RELEASED)

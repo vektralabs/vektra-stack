@@ -80,7 +80,7 @@ def _migrated_pg(fixed_port: int | None) -> Iterator[Pg]:
         container = container.with_bind_ports(5432, fixed_port)
     with container as c:
         url = c.get_connection_url().replace("psycopg2", "asyncpg")
-        res = _alembic(url, "upgrade", "head")
+        res = _alembic(url, "upgrade", "heads")
         assert res.returncode == 0, res.stderr
         handle = Pg(url, c.get_wrapped_container().id)
 

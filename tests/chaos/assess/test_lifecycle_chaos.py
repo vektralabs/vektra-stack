@@ -57,7 +57,7 @@ async def seed(pg: Any, state: str = "ACTIVE") -> tuple[uuid.UUID, uuid.UUID]:
     site, sid = uuid.uuid4(), uuid.uuid4()
     await pg.run(
         "super",
-        "INSERT INTO assess_sites (id, moodle_site_uuid, base_url) VALUES (:i, :u, 'https://m.example')",
+        "INSERT INTO assess_sites (id, lms_site_uuid, base_url) VALUES (:i, :u, 'https://m.example')",
         {"i": site, "u": str(site)},
     )
     now = datetime.now(UTC)

@@ -2,7 +2,7 @@
 
 Signed with the same ``assess_token_signing`` keyring as the discussion tokens but a different
 audience, so a discussion token is never a download token and vice versa. Claims: ``sub`` (the
-owner's or the grader's Moodle user id), ``tid``, ``site``, ``role`` (``owner`` | ``grader``),
+owner's or the grader's LMS user id), ``tid``, ``site``, ``role`` (``owner`` | ``grader``),
 ``jti``. The jti is stored hashed in ``assess_transcript_download_tokens`` at mint and consumed
 atomically at download, so a token works exactly once. ``verify`` raises ``TokenError`` for every
 failure, mapped to one 401 envelope.

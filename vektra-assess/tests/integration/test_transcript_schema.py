@@ -1,4 +1,4 @@
-"""Revision 0034 (plan assess-transcript-delivery): outbox constraints, resend function, round trip.
+"""Revision 0034 (plan assess-transcript-delivery): outbox constraints and the resend function.
 
 The resend function is driven as the real API role: it creates round n+1 for the recipients of
 the last round only (a REPLACED recipient is not resent), two calls never collide on a round, and
@@ -12,7 +12,7 @@ import uuid
 import pytest
 from sqlalchemy.exc import DBAPIError, IntegrityError
 
-from .conftest import ROOT, _alembic, make_session
+from .conftest import make_session
 
 pytestmark = pytest.mark.integration
 
@@ -123,14 +123,6 @@ async def test_the_api_cannot_write_deliveries_directly(pg) -> None:  # type: ig
             "VALUES (:t, 'grader', 99)",
             {"t": tid},
         )
-
-
-def test_round_trip_to_0033_and_back(pg) -> None:  # type: ignore[no-untyped-def]
-    assert ROOT.exists()
-    down = _alembic(pg.super_url, "downgrade", "0033")
-    assert down.returncode == 0, down.stderr
-    up = _alembic(pg.super_url, "upgrade", "head")
-    assert up.returncode == 0, up.stderr
 
 
 async def test_a_round_inside_the_minimum_interval_is_refused_under_the_lock(

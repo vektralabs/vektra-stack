@@ -1,4 +1,4 @@
-# Vektra-shipped Italian strings of the discussion (REQ-098, BR-009). Moodle strings never override
+# Vektra-shipped Italian strings of the discussion (REQ-098, BR-009). The LMS's strings never override
 # them. Final wording is by UX and is validated in the moderated student pilot. Any change here
 # changes prompt_version and requires a new NFR-023 activation.
 br009: "Voto registrato: {grade} (letto il {date}). Il voto NON è stato modificato da questa discussione; decide l'orale"

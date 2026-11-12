@@ -105,9 +105,9 @@ async def streak(conn: Any, site_id: UUID, cmid: int, userid: int, n: int) -> in
     return count
 
 
-#: rollback reasons that mean the pre-flight could not read Moodle (unreachable, timeout, a
+#: rollback reasons that mean the pre-flight could not read the LMS (unreachable, timeout, a
 #: client error: the readers turn all of them into Unreadable, which surfaces as these codes)
-MOODLE_UNREACHABLE_REASONS = frozenset(
+LMS_UNREACHABLE_REASONS = frozenset(
     {
         "unreadable",
         "capture_failed_policy_input_unreadable",
@@ -117,19 +117,19 @@ MOODLE_UNREACHABLE_REASONS = frozenset(
 )
 _ALERTED = text("SELECT 1 FROM assess_jobs WHERE dedupe_key = :k LIMIT 1")
 #: one operator alert per site per window, however many Starts roll back in it
-MOODLE_ALERT_WINDOW_S = 900
+LMS_ALERT_WINDOW_S = 900
 
 
-async def alert_moodle_unreachable(
+async def alert_lms_unreachable(
     conn: Any, site_id: UUID, reason: str, *, now: float | None = None
 ) -> None:
     """REQ-071 "operator alerted on WS failure": a content-free ``operator_notify`` job in the
     rollback's own transaction (delivery: plan transcript-delivery). Deduplicated per site by a
     fixed 15-minute bucket of the worker clock in the job's ``dedupe_key``: a burst of Starts
-    against an unreachable Moodle queues one alert per site per window; the next window alerts
+    against an unreachable LMS queues one alert per site per window; the next window alerts
     again while the failure lasts."""
-    bucket = int((time.time() if now is None else now) // MOODLE_ALERT_WINDOW_S)
-    key = f"operator_notify:moodle_unreachable:{site_id}:{bucket}"
+    bucket = int((time.time() if now is None else now) // LMS_ALERT_WINDOW_S)
+    key = f"operator_notify:lms_unreachable:{site_id}:{bucket}"
     # the unique dedupe index covers pending jobs only; an alert already delivered in this
     # window (state done) must not be sent again either
     if (await conn.execute(_ALERTED, {"k": key})).first() is not None:
@@ -137,7 +137,7 @@ async def alert_moodle_unreachable(
     await enqueue_job(
         conn,
         JobKind.OPERATOR_NOTIFY,
-        {"site_id": str(site_id), "reason": reason, "kind": "moodle_unreachable"},
+        {"site_id": str(site_id), "reason": reason, "kind": "lms_unreachable"},
         dedupe_key=key,
     )
 
@@ -151,8 +151,8 @@ async def after_rollback(
     reason: str,
     limits: StartLimits,
 ) -> None:
-    if reason in MOODLE_UNREACHABLE_REASONS:
-        await alert_moodle_unreachable(conn, site_id, reason)
+    if reason in LMS_UNREACHABLE_REASONS:
+        await alert_lms_unreachable(conn, site_id, reason)
     if not is_system_rollback(reason):
         return
     # the streak, counted over one more than the threshold: notify when it reaches it exactly

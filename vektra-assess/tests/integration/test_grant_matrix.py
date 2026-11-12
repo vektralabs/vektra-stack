@@ -202,7 +202,9 @@ def _load(path: Path):
 def test_the_latest_grants_revision_is_the_rendered_matrix():
     """Every later revision that changes grants must carry the matrix again; the newest one
     (highest revision number that holds GRANT_STATEMENTS) must equal the module's rendering."""
-    versions = sorted((ROOT / "migrations" / "versions").glob("*.py"))
+    versions = sorted(
+        (ROOT / "vektra-assess/src/vektra_assess/migrations/versions").glob("*.py")
+    )
     holders = [p for p in versions if "GRANT_STATEMENTS = (" in p.read_text()]
     assert holders, "no revision carries the grant matrix"
     latest = holders[-1]

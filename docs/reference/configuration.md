@@ -330,15 +330,20 @@ is installed by the image variant built with `--build-arg INSTALL_LMS_PROVIDER=m
 
 The provider reads its own settings (`vektra_lms_moodle.config.MoodleSettings`), from the process
 environment, with the prefix `VEKTRA_LMS_MOODLE_` (OD-4). They had the vertical's prefix before
-the provider left the platform, and **the old names are not read any more** (no alias: nothing
-had been released; the CHANGELOG lists the renames). It also reads `VEKTRA_ENV` (the same "development only when set
-explicitly" rule) and `VEKTRA_ASSESS_SECRETS_DIR` (where its token secret `assess_ws_tokens` is).
-An invalid value fails the worker at startup, when the provider is built.
+the provider left the platform, and **the old names are not read** (no alias: nothing had been
+released; the CHANGELOG lists the renames). A variable still set under an old name **refuses the
+worker's start**, and the refusal lists each one with its new name; the live contract suites'
+own variables (the dev sites' URLs, manifest and token directories) are test inputs and are not
+concerned. Only the full names are read, never
+a bare field name such as `WS_RPS`. The provider also reads `VEKTRA_ASSESS_SECRETS_DIR` (where
+its token secret `assess_ws_tokens` is). It does not read `VEKTRA_ENV`: the worker passes it its
+own resolved development flag (an explicit `VEKTRA_ENV=development`). An invalid value fails the
+worker at startup, naming the variable and the rule it broke, never the value.
 
-The `teacher_gate` job budget (`VEKTRA_ASSESS_JOB_TEACHER_GATE_BUDGET_S`, default 95 s) assumes a
-30 s call deadline, three sequential LMS calls plus 5 s: a deployment that raises
-`VEKTRA_LMS_MOODLE_WS_TOTAL_TIMEOUT_S` raises the job budget with it (the vertical no longer
-reads the provider's setting).
+The `teacher_gate` job budget follows the provider's call deadline (`LmsProvider.call_deadline_s`;
+for the Moodle provider `VEKTRA_LMS_MOODLE_WS_TOTAL_TIMEOUT_S`): three sequential LMS calls plus
+5 s, so 95 s at the default 30 s, and raising the provider's timeout raises the budget.
+`VEKTRA_ASSESS_JOB_TEACHER_GATE_BUDGET_S` still overrides it.
 
 | Variable | Type | Default | Description |
 |----------|------|---------|-------------|
@@ -370,11 +375,15 @@ is missing (required) or present (forbidden). A forbidden key counts as present 
 when an environment variable carries its name. The API applies the forbidden column even with assess
 disabled (ARCH-066).
 
-The LMS provider's credentials are not in the matrix: the provider declares their names
-(`LmsProvider.required_secrets`, ADR-0033 D5), and the worker, which loads the provider before it
-checks the matrix, requires and loads each of them as credentials. A declared name must start with
-`assess_` and not be a matrix name: the API and the parser load no provider, so they refuse every
-`assess_*` file the matrix does not grant them, whatever a provider calls its secret.
+The LMS provider's credentials are not in the matrix: the provider declares their names on its
+entry point (`REQUIRED_SECRETS`, the same names as `LmsProvider.required_secrets`, ADR-0033 D5),
+readable without building it. The worker checks the whole matrix, those names included, before it
+builds the provider, and requires and loads each of them as credentials. The API reads the names
+of every installed provider the same way (no provider is built) and refuses an environment
+variable that carries one, assess enabled or not. A declared name must start with `assess_` and
+not be a matrix name: the API and the parser refuse every `assess_*` file the matrix does not
+grant them, whatever a provider calls its secret, and the parser refuses any `VEKTRA_*` or
+`ASSESS_*` variable whose name contains `TOKEN`, `SECRET`, `PASSWORD`, `DSN` or `DATABASE_URL`.
 
 | Secret | API | Worker | Parser |
 |---|---|---|---|

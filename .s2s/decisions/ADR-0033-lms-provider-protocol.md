@@ -104,6 +104,12 @@ class LmsProvider(Protocol):
     @property
     def setup_items(self) -> tuple[str, ...]: ...  # the service-account items it returns (D3)
 
+    @property
+    def required_secrets(self) -> tuple[str, ...]: ...  # its secrets; also REQUIRED_SECRETS on the entry point (added in 2a-2, static in 2a-4)
+
+    @property
+    def call_deadline_s(self) -> float: ...          # one call's deadline, budgets sequential-call jobs (added in 2a-4)
+
     # lifecycle
     def startup_problems(self, development: bool) -> tuple[StartupProblem, ...]: ...   # was assess_worker.py:229; the resolved flag (an explicit VEKTRA_ENV=development), never the raw env (amended in 2a-1)
     async def aclose(self) -> None: ...

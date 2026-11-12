@@ -1,0 +1,819 @@
+column vektra_assess_api assess_activity_config activity_type INSERT
+column vektra_assess_api assess_activity_config activity_type SELECT
+column vektra_assess_api assess_activity_config attested_by INSERT
+column vektra_assess_api assess_activity_config attested_by SELECT
+column vektra_assess_api assess_activity_config attested_by UPDATE
+column vektra_assess_api assess_activity_config attested_opening_at INSERT
+column vektra_assess_api assess_activity_config attested_opening_at SELECT
+column vektra_assess_api assess_activity_config attested_opening_at UPDATE
+column vektra_assess_api assess_activity_config cap_minutes INSERT
+column vektra_assess_api assess_activity_config cap_minutes SELECT
+column vektra_assess_api assess_activity_config cap_minutes UPDATE
+column vektra_assess_api assess_activity_config cmid INSERT
+column vektra_assess_api assess_activity_config cmid SELECT
+column vektra_assess_api assess_activity_config enabled INSERT
+column vektra_assess_api assess_activity_config enabled SELECT
+column vektra_assess_api assess_activity_config enabled UPDATE
+column vektra_assess_api assess_activity_config end_at INSERT
+column vektra_assess_api assess_activity_config end_at SELECT
+column vektra_assess_api assess_activity_config end_at UPDATE
+column vektra_assess_api assess_activity_config flags INSERT
+column vektra_assess_api assess_activity_config flags SELECT
+column vektra_assess_api assess_activity_config flags UPDATE
+column vektra_assess_api assess_activity_config id INSERT
+column vektra_assess_api assess_activity_config id SELECT
+column vektra_assess_api assess_activity_config rag_enabled INSERT
+column vektra_assess_api assess_activity_config rag_enabled SELECT
+column vektra_assess_api assess_activity_config rag_enabled UPDATE
+column vektra_assess_api assess_activity_config site_id INSERT
+column vektra_assess_api assess_activity_config site_id SELECT
+column vektra_assess_api assess_activity_config updated_at INSERT
+column vektra_assess_api assess_activity_config updated_at SELECT
+column vektra_assess_api assess_activity_config updated_at UPDATE
+column vektra_assess_api assess_activity_config updated_by INSERT
+column vektra_assess_api assess_activity_config updated_by SELECT
+column vektra_assess_api assess_activity_config updated_by UPDATE
+column vektra_assess_api assess_activity_config version INSERT
+column vektra_assess_api assess_activity_config version SELECT
+column vektra_assess_api assess_activity_config version UPDATE
+column vektra_assess_api assess_activity_config_sealed cmid INSERT
+column vektra_assess_api assess_activity_config_sealed cmid SELECT
+column vektra_assess_api assess_activity_config_sealed field INSERT
+column vektra_assess_api assess_activity_config_sealed field SELECT
+column vektra_assess_api assess_activity_config_sealed is_set SELECT
+column vektra_assess_api assess_activity_config_sealed item_count INSERT
+column vektra_assess_api assess_activity_config_sealed item_count SELECT
+column vektra_assess_api assess_activity_config_sealed item_count UPDATE
+column vektra_assess_api assess_activity_config_sealed kid INSERT
+column vektra_assess_api assess_activity_config_sealed kid UPDATE
+column vektra_assess_api assess_activity_config_sealed refs INSERT
+column vektra_assess_api assess_activity_config_sealed refs UPDATE
+column vektra_assess_api assess_activity_config_sealed sealed_blob INSERT
+column vektra_assess_api assess_activity_config_sealed sealed_blob UPDATE
+column vektra_assess_api assess_activity_config_sealed site_id INSERT
+column vektra_assess_api assess_activity_config_sealed site_id SELECT
+column vektra_assess_api assess_activity_config_sealed updated_at INSERT
+column vektra_assess_api assess_activity_config_sealed updated_at SELECT
+column vektra_assess_api assess_activity_config_sealed updated_at UPDATE
+column vektra_assess_api assess_activity_config_sealed updated_by INSERT
+column vektra_assess_api assess_activity_config_sealed updated_by SELECT
+column vektra_assess_api assess_activity_config_sealed updated_by UPDATE
+column vektra_assess_api assess_consumed_jtis consumed_at UPDATE
+column vektra_assess_api assess_deliveries attempt_started_at SELECT
+column vektra_assess_api assess_deliveries attempts SELECT
+column vektra_assess_api assess_deliveries created_at SELECT
+column vektra_assess_api assess_deliveries id SELECT
+column vektra_assess_api assess_deliveries kind SELECT
+column vektra_assess_api assess_deliveries last_error_class SELECT
+column vektra_assess_api assess_deliveries not_before SELECT
+column vektra_assess_api assess_deliveries recipient_kind SELECT
+column vektra_assess_api assess_deliveries recipient_userid SELECT
+column vektra_assess_api assess_deliveries round SELECT
+column vektra_assess_api assess_deliveries sent_at SELECT
+column vektra_assess_api assess_deliveries smtp_code SELECT
+column vektra_assess_api assess_deliveries status SELECT
+column vektra_assess_api assess_deliveries transcript_id SELECT
+column vektra_assess_api assess_privacy_config legal_basis_label UPDATE
+column vektra_assess_api assess_privacy_config legal_basis_text UPDATE
+column vektra_assess_api assess_privacy_config notice_text UPDATE
+column vektra_assess_api assess_privacy_config notice_url UPDATE
+column vektra_assess_api assess_privacy_config notice_version UPDATE
+column vektra_assess_api assess_privacy_config retention_days UPDATE
+column vektra_assess_api assess_privacy_config updated_at UPDATE
+column vektra_assess_api assess_privacy_config updated_by UPDATE
+column vektra_assess_api assess_sessions epoch UPDATE
+column vektra_assess_api assess_sessions tokens_used UPDATE
+column vektra_assess_api assess_sites base_url SELECT
+column vektra_assess_api assess_sites created_at SELECT
+column vektra_assess_api assess_sites disabled_at SELECT
+column vektra_assess_api assess_sites id SELECT
+column vektra_assess_api assess_sites last_seen_release SELECT
+column vektra_assess_api assess_sites lms_origin SELECT
+column vektra_assess_api assess_sites lms_site_uuid SELECT
+column vektra_assess_api assess_sites min_plugin_version SELECT
+column vektra_assess_api assess_sites release SELECT
+column vektra_assess_api assess_token_jti consumed_at UPDATE
+column vektra_assess_api assess_transcript_download_tokens consumed_at UPDATE
+column vektra_assess_definer assess_outage_incidents credited_s UPDATE
+column vektra_assess_definer assess_outage_incidents ended_at UPDATE
+column vektra_assess_definer assess_session_keys session_id SELECT
+column vektra_assess_definer assess_sessions close_reason UPDATE
+column vektra_assess_definer assess_sessions closed_at UPDATE
+column vektra_assess_definer assess_sessions credited_outage_s UPDATE
+column vektra_assess_definer assess_sessions deadline_at UPDATE
+column vektra_assess_definer assess_sessions epoch UPDATE
+column vektra_assess_definer assess_sessions last_activity_at UPDATE
+column vektra_assess_definer assess_sessions pending_reply_since UPDATE
+column vektra_assess_definer assess_sessions seq UPDATE
+column vektra_assess_definer assess_sessions state UPDATE
+column vektra_assess_worker assess_activity_config_sealed kid UPDATE
+column vektra_assess_worker assess_activity_config_sealed sealed_blob UPDATE
+column vektra_assess_worker assess_purge_records subject_ref UPDATE
+column vektra_assess_worker assess_reset_grants consumed_at UPDATE
+column vektra_assess_worker assess_reset_grants reason_ct UPDATE
+column vektra_assess_worker assess_reset_grants reason_kid UPDATE
+column vektra_assess_worker assess_sites last_seen_release UPDATE
+column vektra_assess_worker assess_sites min_plugin_version UPDATE
+column vektra_assess_worker assess_sites probe_manifest UPDATE
+column vektra_assess_worker assess_sites release UPDATE
+column vektra_assess_worker assess_terminations reason_ct UPDATE
+column vektra_assess_worker assess_terminations reason_kid UPDATE
+column vektra_assess_worker query_traces chunks_retrieved INSERT
+column vektra_assess_worker query_traces created_at INSERT
+column vektra_assess_worker query_traces llm_model INSERT
+column vektra_assess_worker query_traces namespace_id INSERT
+column vektra_assess_worker query_traces pipeline INSERT
+column vektra_assess_worker query_traces prompt_version INSERT
+column vektra_assess_worker query_traces response_id INSERT
+column vektra_assess_worker query_traces steps INSERT
+column vektra_assess_worker query_traces total_duration_ms INSERT
+function vektra_assess_api armor(bytea)
+function vektra_assess_api armor(bytea,text[],text[])
+function vektra_assess_api array_to_halfvec(double precision[],integer,boolean)
+function vektra_assess_api array_to_halfvec(integer[],integer,boolean)
+function vektra_assess_api array_to_halfvec(numeric[],integer,boolean)
+function vektra_assess_api array_to_halfvec(real[],integer,boolean)
+function vektra_assess_api array_to_sparsevec(double precision[],integer,boolean)
+function vektra_assess_api array_to_sparsevec(integer[],integer,boolean)
+function vektra_assess_api array_to_sparsevec(numeric[],integer,boolean)
+function vektra_assess_api array_to_sparsevec(real[],integer,boolean)
+function vektra_assess_api array_to_vector(double precision[],integer,boolean)
+function vektra_assess_api array_to_vector(integer[],integer,boolean)
+function vektra_assess_api array_to_vector(numeric[],integer,boolean)
+function vektra_assess_api array_to_vector(real[],integer,boolean)
+function vektra_assess_api assess_append_turn(uuid,integer,integer,text,text,bytea,text,text)
+function vektra_assess_api assess_audit_events_append_only()
+function vektra_assess_api assess_close_session(uuid,integer,text)
+function vektra_assess_api assess_enqueue_resend(uuid,text,integer)
+function vektra_assess_api assess_enter_outage(uuid,integer,timestamp with time zone,text)
+function vektra_assess_api assess_metrics_snapshot()
+function vektra_assess_api assess_outage_cap(integer)
+function vektra_assess_api assess_outage_spent(uuid)
+function vektra_assess_api assess_rollback_starting(uuid)
+function vektra_assess_api assess_sessions_no_revival()
+function vektra_assess_api assess_sessions_number()
+function vektra_assess_api assess_snapshots_immutable()
+function vektra_assess_api avg(halfvec)
+function vektra_assess_api avg(vector)
+function vektra_assess_api binary_quantize(halfvec)
+function vektra_assess_api binary_quantize(vector)
+function vektra_assess_api cosine_distance(halfvec,halfvec)
+function vektra_assess_api cosine_distance(sparsevec,sparsevec)
+function vektra_assess_api cosine_distance(vector,vector)
+function vektra_assess_api crypt(text,text)
+function vektra_assess_api dearmor(text)
+function vektra_assess_api decrypt(bytea,bytea,text)
+function vektra_assess_api decrypt_iv(bytea,bytea,bytea,text)
+function vektra_assess_api digest(bytea,text)
+function vektra_assess_api digest(text,text)
+function vektra_assess_api encrypt(bytea,bytea,text)
+function vektra_assess_api encrypt_iv(bytea,bytea,bytea,text)
+function vektra_assess_api gen_random_bytes(integer)
+function vektra_assess_api gen_salt(text)
+function vektra_assess_api gen_salt(text,integer)
+function vektra_assess_api get_session_material(uuid,integer)
+function vektra_assess_api halfvec(halfvec,integer,boolean)
+function vektra_assess_api halfvec_accum(double precision[],halfvec)
+function vektra_assess_api halfvec_add(halfvec,halfvec)
+function vektra_assess_api halfvec_avg(double precision[])
+function vektra_assess_api halfvec_cmp(halfvec,halfvec)
+function vektra_assess_api halfvec_combine(double precision[],double precision[])
+function vektra_assess_api halfvec_concat(halfvec,halfvec)
+function vektra_assess_api halfvec_eq(halfvec,halfvec)
+function vektra_assess_api halfvec_ge(halfvec,halfvec)
+function vektra_assess_api halfvec_gt(halfvec,halfvec)
+function vektra_assess_api halfvec_in(cstring,oid,integer)
+function vektra_assess_api halfvec_l2_squared_distance(halfvec,halfvec)
+function vektra_assess_api halfvec_le(halfvec,halfvec)
+function vektra_assess_api halfvec_lt(halfvec,halfvec)
+function vektra_assess_api halfvec_mul(halfvec,halfvec)
+function vektra_assess_api halfvec_ne(halfvec,halfvec)
+function vektra_assess_api halfvec_negative_inner_product(halfvec,halfvec)
+function vektra_assess_api halfvec_out(halfvec)
+function vektra_assess_api halfvec_recv(internal,oid,integer)
+function vektra_assess_api halfvec_send(halfvec)
+function vektra_assess_api halfvec_spherical_distance(halfvec,halfvec)
+function vektra_assess_api halfvec_sub(halfvec,halfvec)
+function vektra_assess_api halfvec_to_float4(halfvec,integer,boolean)
+function vektra_assess_api halfvec_to_sparsevec(halfvec,integer,boolean)
+function vektra_assess_api halfvec_to_vector(halfvec,integer,boolean)
+function vektra_assess_api halfvec_typmod_in(cstring[])
+function vektra_assess_api hamming_distance(bit,bit)
+function vektra_assess_api hmac(bytea,bytea,text)
+function vektra_assess_api hmac(text,text,text)
+function vektra_assess_api hnsw_bit_support(internal)
+function vektra_assess_api hnsw_halfvec_support(internal)
+function vektra_assess_api hnsw_sparsevec_support(internal)
+function vektra_assess_api hnswhandler(internal)
+function vektra_assess_api inner_product(halfvec,halfvec)
+function vektra_assess_api inner_product(sparsevec,sparsevec)
+function vektra_assess_api inner_product(vector,vector)
+function vektra_assess_api ivfflat_bit_support(internal)
+function vektra_assess_api ivfflat_halfvec_support(internal)
+function vektra_assess_api ivfflathandler(internal)
+function vektra_assess_api jaccard_distance(bit,bit)
+function vektra_assess_api l1_distance(halfvec,halfvec)
+function vektra_assess_api l1_distance(sparsevec,sparsevec)
+function vektra_assess_api l1_distance(vector,vector)
+function vektra_assess_api l2_distance(halfvec,halfvec)
+function vektra_assess_api l2_distance(sparsevec,sparsevec)
+function vektra_assess_api l2_distance(vector,vector)
+function vektra_assess_api l2_norm(halfvec)
+function vektra_assess_api l2_norm(sparsevec)
+function vektra_assess_api l2_normalize(halfvec)
+function vektra_assess_api l2_normalize(sparsevec)
+function vektra_assess_api l2_normalize(vector)
+function vektra_assess_api pgp_armor_headers(text)
+function vektra_assess_api pgp_key_id(bytea)
+function vektra_assess_api pgp_pub_decrypt(bytea,bytea)
+function vektra_assess_api pgp_pub_decrypt(bytea,bytea,text)
+function vektra_assess_api pgp_pub_decrypt(bytea,bytea,text,text)
+function vektra_assess_api pgp_pub_decrypt_bytea(bytea,bytea)
+function vektra_assess_api pgp_pub_decrypt_bytea(bytea,bytea,text)
+function vektra_assess_api pgp_pub_decrypt_bytea(bytea,bytea,text,text)
+function vektra_assess_api pgp_pub_encrypt(text,bytea)
+function vektra_assess_api pgp_pub_encrypt(text,bytea,text)
+function vektra_assess_api pgp_pub_encrypt_bytea(bytea,bytea)
+function vektra_assess_api pgp_pub_encrypt_bytea(bytea,bytea,text)
+function vektra_assess_api pgp_sym_decrypt(bytea,text)
+function vektra_assess_api pgp_sym_decrypt(bytea,text,text)
+function vektra_assess_api pgp_sym_decrypt_bytea(bytea,text)
+function vektra_assess_api pgp_sym_decrypt_bytea(bytea,text,text)
+function vektra_assess_api pgp_sym_encrypt(text,text)
+function vektra_assess_api pgp_sym_encrypt(text,text,text)
+function vektra_assess_api pgp_sym_encrypt_bytea(bytea,text)
+function vektra_assess_api pgp_sym_encrypt_bytea(bytea,text,text)
+function vektra_assess_api public.gen_random_uuid()
+function vektra_assess_api sparsevec(sparsevec,integer,boolean)
+function vektra_assess_api sparsevec_cmp(sparsevec,sparsevec)
+function vektra_assess_api sparsevec_eq(sparsevec,sparsevec)
+function vektra_assess_api sparsevec_ge(sparsevec,sparsevec)
+function vektra_assess_api sparsevec_gt(sparsevec,sparsevec)
+function vektra_assess_api sparsevec_in(cstring,oid,integer)
+function vektra_assess_api sparsevec_l2_squared_distance(sparsevec,sparsevec)
+function vektra_assess_api sparsevec_le(sparsevec,sparsevec)
+function vektra_assess_api sparsevec_lt(sparsevec,sparsevec)
+function vektra_assess_api sparsevec_ne(sparsevec,sparsevec)
+function vektra_assess_api sparsevec_negative_inner_product(sparsevec,sparsevec)
+function vektra_assess_api sparsevec_out(sparsevec)
+function vektra_assess_api sparsevec_recv(internal,oid,integer)
+function vektra_assess_api sparsevec_send(sparsevec)
+function vektra_assess_api sparsevec_to_halfvec(sparsevec,integer,boolean)
+function vektra_assess_api sparsevec_to_vector(sparsevec,integer,boolean)
+function vektra_assess_api sparsevec_typmod_in(cstring[])
+function vektra_assess_api subvector(halfvec,integer,integer)
+function vektra_assess_api subvector(vector,integer,integer)
+function vektra_assess_api sum(halfvec)
+function vektra_assess_api sum(vector)
+function vektra_assess_api vector(vector,integer,boolean)
+function vektra_assess_api vector_accum(double precision[],vector)
+function vektra_assess_api vector_add(vector,vector)
+function vektra_assess_api vector_avg(double precision[])
+function vektra_assess_api vector_cmp(vector,vector)
+function vektra_assess_api vector_combine(double precision[],double precision[])
+function vektra_assess_api vector_concat(vector,vector)
+function vektra_assess_api vector_dims(halfvec)
+function vektra_assess_api vector_dims(vector)
+function vektra_assess_api vector_eq(vector,vector)
+function vektra_assess_api vector_ge(vector,vector)
+function vektra_assess_api vector_gt(vector,vector)
+function vektra_assess_api vector_in(cstring,oid,integer)
+function vektra_assess_api vector_l2_squared_distance(vector,vector)
+function vektra_assess_api vector_le(vector,vector)
+function vektra_assess_api vector_lt(vector,vector)
+function vektra_assess_api vector_mul(vector,vector)
+function vektra_assess_api vector_ne(vector,vector)
+function vektra_assess_api vector_negative_inner_product(vector,vector)
+function vektra_assess_api vector_norm(vector)
+function vektra_assess_api vector_out(vector)
+function vektra_assess_api vector_recv(internal,oid,integer)
+function vektra_assess_api vector_send(vector)
+function vektra_assess_api vector_spherical_distance(vector,vector)
+function vektra_assess_api vector_sub(vector,vector)
+function vektra_assess_api vector_to_float4(vector,integer,boolean)
+function vektra_assess_api vector_to_halfvec(vector,integer,boolean)
+function vektra_assess_api vector_to_sparsevec(vector,integer,boolean)
+function vektra_assess_api vector_typmod_in(cstring[])
+function vektra_assess_definer armor(bytea)
+function vektra_assess_definer armor(bytea,text[],text[])
+function vektra_assess_definer array_to_halfvec(double precision[],integer,boolean)
+function vektra_assess_definer array_to_halfvec(integer[],integer,boolean)
+function vektra_assess_definer array_to_halfvec(numeric[],integer,boolean)
+function vektra_assess_definer array_to_halfvec(real[],integer,boolean)
+function vektra_assess_definer array_to_sparsevec(double precision[],integer,boolean)
+function vektra_assess_definer array_to_sparsevec(integer[],integer,boolean)
+function vektra_assess_definer array_to_sparsevec(numeric[],integer,boolean)
+function vektra_assess_definer array_to_sparsevec(real[],integer,boolean)
+function vektra_assess_definer array_to_vector(double precision[],integer,boolean)
+function vektra_assess_definer array_to_vector(integer[],integer,boolean)
+function vektra_assess_definer array_to_vector(numeric[],integer,boolean)
+function vektra_assess_definer array_to_vector(real[],integer,boolean)
+function vektra_assess_definer assess_append_turn(uuid,integer,integer,text,text,bytea,text,text)
+function vektra_assess_definer assess_audit_events_append_only()
+function vektra_assess_definer assess_audit_sealed_change()
+function vektra_assess_definer assess_close_session(uuid,integer,text)
+function vektra_assess_definer assess_end_outage(uuid,integer)
+function vektra_assess_definer assess_enqueue_resend(uuid,text,integer)
+function vektra_assess_definer assess_enter_outage(uuid,integer,timestamp with time zone,text)
+function vektra_assess_definer assess_metrics_snapshot()
+function vektra_assess_definer assess_outage_cap(integer)
+function vektra_assess_definer assess_outage_spent(uuid)
+function vektra_assess_definer assess_rollback_starting(uuid)
+function vektra_assess_definer assess_sessions_drop_handoff_on_close()
+function vektra_assess_definer assess_sessions_no_revival()
+function vektra_assess_definer assess_sessions_number()
+function vektra_assess_definer assess_sessions_require_opening_turn()
+function vektra_assess_definer assess_snapshots_immutable()
+function vektra_assess_definer avg(halfvec)
+function vektra_assess_definer avg(vector)
+function vektra_assess_definer binary_quantize(halfvec)
+function vektra_assess_definer binary_quantize(vector)
+function vektra_assess_definer cosine_distance(halfvec,halfvec)
+function vektra_assess_definer cosine_distance(sparsevec,sparsevec)
+function vektra_assess_definer cosine_distance(vector,vector)
+function vektra_assess_definer crypt(text,text)
+function vektra_assess_definer dearmor(text)
+function vektra_assess_definer decrypt(bytea,bytea,text)
+function vektra_assess_definer decrypt_iv(bytea,bytea,bytea,text)
+function vektra_assess_definer digest(bytea,text)
+function vektra_assess_definer digest(text,text)
+function vektra_assess_definer encrypt(bytea,bytea,text)
+function vektra_assess_definer encrypt_iv(bytea,bytea,bytea,text)
+function vektra_assess_definer gen_random_bytes(integer)
+function vektra_assess_definer gen_salt(text)
+function vektra_assess_definer gen_salt(text,integer)
+function vektra_assess_definer get_session_material(uuid,integer)
+function vektra_assess_definer halfvec(halfvec,integer,boolean)
+function vektra_assess_definer halfvec_accum(double precision[],halfvec)
+function vektra_assess_definer halfvec_add(halfvec,halfvec)
+function vektra_assess_definer halfvec_avg(double precision[])
+function vektra_assess_definer halfvec_cmp(halfvec,halfvec)
+function vektra_assess_definer halfvec_combine(double precision[],double precision[])
+function vektra_assess_definer halfvec_concat(halfvec,halfvec)
+function vektra_assess_definer halfvec_eq(halfvec,halfvec)
+function vektra_assess_definer halfvec_ge(halfvec,halfvec)
+function vektra_assess_definer halfvec_gt(halfvec,halfvec)
+function vektra_assess_definer halfvec_in(cstring,oid,integer)
+function vektra_assess_definer halfvec_l2_squared_distance(halfvec,halfvec)
+function vektra_assess_definer halfvec_le(halfvec,halfvec)
+function vektra_assess_definer halfvec_lt(halfvec,halfvec)
+function vektra_assess_definer halfvec_mul(halfvec,halfvec)
+function vektra_assess_definer halfvec_ne(halfvec,halfvec)
+function vektra_assess_definer halfvec_negative_inner_product(halfvec,halfvec)
+function vektra_assess_definer halfvec_out(halfvec)
+function vektra_assess_definer halfvec_recv(internal,oid,integer)
+function vektra_assess_definer halfvec_send(halfvec)
+function vektra_assess_definer halfvec_spherical_distance(halfvec,halfvec)
+function vektra_assess_definer halfvec_sub(halfvec,halfvec)
+function vektra_assess_definer halfvec_to_float4(halfvec,integer,boolean)
+function vektra_assess_definer halfvec_to_sparsevec(halfvec,integer,boolean)
+function vektra_assess_definer halfvec_to_vector(halfvec,integer,boolean)
+function vektra_assess_definer halfvec_typmod_in(cstring[])
+function vektra_assess_definer hamming_distance(bit,bit)
+function vektra_assess_definer hmac(bytea,bytea,text)
+function vektra_assess_definer hmac(text,text,text)
+function vektra_assess_definer hnsw_bit_support(internal)
+function vektra_assess_definer hnsw_halfvec_support(internal)
+function vektra_assess_definer hnsw_sparsevec_support(internal)
+function vektra_assess_definer hnswhandler(internal)
+function vektra_assess_definer inner_product(halfvec,halfvec)
+function vektra_assess_definer inner_product(sparsevec,sparsevec)
+function vektra_assess_definer inner_product(vector,vector)
+function vektra_assess_definer ivfflat_bit_support(internal)
+function vektra_assess_definer ivfflat_halfvec_support(internal)
+function vektra_assess_definer ivfflathandler(internal)
+function vektra_assess_definer jaccard_distance(bit,bit)
+function vektra_assess_definer l1_distance(halfvec,halfvec)
+function vektra_assess_definer l1_distance(sparsevec,sparsevec)
+function vektra_assess_definer l1_distance(vector,vector)
+function vektra_assess_definer l2_distance(halfvec,halfvec)
+function vektra_assess_definer l2_distance(sparsevec,sparsevec)
+function vektra_assess_definer l2_distance(vector,vector)
+function vektra_assess_definer l2_norm(halfvec)
+function vektra_assess_definer l2_norm(sparsevec)
+function vektra_assess_definer l2_normalize(halfvec)
+function vektra_assess_definer l2_normalize(sparsevec)
+function vektra_assess_definer l2_normalize(vector)
+function vektra_assess_definer pgp_armor_headers(text)
+function vektra_assess_definer pgp_key_id(bytea)
+function vektra_assess_definer pgp_pub_decrypt(bytea,bytea)
+function vektra_assess_definer pgp_pub_decrypt(bytea,bytea,text)
+function vektra_assess_definer pgp_pub_decrypt(bytea,bytea,text,text)
+function vektra_assess_definer pgp_pub_decrypt_bytea(bytea,bytea)
+function vektra_assess_definer pgp_pub_decrypt_bytea(bytea,bytea,text)
+function vektra_assess_definer pgp_pub_decrypt_bytea(bytea,bytea,text,text)
+function vektra_assess_definer pgp_pub_encrypt(text,bytea)
+function vektra_assess_definer pgp_pub_encrypt(text,bytea,text)
+function vektra_assess_definer pgp_pub_encrypt_bytea(bytea,bytea)
+function vektra_assess_definer pgp_pub_encrypt_bytea(bytea,bytea,text)
+function vektra_assess_definer pgp_sym_decrypt(bytea,text)
+function vektra_assess_definer pgp_sym_decrypt(bytea,text,text)
+function vektra_assess_definer pgp_sym_decrypt_bytea(bytea,text)
+function vektra_assess_definer pgp_sym_decrypt_bytea(bytea,text,text)
+function vektra_assess_definer pgp_sym_encrypt(text,text)
+function vektra_assess_definer pgp_sym_encrypt(text,text,text)
+function vektra_assess_definer pgp_sym_encrypt_bytea(bytea,text)
+function vektra_assess_definer pgp_sym_encrypt_bytea(bytea,text,text)
+function vektra_assess_definer public.gen_random_uuid()
+function vektra_assess_definer sparsevec(sparsevec,integer,boolean)
+function vektra_assess_definer sparsevec_cmp(sparsevec,sparsevec)
+function vektra_assess_definer sparsevec_eq(sparsevec,sparsevec)
+function vektra_assess_definer sparsevec_ge(sparsevec,sparsevec)
+function vektra_assess_definer sparsevec_gt(sparsevec,sparsevec)
+function vektra_assess_definer sparsevec_in(cstring,oid,integer)
+function vektra_assess_definer sparsevec_l2_squared_distance(sparsevec,sparsevec)
+function vektra_assess_definer sparsevec_le(sparsevec,sparsevec)
+function vektra_assess_definer sparsevec_lt(sparsevec,sparsevec)
+function vektra_assess_definer sparsevec_ne(sparsevec,sparsevec)
+function vektra_assess_definer sparsevec_negative_inner_product(sparsevec,sparsevec)
+function vektra_assess_definer sparsevec_out(sparsevec)
+function vektra_assess_definer sparsevec_recv(internal,oid,integer)
+function vektra_assess_definer sparsevec_send(sparsevec)
+function vektra_assess_definer sparsevec_to_halfvec(sparsevec,integer,boolean)
+function vektra_assess_definer sparsevec_to_vector(sparsevec,integer,boolean)
+function vektra_assess_definer sparsevec_typmod_in(cstring[])
+function vektra_assess_definer subvector(halfvec,integer,integer)
+function vektra_assess_definer subvector(vector,integer,integer)
+function vektra_assess_definer sum(halfvec)
+function vektra_assess_definer sum(vector)
+function vektra_assess_definer vector(vector,integer,boolean)
+function vektra_assess_definer vector_accum(double precision[],vector)
+function vektra_assess_definer vector_add(vector,vector)
+function vektra_assess_definer vector_avg(double precision[])
+function vektra_assess_definer vector_cmp(vector,vector)
+function vektra_assess_definer vector_combine(double precision[],double precision[])
+function vektra_assess_definer vector_concat(vector,vector)
+function vektra_assess_definer vector_dims(halfvec)
+function vektra_assess_definer vector_dims(vector)
+function vektra_assess_definer vector_eq(vector,vector)
+function vektra_assess_definer vector_ge(vector,vector)
+function vektra_assess_definer vector_gt(vector,vector)
+function vektra_assess_definer vector_in(cstring,oid,integer)
+function vektra_assess_definer vector_l2_squared_distance(vector,vector)
+function vektra_assess_definer vector_le(vector,vector)
+function vektra_assess_definer vector_lt(vector,vector)
+function vektra_assess_definer vector_mul(vector,vector)
+function vektra_assess_definer vector_ne(vector,vector)
+function vektra_assess_definer vector_negative_inner_product(vector,vector)
+function vektra_assess_definer vector_norm(vector)
+function vektra_assess_definer vector_out(vector)
+function vektra_assess_definer vector_recv(internal,oid,integer)
+function vektra_assess_definer vector_send(vector)
+function vektra_assess_definer vector_spherical_distance(vector,vector)
+function vektra_assess_definer vector_sub(vector,vector)
+function vektra_assess_definer vector_to_float4(vector,integer,boolean)
+function vektra_assess_definer vector_to_halfvec(vector,integer,boolean)
+function vektra_assess_definer vector_to_sparsevec(vector,integer,boolean)
+function vektra_assess_definer vector_typmod_in(cstring[])
+function vektra_assess_worker armor(bytea)
+function vektra_assess_worker armor(bytea,text[],text[])
+function vektra_assess_worker array_to_halfvec(double precision[],integer,boolean)
+function vektra_assess_worker array_to_halfvec(integer[],integer,boolean)
+function vektra_assess_worker array_to_halfvec(numeric[],integer,boolean)
+function vektra_assess_worker array_to_halfvec(real[],integer,boolean)
+function vektra_assess_worker array_to_sparsevec(double precision[],integer,boolean)
+function vektra_assess_worker array_to_sparsevec(integer[],integer,boolean)
+function vektra_assess_worker array_to_sparsevec(numeric[],integer,boolean)
+function vektra_assess_worker array_to_sparsevec(real[],integer,boolean)
+function vektra_assess_worker array_to_vector(double precision[],integer,boolean)
+function vektra_assess_worker array_to_vector(integer[],integer,boolean)
+function vektra_assess_worker array_to_vector(numeric[],integer,boolean)
+function vektra_assess_worker array_to_vector(real[],integer,boolean)
+function vektra_assess_worker assess_append_turn(uuid,integer,integer,text,text,bytea,text,text)
+function vektra_assess_worker assess_audit_events_append_only()
+function vektra_assess_worker assess_close_session(uuid,integer,text)
+function vektra_assess_worker assess_end_outage(uuid,integer)
+function vektra_assess_worker assess_outage_cap(integer)
+function vektra_assess_worker assess_outage_spent(uuid)
+function vektra_assess_worker assess_sessions_no_revival()
+function vektra_assess_worker assess_sessions_number()
+function vektra_assess_worker assess_snapshots_immutable()
+function vektra_assess_worker avg(halfvec)
+function vektra_assess_worker avg(vector)
+function vektra_assess_worker binary_quantize(halfvec)
+function vektra_assess_worker binary_quantize(vector)
+function vektra_assess_worker cosine_distance(halfvec,halfvec)
+function vektra_assess_worker cosine_distance(sparsevec,sparsevec)
+function vektra_assess_worker cosine_distance(vector,vector)
+function vektra_assess_worker crypt(text,text)
+function vektra_assess_worker dearmor(text)
+function vektra_assess_worker decrypt(bytea,bytea,text)
+function vektra_assess_worker decrypt_iv(bytea,bytea,bytea,text)
+function vektra_assess_worker digest(bytea,text)
+function vektra_assess_worker digest(text,text)
+function vektra_assess_worker encrypt(bytea,bytea,text)
+function vektra_assess_worker encrypt_iv(bytea,bytea,bytea,text)
+function vektra_assess_worker gen_random_bytes(integer)
+function vektra_assess_worker gen_salt(text)
+function vektra_assess_worker gen_salt(text,integer)
+function vektra_assess_worker halfvec(halfvec,integer,boolean)
+function vektra_assess_worker halfvec_accum(double precision[],halfvec)
+function vektra_assess_worker halfvec_add(halfvec,halfvec)
+function vektra_assess_worker halfvec_avg(double precision[])
+function vektra_assess_worker halfvec_cmp(halfvec,halfvec)
+function vektra_assess_worker halfvec_combine(double precision[],double precision[])
+function vektra_assess_worker halfvec_concat(halfvec,halfvec)
+function vektra_assess_worker halfvec_eq(halfvec,halfvec)
+function vektra_assess_worker halfvec_ge(halfvec,halfvec)
+function vektra_assess_worker halfvec_gt(halfvec,halfvec)
+function vektra_assess_worker halfvec_in(cstring,oid,integer)
+function vektra_assess_worker halfvec_l2_squared_distance(halfvec,halfvec)
+function vektra_assess_worker halfvec_le(halfvec,halfvec)
+function vektra_assess_worker halfvec_lt(halfvec,halfvec)
+function vektra_assess_worker halfvec_mul(halfvec,halfvec)
+function vektra_assess_worker halfvec_ne(halfvec,halfvec)
+function vektra_assess_worker halfvec_negative_inner_product(halfvec,halfvec)
+function vektra_assess_worker halfvec_out(halfvec)
+function vektra_assess_worker halfvec_recv(internal,oid,integer)
+function vektra_assess_worker halfvec_send(halfvec)
+function vektra_assess_worker halfvec_spherical_distance(halfvec,halfvec)
+function vektra_assess_worker halfvec_sub(halfvec,halfvec)
+function vektra_assess_worker halfvec_to_float4(halfvec,integer,boolean)
+function vektra_assess_worker halfvec_to_sparsevec(halfvec,integer,boolean)
+function vektra_assess_worker halfvec_to_vector(halfvec,integer,boolean)
+function vektra_assess_worker halfvec_typmod_in(cstring[])
+function vektra_assess_worker hamming_distance(bit,bit)
+function vektra_assess_worker hmac(bytea,bytea,text)
+function vektra_assess_worker hmac(text,text,text)
+function vektra_assess_worker hnsw_bit_support(internal)
+function vektra_assess_worker hnsw_halfvec_support(internal)
+function vektra_assess_worker hnsw_sparsevec_support(internal)
+function vektra_assess_worker hnswhandler(internal)
+function vektra_assess_worker inner_product(halfvec,halfvec)
+function vektra_assess_worker inner_product(sparsevec,sparsevec)
+function vektra_assess_worker inner_product(vector,vector)
+function vektra_assess_worker ivfflat_bit_support(internal)
+function vektra_assess_worker ivfflat_halfvec_support(internal)
+function vektra_assess_worker ivfflathandler(internal)
+function vektra_assess_worker jaccard_distance(bit,bit)
+function vektra_assess_worker l1_distance(halfvec,halfvec)
+function vektra_assess_worker l1_distance(sparsevec,sparsevec)
+function vektra_assess_worker l1_distance(vector,vector)
+function vektra_assess_worker l2_distance(halfvec,halfvec)
+function vektra_assess_worker l2_distance(sparsevec,sparsevec)
+function vektra_assess_worker l2_distance(vector,vector)
+function vektra_assess_worker l2_norm(halfvec)
+function vektra_assess_worker l2_norm(sparsevec)
+function vektra_assess_worker l2_normalize(halfvec)
+function vektra_assess_worker l2_normalize(sparsevec)
+function vektra_assess_worker l2_normalize(vector)
+function vektra_assess_worker pgp_armor_headers(text)
+function vektra_assess_worker pgp_key_id(bytea)
+function vektra_assess_worker pgp_pub_decrypt(bytea,bytea)
+function vektra_assess_worker pgp_pub_decrypt(bytea,bytea,text)
+function vektra_assess_worker pgp_pub_decrypt(bytea,bytea,text,text)
+function vektra_assess_worker pgp_pub_decrypt_bytea(bytea,bytea)
+function vektra_assess_worker pgp_pub_decrypt_bytea(bytea,bytea,text)
+function vektra_assess_worker pgp_pub_decrypt_bytea(bytea,bytea,text,text)
+function vektra_assess_worker pgp_pub_encrypt(text,bytea)
+function vektra_assess_worker pgp_pub_encrypt(text,bytea,text)
+function vektra_assess_worker pgp_pub_encrypt_bytea(bytea,bytea)
+function vektra_assess_worker pgp_pub_encrypt_bytea(bytea,bytea,text)
+function vektra_assess_worker pgp_sym_decrypt(bytea,text)
+function vektra_assess_worker pgp_sym_decrypt(bytea,text,text)
+function vektra_assess_worker pgp_sym_decrypt_bytea(bytea,text)
+function vektra_assess_worker pgp_sym_decrypt_bytea(bytea,text,text)
+function vektra_assess_worker pgp_sym_encrypt(text,text)
+function vektra_assess_worker pgp_sym_encrypt(text,text,text)
+function vektra_assess_worker pgp_sym_encrypt_bytea(bytea,text)
+function vektra_assess_worker pgp_sym_encrypt_bytea(bytea,text,text)
+function vektra_assess_worker public.gen_random_uuid()
+function vektra_assess_worker sparsevec(sparsevec,integer,boolean)
+function vektra_assess_worker sparsevec_cmp(sparsevec,sparsevec)
+function vektra_assess_worker sparsevec_eq(sparsevec,sparsevec)
+function vektra_assess_worker sparsevec_ge(sparsevec,sparsevec)
+function vektra_assess_worker sparsevec_gt(sparsevec,sparsevec)
+function vektra_assess_worker sparsevec_in(cstring,oid,integer)
+function vektra_assess_worker sparsevec_l2_squared_distance(sparsevec,sparsevec)
+function vektra_assess_worker sparsevec_le(sparsevec,sparsevec)
+function vektra_assess_worker sparsevec_lt(sparsevec,sparsevec)
+function vektra_assess_worker sparsevec_ne(sparsevec,sparsevec)
+function vektra_assess_worker sparsevec_negative_inner_product(sparsevec,sparsevec)
+function vektra_assess_worker sparsevec_out(sparsevec)
+function vektra_assess_worker sparsevec_recv(internal,oid,integer)
+function vektra_assess_worker sparsevec_send(sparsevec)
+function vektra_assess_worker sparsevec_to_halfvec(sparsevec,integer,boolean)
+function vektra_assess_worker sparsevec_to_vector(sparsevec,integer,boolean)
+function vektra_assess_worker sparsevec_typmod_in(cstring[])
+function vektra_assess_worker subvector(halfvec,integer,integer)
+function vektra_assess_worker subvector(vector,integer,integer)
+function vektra_assess_worker sum(halfvec)
+function vektra_assess_worker sum(vector)
+function vektra_assess_worker vector(vector,integer,boolean)
+function vektra_assess_worker vector_accum(double precision[],vector)
+function vektra_assess_worker vector_add(vector,vector)
+function vektra_assess_worker vector_avg(double precision[])
+function vektra_assess_worker vector_cmp(vector,vector)
+function vektra_assess_worker vector_combine(double precision[],double precision[])
+function vektra_assess_worker vector_concat(vector,vector)
+function vektra_assess_worker vector_dims(halfvec)
+function vektra_assess_worker vector_dims(vector)
+function vektra_assess_worker vector_eq(vector,vector)
+function vektra_assess_worker vector_ge(vector,vector)
+function vektra_assess_worker vector_gt(vector,vector)
+function vektra_assess_worker vector_in(cstring,oid,integer)
+function vektra_assess_worker vector_l2_squared_distance(vector,vector)
+function vektra_assess_worker vector_le(vector,vector)
+function vektra_assess_worker vector_lt(vector,vector)
+function vektra_assess_worker vector_mul(vector,vector)
+function vektra_assess_worker vector_ne(vector,vector)
+function vektra_assess_worker vector_negative_inner_product(vector,vector)
+function vektra_assess_worker vector_norm(vector)
+function vektra_assess_worker vector_out(vector)
+function vektra_assess_worker vector_recv(internal,oid,integer)
+function vektra_assess_worker vector_send(vector)
+function vektra_assess_worker vector_spherical_distance(vector,vector)
+function vektra_assess_worker vector_sub(vector,vector)
+function vektra_assess_worker vector_to_float4(vector,integer,boolean)
+function vektra_assess_worker vector_to_halfvec(vector,integer,boolean)
+function vektra_assess_worker vector_to_sparsevec(vector,integer,boolean)
+function vektra_assess_worker vector_typmod_in(cstring[])
+role vektra_assess_api super=n inherit=n createrole=n createdb=n login=n bypassrls=n member_of=[]
+role vektra_assess_definer super=n inherit=n createrole=n createdb=n login=n bypassrls=n member_of=[]
+role vektra_assess_worker super=n inherit=n createrole=n createdb=n login=n bypassrls=n member_of=[]
+schema vektra_assess_api USAGE
+schema vektra_assess_definer USAGE
+schema vektra_assess_worker USAGE
+sequence vektra_assess_api assess_audit_events_id_seq USAGE
+sequence vektra_assess_api assess_erasure_records_id_seq USAGE
+sequence vektra_assess_api assess_jobs_id_seq USAGE
+sequence vektra_assess_api assess_model_activations_id_seq USAGE
+sequence vektra_assess_api assess_render_checks_id_seq USAGE
+sequence vektra_assess_api assess_start_attempts_id_seq USAGE
+sequence vektra_assess_definer assess_audit_events_id_seq USAGE
+sequence vektra_assess_definer assess_jobs_id_seq USAGE
+sequence vektra_assess_definer assess_outage_incidents_id_seq USAGE
+sequence vektra_assess_definer assess_start_attempts_id_seq USAGE
+sequence vektra_assess_worker assess_audit_events_id_seq USAGE
+sequence vektra_assess_worker assess_enrolment_checks_id_seq USAGE
+sequence vektra_assess_worker assess_erasure_records_id_seq USAGE
+sequence vektra_assess_worker assess_jobs_id_seq USAGE
+sequence vektra_assess_worker assess_model_activations_id_seq USAGE
+sequence vektra_assess_worker assess_outage_incidents_id_seq USAGE
+sequence vektra_assess_worker assess_purge_records_id_seq USAGE
+sequence vektra_assess_worker assess_render_checks_id_seq USAGE
+sequence vektra_assess_worker assess_setup_checks_id_seq USAGE
+sequence vektra_assess_worker assess_start_attempts_id_seq USAGE
+table vektra_assess_api assess_audit_events INSERT
+table vektra_assess_api assess_consumed_jtis INSERT
+table vektra_assess_api assess_consumed_jtis SELECT
+table vektra_assess_api assess_enrolment_checks SELECT
+table vektra_assess_api assess_erasure_records INSERT
+table vektra_assess_api assess_erasure_records SELECT
+table vektra_assess_api assess_extra_time INSERT
+table vektra_assess_api assess_extra_time SELECT
+table vektra_assess_api assess_extra_time UPDATE
+table vektra_assess_api assess_gate_inputs SELECT
+table vektra_assess_api assess_heartbeat SELECT
+table vektra_assess_api assess_jobs INSERT
+table vektra_assess_api assess_model_activations INSERT
+table vektra_assess_api assess_model_activations SELECT
+table vektra_assess_api assess_outage_incidents SELECT
+table vektra_assess_api assess_privacy_config INSERT
+table vektra_assess_api assess_privacy_config SELECT
+table vektra_assess_api assess_purge_records SELECT
+table vektra_assess_api assess_render_checks INSERT
+table vektra_assess_api assess_render_checks SELECT
+table vektra_assess_api assess_render_state SELECT
+table vektra_assess_api assess_reset_grants INSERT
+table vektra_assess_api assess_reset_grants SELECT
+table vektra_assess_api assess_sessions INSERT
+table vektra_assess_api assess_sessions SELECT
+table vektra_assess_api assess_setup_check_reports INSERT
+table vektra_assess_api assess_setup_check_reports SELECT
+table vektra_assess_api assess_site_capabilities SELECT
+table vektra_assess_api assess_site_keys SELECT
+table vektra_assess_api assess_start_attempts INSERT
+table vektra_assess_api assess_start_attempts SELECT
+table vektra_assess_api assess_start_breaker SELECT
+table vektra_assess_api assess_teacher_gate SELECT
+table vektra_assess_api assess_terminations INSERT
+table vektra_assess_api assess_terminations SELECT
+table vektra_assess_api assess_token_jti INSERT
+table vektra_assess_api assess_token_jti SELECT
+table vektra_assess_api assess_transcript_download_tokens INSERT
+table vektra_assess_api assess_transcript_download_tokens SELECT
+table vektra_assess_api assess_transcripts SELECT
+table vektra_assess_api assess_turn_flags INSERT
+table vektra_assess_api assess_turn_flags SELECT
+table vektra_assess_api assess_turn_notes INSERT
+table vektra_assess_definer assess_audit_events INSERT
+table vektra_assess_definer assess_deliveries INSERT
+table vektra_assess_definer assess_deliveries SELECT
+table vektra_assess_definer assess_heartbeat SELECT
+table vektra_assess_definer assess_jobs INSERT
+table vektra_assess_definer assess_jobs SELECT
+table vektra_assess_definer assess_outage_incidents INSERT
+table vektra_assess_definer assess_outage_incidents SELECT
+table vektra_assess_definer assess_session_handoff DELETE
+table vektra_assess_definer assess_session_handoff SELECT
+table vektra_assess_definer assess_sessions DELETE
+table vektra_assess_definer assess_sessions SELECT
+table vektra_assess_definer assess_snapshots SELECT
+table vektra_assess_definer assess_start_attempts INSERT
+table vektra_assess_definer assess_start_attempts SELECT
+table vektra_assess_definer assess_transcripts SELECT
+table vektra_assess_definer assess_turns INSERT
+table vektra_assess_definer assess_turns SELECT
+table vektra_assess_worker assess_activity_config SELECT
+table vektra_assess_worker assess_activity_config_sealed SELECT
+table vektra_assess_worker assess_audit_events INSERT
+table vektra_assess_worker assess_consumed_jtis DELETE
+table vektra_assess_worker assess_consumed_jtis SELECT
+table vektra_assess_worker assess_deliveries DELETE
+table vektra_assess_worker assess_deliveries INSERT
+table vektra_assess_worker assess_deliveries SELECT
+table vektra_assess_worker assess_deliveries UPDATE
+table vektra_assess_worker assess_enrolment_checks DELETE
+table vektra_assess_worker assess_enrolment_checks INSERT
+table vektra_assess_worker assess_enrolment_checks SELECT
+table vektra_assess_worker assess_erasure_records INSERT
+table vektra_assess_worker assess_erasure_records SELECT
+table vektra_assess_worker assess_erasure_records UPDATE
+table vektra_assess_worker assess_extra_time DELETE
+table vektra_assess_worker assess_extra_time SELECT
+table vektra_assess_worker assess_gate_inputs DELETE
+table vektra_assess_worker assess_gate_inputs INSERT
+table vektra_assess_worker assess_gate_inputs SELECT
+table vektra_assess_worker assess_gate_inputs UPDATE
+table vektra_assess_worker assess_heartbeat DELETE
+table vektra_assess_worker assess_heartbeat INSERT
+table vektra_assess_worker assess_heartbeat SELECT
+table vektra_assess_worker assess_heartbeat UPDATE
+table vektra_assess_worker assess_jobs DELETE
+table vektra_assess_worker assess_jobs INSERT
+table vektra_assess_worker assess_jobs SELECT
+table vektra_assess_worker assess_jobs UPDATE
+table vektra_assess_worker assess_model_activations SELECT
+table vektra_assess_worker assess_outage_incidents DELETE
+table vektra_assess_worker assess_outage_incidents INSERT
+table vektra_assess_worker assess_outage_incidents SELECT
+table vektra_assess_worker assess_outage_incidents UPDATE
+table vektra_assess_worker assess_privacy_config SELECT
+table vektra_assess_worker assess_purge_records INSERT
+table vektra_assess_worker assess_purge_records SELECT
+table vektra_assess_worker assess_render_checks DELETE
+table vektra_assess_worker assess_render_checks INSERT
+table vektra_assess_worker assess_render_checks SELECT
+table vektra_assess_worker assess_render_checks UPDATE
+table vektra_assess_worker assess_render_state DELETE
+table vektra_assess_worker assess_render_state INSERT
+table vektra_assess_worker assess_render_state SELECT
+table vektra_assess_worker assess_render_state UPDATE
+table vektra_assess_worker assess_reset_grants DELETE
+table vektra_assess_worker assess_reset_grants SELECT
+table vektra_assess_worker assess_session_handoff DELETE
+table vektra_assess_worker assess_session_handoff INSERT
+table vektra_assess_worker assess_session_handoff SELECT
+table vektra_assess_worker assess_session_handoff UPDATE
+table vektra_assess_worker assess_session_keys DELETE
+table vektra_assess_worker assess_session_keys INSERT
+table vektra_assess_worker assess_session_keys SELECT
+table vektra_assess_worker assess_session_keys UPDATE
+table vektra_assess_worker assess_sessions DELETE
+table vektra_assess_worker assess_sessions INSERT
+table vektra_assess_worker assess_sessions SELECT
+table vektra_assess_worker assess_sessions UPDATE
+table vektra_assess_worker assess_setup_check_reports DELETE
+table vektra_assess_worker assess_setup_check_reports INSERT
+table vektra_assess_worker assess_setup_check_reports SELECT
+table vektra_assess_worker assess_setup_check_reports UPDATE
+table vektra_assess_worker assess_setup_checks DELETE
+table vektra_assess_worker assess_setup_checks INSERT
+table vektra_assess_worker assess_setup_checks SELECT
+table vektra_assess_worker assess_site_capabilities DELETE
+table vektra_assess_worker assess_site_capabilities INSERT
+table vektra_assess_worker assess_site_capabilities SELECT
+table vektra_assess_worker assess_site_capabilities UPDATE
+table vektra_assess_worker assess_site_keys SELECT
+table vektra_assess_worker assess_sites SELECT
+table vektra_assess_worker assess_snapshots DELETE
+table vektra_assess_worker assess_snapshots INSERT
+table vektra_assess_worker assess_snapshots SELECT
+table vektra_assess_worker assess_start_attempts DELETE
+table vektra_assess_worker assess_start_attempts INSERT
+table vektra_assess_worker assess_start_attempts SELECT
+table vektra_assess_worker assess_start_breaker DELETE
+table vektra_assess_worker assess_start_breaker INSERT
+table vektra_assess_worker assess_start_breaker SELECT
+table vektra_assess_worker assess_start_breaker UPDATE
+table vektra_assess_worker assess_teacher_gate DELETE
+table vektra_assess_worker assess_teacher_gate INSERT
+table vektra_assess_worker assess_teacher_gate SELECT
+table vektra_assess_worker assess_teacher_gate UPDATE
+table vektra_assess_worker assess_terminations SELECT
+table vektra_assess_worker assess_token_jti DELETE
+table vektra_assess_worker assess_token_jti SELECT
+table vektra_assess_worker assess_transcript_download_tokens DELETE
+table vektra_assess_worker assess_transcript_download_tokens SELECT
+table vektra_assess_worker assess_transcripts DELETE
+table vektra_assess_worker assess_transcripts INSERT
+table vektra_assess_worker assess_transcripts SELECT
+table vektra_assess_worker assess_transcripts UPDATE
+table vektra_assess_worker assess_turn_flags DELETE
+table vektra_assess_worker assess_turn_flags SELECT
+table vektra_assess_worker assess_turn_notes DELETE
+table vektra_assess_worker assess_turn_notes SELECT
+table vektra_assess_worker assess_turns DELETE
+table vektra_assess_worker assess_turns INSERT
+table vektra_assess_worker assess_turns SELECT

@@ -36,10 +36,9 @@ from vektra_assess.moodle.setup_check import (
     CheckContext,
     run_service_account_items,
 )
+from vektra_assess.moodle.tokens import SECRET_NAME
 from vektra_shared.lms import (
-    FILE_NOT_IN_SUBMISSION,
     NOT_IN_USER_COURSES,
-    SUBMISSION_MISMATCH,
     ActivityKind,
     ActivityRef,
     AssignmentDates,
@@ -186,13 +185,6 @@ _ATTEMPT: Mapping[m.AttemptState, AttemptState] = {
 }
 _GRADE_TYPES = ("point", "scale", "none")
 _NOT_IN_STUDENT_COURSES = "activity_not_in_student_courses"
-#: the file reader's ownership refusals -> the Protocol's neutral codes (the vertical audits them)
-_FILE_REFUSALS: Mapping[str, str] = {
-    "submission_mismatch": SUBMISSION_MISMATCH,
-    "file_not_in_submission": FILE_NOT_IN_SUBMISSION,
-}
-#: the worker secret holding the per-site web-service tokens (``moodle/tokens.py``)
-TOKEN_SECRET = "assess_ws_tokens"
 
 
 def question_state(state: str | None) -> QuestionState:
@@ -513,7 +505,7 @@ class MoodleLmsProvider:
 
     @property
     def required_secrets(self) -> tuple[str, ...]:
-        return (TOKEN_SECRET,)
+        return (SECRET_NAME,)
 
     # --- lifecycle ----------------------------------------------------------------------------
 
@@ -702,7 +694,9 @@ class MoodleLmsProvider:
             fileurl=ref.locator,
             timemodified=ref.time_modified,
         )
-        res = await r.fetch_submission_file(
+        # the reader's ownership refusals are already the Protocol's neutral codes
+        # (``SUBMISSION_MISMATCH``, ``FILE_NOT_IN_SUBMISSION``), which the vertical audits
+        return await r.fetch_submission_file(
             self._client,
             _ref(site),
             assignment_id,
@@ -710,9 +704,6 @@ class MoodleLmsProvider:
             owner_user_id,
             submission_id,
         )
-        if isinstance(res, Unreadable) and res.detail_code in _FILE_REFUSALS:
-            return Unreadable(res.reason, _FILE_REFUSALS[res.detail_code])
-        return res
 
     async def assignment_release(
         self, site: LmsSite, course_id: int, assignment_id: int, user_id: int

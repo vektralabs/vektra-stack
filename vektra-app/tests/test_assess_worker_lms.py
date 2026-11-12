@@ -71,6 +71,41 @@ def test_the_setup_check_binds_on_the_secrets_the_provider_declares(
     assert JobKind.SETUP_CHECK in assess_worker._setup_check_parts(declared).handlers
 
 
+def test_every_lms_reading_handler_is_unbound_without_a_declared_secret(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Second review, finding 4: one gate at composition (``_bound_lms``). With a session key
+    set complete but the provider's declared secret missing, the pre-flight (and every other
+    handler that reads the LMS) is not bound; with it, the pre-flight is."""
+    import os
+
+    from vektra_assess.jobs import JobKind
+    from vektra_assess.keys import AssessKeyring, Credentials
+
+    monkeypatch.setenv("VEKTRA_ASSESS_LLM_MODEL", "openai/test-model")
+    ring = AssessKeyring("k", "k1", {"k1": os.urandom(32)})
+    session_keys: dict[str, Any] = {n: ring for n in assess_worker.SESSION_KEYS}
+    lms = guarded(_Provider())  # type: ignore[arg-type]
+    missing = _checked(monkeypatch, dict(session_keys), lms)
+    assert assess_worker._bound_lms(missing) is None
+    assert assess_worker._session_handlers(missing, audit=None) == {}
+    keyed = _checked(
+        monkeypatch,
+        {**session_keys, "provider_secret": Credentials("provider_secret", {})},
+        lms,
+    )
+    assert assess_worker._bound_lms(keyed) is lms
+    handlers = assess_worker._session_handlers(keyed, audit=None)
+    for kind in (
+        JobKind.PREFLIGHT,
+        JobKind.ENROLMENT_RECHECK,
+        JobKind.RENDER_CHECK,
+        JobKind.TEACHER_GATE,
+        JobKind.TRANSCRIPT_GENERATE,
+    ):
+        assert kind in handlers, kind
+
+
 async def test_a_later_startup_refusal_closes_the_loaded_provider(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -12,7 +12,10 @@ failure, applied when the provider raises:
 - ``startup_problems``: one problem, so the process does not start;
 - ``aclose``: the error is logged and dropped (shutdown goes on);
 - ``setup_items`` / ``required_secrets``: a declaration that cannot be read is an invalid one,
-  which the setup check and the composition both refuse; ``name`` passes through.
+  which the setup check and the composition both refuse; an unreadable ``name`` is
+  ``<unnamed>``, which matches no configured provider.
+
+Only the Protocol is reachable through the wrapper: there is no forwarding of other attributes.
 
 The member table is checked against the Protocol at import: a member added to ``LmsProvider``
 without a declared failure is an ``ImportError``, never an unguarded path. Only the exception's
@@ -47,6 +50,8 @@ log = structlog.get_logger(__name__)
 
 #: a declared name no validator accepts: what an unreadable declaration becomes
 INVALID_DECLARATION = "!unreadable"
+#: what an unreadable provider name becomes (it never matches a configured name)
+UNNAMED = "<unnamed>"
 
 #: the members that return a ``Reading``
 READ_MEMBERS: tuple[str, ...] = (
@@ -93,7 +98,8 @@ def _failed(member: str, exc: BaseException) -> None:
     log.warning("lms_provider_error", member=member, error=type(exc).__name__)
 
 
-def _not_probed(flag: str, release: str | None) -> CapabilityResult:
+def not_probed(flag: str, release: str | None) -> CapabilityResult:
+    """The fail-closed result of a capability flag nobody probed (content-free evidence)."""
     reason = UnreadableReason.NOT_PROBED.value
     evidence = hashlib.sha256(f"{flag}\n{release or ''}\n{reason}".encode()).hexdigest()
     return CapabilityResult(flag, "unreadable", reason, evidence)
@@ -115,17 +121,19 @@ def _read_member(member: str) -> Callable[..., Awaitable[Reading[Any]]]:
 
 class GuardedLmsProvider:
     """``LmsProvider`` over ``inner``: the same answers, and a declared failure instead of an
-    exception. Any other attribute is the inner provider's (a test's handle on a fake)."""
+    exception. Only the Protocol is exposed: no other attribute of the inner provider is
+    reachable through the wrapper (a caller that needs one has found a Protocol gap)."""
 
     def __init__(self, inner: LmsProvider) -> None:
         self.inner = inner
 
-    def __getattr__(self, attr: str) -> Any:
-        return getattr(self.inner, attr)
-
     @property
     def name(self) -> str:
-        return self.inner.name
+        try:
+            return str(self.inner.name)
+        except Exception as exc:
+            _failed("name", exc)
+            return UNNAMED
 
     def _declared(self, member: str) -> tuple[str, ...]:
         try:
@@ -152,8 +160,8 @@ class GuardedLmsProvider:
                 StartupProblem(
                     setting="VEKTRA_ASSESS_LMS_PROVIDER",
                     detail=(
-                        f"the LMS provider {self.name} failed its startup check "
-                        f"({type(exc).__name__})"
+                        f"the LMS provider {self.name} named by VEKTRA_ASSESS_LMS_PROVIDER "
+                        f"failed its startup check ({type(exc).__name__})"
                     ),
                     remediation="Check the provider's own settings.",
                 ),
@@ -187,7 +195,7 @@ class GuardedLmsProvider:
             return tuple(await self.inner.probe_capabilities(site, manifest, flags))
         except Exception as exc:
             _failed("probe_capabilities", exc)
-            return tuple(_not_probed(f, site.release) for f in flags)
+            return tuple(not_probed(f, site.release) for f in flags)
 
 
 for _member in READ_MEMBERS:
@@ -212,7 +220,9 @@ __all__ = [
     "INVALID_DECLARATION",
     "OTHER_MEMBERS",
     "READ_MEMBERS",
+    "UNNAMED",
     "GuardedLmsProvider",
     "guarded",
+    "not_probed",
     "uncovered_members",
 ]

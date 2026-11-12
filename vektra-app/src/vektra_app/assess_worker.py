@@ -351,6 +351,17 @@ SESSION_KEYS = (
 )
 
 
+def _bound_lms(checked: Checked) -> Any | None:
+    """The worker's LMS provider when it may serve jobs: loaded, and every secret it declares
+    (``required_secrets``) was loaded by the key matrix. None otherwise, and then NO handler
+    that reads the LMS is bound (the pre-flight, enrolment, render, teacher gate, transcript,
+    reconcile and setup-check handlers alike): ``assert_all_bound`` refuses to start."""
+    lms = checked.lms
+    if lms is None or not all(name in checked.keys for name in lms.required_secrets):
+        return None
+    return lms
+
+
 def _session_handlers(checked: Checked, audit: Any) -> dict[Any, Any]:
     """The plan assess-session-lifecycle bodies: the ``preflight`` handler.
 
@@ -360,7 +371,8 @@ def _session_handlers(checked: Checked, audit: Any) -> dict[Any, Any]:
     Nothing connects here: the LMS provider, the parser client and the LLM provider open their
     connections on first use.
     """
-    if checked.lms is None or not all(k in checked.keys for k in SESSION_KEYS):
+    lms = _bound_lms(checked)
+    if lms is None or not all(k in checked.keys for k in SESSION_KEYS):
         return {}
     from vektra_app.assess_llm import build_assess_llm, build_worker_part_b_runner
     from vektra_assess.delivery.recipients import ConfigRecipients
@@ -385,7 +397,7 @@ def _session_handlers(checked: Checked, audit: Any) -> dict[Any, Any]:
         llm=build_assess_llm(settings),
     )
     source = LmsStartSource(
-        checked.lms,
+        lms,
         ParserClient.from_settings(settings),
         engine.connect,
         teacher_private=checked.keys["assess_teacher_config_private"],
@@ -683,9 +695,8 @@ def _setup_check_parts(
     setup-check slot"), and the worker's own ``smtp_probe`` and ``db_log_statement_none`` items
     (``worker/setup_items.py``, coordinator decisions 2026-11-08).
     """
-    if checked.lms is None or not all(
-        name in checked.keys for name in checked.lms.required_secrets
-    ):
+    lms = _bound_lms(checked)
+    if lms is None:
         return SetupCheckParts({}, {})
     from vektra_assess.jobs import JobKind
     from vektra_assess.worker.parser_client import ParserClient, register_parser_check
@@ -715,7 +726,7 @@ def _setup_check_parts(
         {
             JobKind.SETUP_CHECK: make_setup_check_handler(
                 engine,
-                checked.lms,
+                lms,
                 settings,
                 registry=registry,
                 # a running report older than the job's lease is a dead run's (finding 6)

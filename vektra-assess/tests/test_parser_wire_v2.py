@@ -46,10 +46,51 @@ async def test_a_request_the_client_cannot_frame_degrades_instead_of_raising(
     fake: Fake,  # noqa: F811
 ) -> None:
     """A header over ``MAX_HEADER`` used to raise ``FrameError`` out of ``_call`` and roll the
-    Start back. It is a protocol violation now: CORRUPT for that item, nothing sent."""
-    res = await client_for(fake).parse_file(b"abc", "x" * 5000)
-    assert res.status is FileStatus.CORRUPT and res.code == "protocol_violation"
-    assert fake.requests == []
+    Start back. Now it is CORRUPT for that item with its own reason, found before any
+    connection (second review, finding 5): the sidecar is never blamed for this request."""
+    import asyncio
+
+    connects: list[object] = []
+    real = asyncio.open_unix_connection
+
+    async def counting(*a: Any, **k: Any) -> Any:
+        connects.append(a)
+        return await real(*a, **k)
+
+    asyncio.open_unix_connection = counting  # type: ignore[assignment]
+    try:
+        res = await client_for(fake).parse_file(b"abc", "x" * 5000)
+    finally:
+        asyncio.open_unix_connection = real  # type: ignore[assignment]
+    assert res.status is FileStatus.CORRUPT and res.code == "request_too_large"
+    assert connects == [] and fake.requests == []
+
+
+async def test_a_set_of_drop_classes_is_cached_like_a_frozenset(
+    fake: Fake,  # noqa: F811
+) -> None:
+    """Second review, finding 2: a provider handing a ``set`` used to make the cache key
+    unhashable. The profile freezes it, so the item is extracted and the cache works."""
+    import dataclasses
+
+    fake.responder = lie(
+        lambda r: reply(
+            r,
+            text=json.dumps(
+                {"question_text": "Q", "response": "A", "truncated": False}
+            ),
+            code="review_item",
+        )
+    )
+    profile = dataclasses.replace(PROFILE, drop_classes={"q-solution"})  # type: ignore[arg-type]
+    client = client_for(fake)
+    for _ in range(2):
+        assert await client.extract_review_item(b"<p>x</p>", profile) == (
+            "Q",
+            "A",
+            False,
+        )
+    assert len(client._profiles) == 1
 
 
 async def test_the_profile_wire_form_is_built_once_per_profile(

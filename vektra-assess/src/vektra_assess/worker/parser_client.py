@@ -72,6 +72,13 @@ class _Unavailable(Exception):
     pass
 
 
+class _RequestTooLarge(Exception):
+    """The request does not fit the protocol's header: a client-side limit, not the sidecar's."""
+
+
+REQUEST_TOO_LARGE_CODE = "request_too_large"
+
+
 @dataclass(frozen=True)
 class ParseResult:
     status: FileStatus
@@ -287,6 +294,10 @@ class ParserClient:
                 raise ParserUnavailableError("client_timeout") from None
             except _Unavailable as exc:
                 raise ParserUnavailableError(str(exc)) from None
+            except _RequestTooLarge:
+                # the item degrades (CORRUPT); the log says it was this request, not the sidecar
+                log.warning("assess_parser_request_too_large", reason_code=op)
+                return ParseResult(FileStatus.CORRUPT, code=REQUEST_TOO_LARGE_CODE)
             except _Violation as exc:
                 return _violation_result(str(exc))
             if header.get("code") == TRANSPORT_BUSY and header.get("status") is None:
@@ -304,18 +315,18 @@ class ParserClient:
         self, header: dict[str, Any], payload: bytes, *, max_payload: int
     ) -> tuple[dict[str, Any], bytes]:
         try:
+            frame = encode_frame({"v": PROTOCOL_VERSION, **header}, payload)
+        except FrameError:
+            # a request this client cannot even frame (a header over MAX_HEADER): this
+            # worker's own fault, found before any connection, never blamed on the sidecar
+            raise _RequestTooLarge() from None
+        try:
             reader, writer = await asyncio.wait_for(
                 asyncio.open_unix_connection(self.socket_path), self.connect_timeout_s
             )
         except (OSError, TimeoutError) as exc:
             raise _Unavailable(type(exc).__name__) from None
         try:
-            try:
-                frame = encode_frame({"v": PROTOCOL_VERSION, **header}, payload)
-            except FrameError:
-                # a request this client cannot even frame (a header over MAX_HEADER): the item
-                # degrades like any other protocol violation, the Start does not crash
-                raise _Violation("request_header_too_large") from None
             try:
                 writer.write(frame)
                 await writer.drain()

@@ -19,7 +19,6 @@ transaction as the report, and emits one operator alert log event (metadata only
 
 from __future__ import annotations
 
-import hashlib
 import json
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
@@ -55,6 +54,7 @@ from vektra_shared.lms import (
     Unreadable,
     UnreadableReason,
     guarded,
+    not_probed,
 )
 
 log = structlog.get_logger(__name__)
@@ -145,11 +145,6 @@ async def run_items(
 # --- capability probes ----------------------------------------------------------------------------
 
 
-def _not_probed(flag: str, release: str, reason: str) -> CapabilityResult:
-    evidence = hashlib.sha256(f"{flag}\n{release}\n{reason}".encode()).hexdigest()
-    return CapabilityResult(flag, "unreadable", reason, evidence)
-
-
 async def probe(
     provider: LmsProvider,
     site: LmsSite,
@@ -160,16 +155,12 @@ async def probe(
     ``unreadable/not_probed`` when it returned nothing usable (fail closed). A provider that
     raised returns ``not_probed`` for every flag (the guard), so the site's release does not
     move on a matrix that probed nothing."""
-    release = site.release or ""
     returned = await guarded(provider).probe_capabilities(site, manifest, tuple(flags))
     by_flag: dict[str, CapabilityResult] = {}
     for r in returned:
         if r.flag in flags and r.flag not in by_flag and r.state in _STATES:
             by_flag[r.flag] = r
-    return tuple(
-        by_flag.get(f) or _not_probed(f, release, UnreadableReason.NOT_PROBED.value)
-        for f in flags
-    )
+    return tuple(by_flag.get(f) or not_probed(f, site.release) for f in flags)
 
 
 async def persist_matrix(

@@ -26,6 +26,7 @@ from sqlalchemy import text
 
 from vektra_assess.context.snapshot import (
     Snapshot,
+    UnsupportedSchemaError,
     canonical_bytes,
     content_hash,
     from_canonical_bytes,
@@ -113,6 +114,8 @@ class MismatchReason(StrEnum):
         "decrypt_failed"  # tampered ciphertext or wrong key: AEAD tag check
     )
     UNPARSEABLE = "unparseable"
+    #: an intact snapshot of another schema version (an old format, not tampering)
+    UNSUPPORTED_SCHEMA = "unsupported_schema"
     HASH_MISMATCH = "hash_mismatch"  # plaintext hash differs from the commit hash
 
 
@@ -153,6 +156,9 @@ async def verify_snapshot_integrity(
             )
         except (InvalidTag, envelope.EnvelopeError):
             result = Mismatch(MismatchReason.DECRYPT_FAILED)
+        except UnsupportedSchemaError:
+            # the AEAD tag held: the bytes are ours, only their format is old
+            result = Mismatch(MismatchReason.UNSUPPORTED_SCHEMA)
         except (ValidationError, ValueError):
             result = Mismatch(MismatchReason.UNPARSEABLE)
         else:

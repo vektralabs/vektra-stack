@@ -17,6 +17,7 @@ from vektra_assess.moodle.domain import SubmissionFileRef
 from vektra_assess.moodle.readers._support import reader
 from vektra_assess.moodle.readers.assign import read_submission_status
 from vektra_assess.moodle.result import Readable, Reading, Unreadable, UnreadableReason
+from vektra_shared.lms import FILE_NOT_IN_SUBMISSION, SUBMISSION_MISMATCH
 
 
 def _same_file(a: SubmissionFileRef, b: SubmissionFileRef) -> bool:
@@ -56,10 +57,10 @@ async def fetch_submission_file(
         status.value.submission_id != submission_id
         or status.value.userid != owner_userid
     ):
-        return Unreadable(UnreadableReason.PARTIAL, "submission_mismatch")
+        return Unreadable(UnreadableReason.PARTIAL, SUBMISSION_MISMATCH)
     listed = [f for f in status.value.files if _same_file(f, file_ref)]
     if len(listed) != 1:
-        return Unreadable(UnreadableReason.PARTIAL, "file_not_in_submission")
+        return Unreadable(UnreadableReason.PARTIAL, FILE_NOT_IN_SUBMISSION)
     path = _pluginfile_path(listed[0].fileurl)
     if path is None:
         return Unreadable(UnreadableReason.PARTIAL, "file_url_not_pluginfile")

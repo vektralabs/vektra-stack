@@ -519,7 +519,7 @@ def test_the_worker_keys_bind_the_preflight_handler(
     import os
 
     from vektra_assess.jobs import JobKind
-    from vektra_assess.keys import AssessKeyring
+    from vektra_assess.keys import AssessKeyring, Credentials
 
     checked = _checked(
         monkeypatch,
@@ -527,11 +527,15 @@ def test_the_worker_keys_bind_the_preflight_handler(
         VEKTRA_ASSESS_LLM_MODEL="openai/test-model",
     )
     ring = AssessKeyring("k", "k1", {"k1": os.urandom(32)})
+    # the session keys AND every secret the provider declares (#205 review 2, finding 4)
+    provider_secrets = {
+        name: Credentials(name, {}) for name in checked.lms.required_secrets
+    }
     keyed = assess_worker.Checked(
         checked.engine,
         checked.settings,
         checked.worker_url,
-        {name: ring for name in assess_worker.SESSION_KEYS},
+        {**{name: ring for name in assess_worker.SESSION_KEYS}, **provider_secrets},
         lms=checked.lms,
     )
     runtime, *_ = assess_worker._compose(keyed)

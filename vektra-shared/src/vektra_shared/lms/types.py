@@ -25,6 +25,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from enum import StrEnum
+from types import MappingProxyType
 from typing import Literal
 
 # --- the typed read outcome ----------------------------------------------------------------
@@ -292,6 +293,13 @@ class HtmlExtractionProfile:
     drop_classes: frozenset[str]
     profile_version: str
     kinds: frozenset[QuestionKind] = frozenset()
+
+    def __post_init__(self) -> None:
+        # a provider may hand a set, a list or a dict: the profile is frozen whatever it got,
+        # so it is hashable and a later change of the caller's container cannot reach it
+        object.__setattr__(self, "keep", MappingProxyType(dict(self.keep)))
+        object.__setattr__(self, "drop_classes", frozenset(self.drop_classes))
+        object.__setattr__(self, "kinds", frozenset(self.kinds))
 
 
 @dataclass(frozen=True)

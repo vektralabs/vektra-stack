@@ -283,6 +283,32 @@ def content_hash(snapshot: Snapshot) -> str:
     return hashlib.sha256(canonical_bytes(snapshot)).hexdigest()
 
 
+class UnsupportedSchemaError(ValueError):
+    """A decrypted snapshot of another ``schema_version``: not tampering, an old format (OD-1:
+    none should survive the upgrade, and none is read)."""
+
+    def __init__(self, version: object) -> None:
+        super().__init__("unsupported snapshot schema version")
+        self.version = version
+
+
+def schema_version_of(data: bytes) -> object:
+    """The ``header.schema_version`` of a decrypted snapshot, read before strict validation;
+    None when the document has none (then strict validation decides)."""
+    import json
+
+    try:
+        doc = json.loads(data)
+    except (ValueError, RecursionError):
+        return None
+    header = doc.get("header") if isinstance(doc, dict) else None
+    return header.get("schema_version") if isinstance(header, dict) else None
+
+
 def from_canonical_bytes(data: bytes) -> Snapshot:
-    """Parse a decrypted snapshot. Strict: an unknown field or a wrong type is an error."""
+    """Parse a decrypted snapshot. Strict: an unknown field or a wrong type is an error. A
+    snapshot of another schema version is ``UnsupportedSchemaError``, told apart from damage."""
+    version = schema_version_of(data)
+    if version is not None and version != SCHEMA_VERSION:
+        raise UnsupportedSchemaError(version)
     return Snapshot.model_validate_json(data)

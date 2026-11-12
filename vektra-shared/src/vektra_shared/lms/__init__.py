@@ -6,7 +6,7 @@ client. A provider implements ``LmsProvider`` in its own distribution and depend
 ``vektra_shared``.
 """
 
-from vektra_shared.lms.guard import GuardedLmsProvider, guarded
+from vektra_shared.lms.guard import GuardedLmsProvider, guarded, not_probed
 from vektra_shared.lms.protocol import (
     SETUP_MISSING,
     SETUP_OK,
@@ -119,4 +119,5 @@ __all__ = [
     "Unreadable",
     "UnreadableReason",
     "guarded",
+    "not_probed",
 ]

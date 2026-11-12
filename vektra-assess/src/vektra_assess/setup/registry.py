@@ -27,6 +27,7 @@ from vektra_shared.lms import (
     LmsSiteInfo,
     Reading,
     SetupItem,
+    guarded,
 )
 
 OK = SETUP_OK
@@ -88,6 +89,12 @@ class CheckContext:
     # the site's ``moodle_origin`` column (revision 0033): the origin that frames the UI
     moodle_origin: str | None = None
     provider: LmsProvider | None = None
+
+    def __post_init__(self) -> None:
+        # every public entry point (``run_items``, ``evaluate``...) reads the provider behind
+        # the one fail-closed wrapper; ``guarded`` is idempotent
+        if self.provider is not None:
+            object.__setattr__(self, "provider", guarded(self.provider))
 
 
 ItemCheck = Callable[[CheckContext], Awaitable[Outcome]]

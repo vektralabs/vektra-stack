@@ -172,6 +172,17 @@ The model must also have a passing NFR-023 activation for its `prompt_version`
 one the API starts degraded and the pre-flight refuses every discussion. See the
 [API reference](../../reference/api.md#assess-model-activation-nfr-023).
 
+**A reasoning model needs its reasoning turned down, or a larger `VEKTRA_ASSESS_LLM_MAX_TOKENS`.**
+The completion budget (default 600) covers the reasoning and the answer. A reasoning model that
+spends it all on reasoning returns no text, and every Start is rolled back with
+`provider_unavailable`; the worker log line `assess_preflight_provider_outage` then says
+`outage_cause=max_tokens_exhausted`. Set `VEKTRA_ASSESS_LLM_EXTRA_BODY` to
+`{"reasoning_effort": "low"}` (OpenAI reasoning models) or
+`{"chat_template_kwargs": {"enable_thinking": false}}` (Qwen3 on vLLM), or raise the budget: see
+[Reasoning models (assess)](../../reference/configuration.md#reasoning-models-assess). Other
+values of `outage_cause` (`http_5xx`, `read_timeout`, `connection_error`, ...) point at the
+provider or the network instead.
+
 ## The assess schema: a migration branch of its own
 
 The assess tables, the three `vektra_assess_*` roles and the `SECURITY DEFINER` functions are

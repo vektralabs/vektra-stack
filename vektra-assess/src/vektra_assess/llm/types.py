@@ -11,7 +11,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Literal, Protocol
+from typing import Any, Literal, Protocol, get_args
 from uuid import UUID, uuid4
 
 from vektra_shared.types import QueryTrace
@@ -25,12 +25,65 @@ class RagNotAvailableError(RuntimeError):
     """A discussion asked for retrieval: RAG is OFF in v1 and the runner fails closed (NFR-015)."""
 
 
+#: why a provider call ended in an outage: a CLOSED set of codes, safe to log and to audit. Derived
+#: from the outcome, the exception's type names and its HTTP status, never from its message.
+OutageCause = Literal[
+    "first_token_timeout",  # no text within VEKTRA_ASSESS_OUTAGE_TIMEOUT_S of the open
+    "stream_stall",  # text came, then no chunk within VEKTRA_ASSESS_OUTAGE_TIMEOUT_S
+    "empty_stream",  # the stream ended before any text, for no stated reason
+    # the stream ended with finish_reason "length" before any text: a reasoning model spent
+    # VEKTRA_ASSESS_LLM_MAX_TOKENS on reasoning. A configuration problem, not a provider outage
+    "max_tokens_exhausted",
+    "connect_timeout",  # the HTTP client's timeouts (httpx), below the provider library
+    "read_timeout",
+    "write_timeout",
+    "pool_timeout",
+    "timeout",  # a timeout whose kind the exception chain does not say
+    "connection_error",
+    "http_4xx",
+    "http_5xx",
+    "provider_error",  # any other provider exception
+]
+OUTAGE_CAUSES: frozenset[str] = frozenset(get_args(OutageCause))
+
+#: which budget a cause means expired: Vektra's own outage timeout, or the provider client's
+_BUDGET: dict[str, str] = {
+    "first_token_timeout": "outage_timeout",
+    "stream_stall": "outage_timeout",
+    "connect_timeout": "provider_timeout",
+    "read_timeout": "provider_timeout",
+    "write_timeout": "provider_timeout",
+    "pool_timeout": "provider_timeout",
+    "timeout": "provider_timeout",
+    "max_tokens_exhausted": "max_tokens",
+}
+
+
 class ProviderOutageError(RuntimeError):
-    """The provider failed, or sent no first token in time (REQ-086). Carries the call record."""
+    """The provider failed, or sent no first token in time (REQ-086). Carries the call record.
+
+    ``cause`` is a closed code (``OutageCause``), ``attempt`` the Part B generation it ended
+    (1 or 2; None for a discussion turn). Neither carries any text of the call.
+    """
 
     def __init__(self, record: ProviderCallRecord) -> None:
         super().__init__(record.outcome)
         self.record = record
+        self.attempt: int | None = None
+
+    @property
+    def cause(self) -> str:
+        if self.record.cause is not None and self.record.cause in OUTAGE_CAUSES:
+            return self.record.cause
+        if self.record.outcome == "first_token_timeout":
+            return "first_token_timeout"
+        return "provider_error"
+
+    @property
+    def expired_budget(self) -> str | None:
+        """``outage_timeout`` (Vektra's), ``provider_timeout`` (the HTTP client's),
+        ``max_tokens`` (the completion budget, spent before any text) or None."""
+        return _BUDGET.get(self.cause)
 
 
 class PartBRejectedError(RuntimeError):
@@ -76,6 +129,14 @@ class ProviderCallRecord:
     ended_at: datetime
     outcome: CallOutcome
     error_class: str | None = None  # exception type name only, never its message
+    cause: str | None = None  # an ``OutageCause`` code when the call failed
+    status_code: int | None = (
+        None  # the provider's HTTP status, when the exception had one
+    )
+
+    @property
+    def duration_ms(self) -> int:
+        return int((self.ended_at - self.started_at).total_seconds() * 1000)
 
 
 @dataclass(frozen=True)

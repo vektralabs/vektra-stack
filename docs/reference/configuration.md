@@ -217,7 +217,7 @@ printed, because some settings carry connection strings.
 | `VEKTRA_LLM_API_KEY` (assess use) | secret str | - | The discussion model's endpoint key is the SAME variable the RAG pipeline uses (OQ-026 decision of 2026-11-06: one key for the on-prem vLLM, no separate assess secret). The API reads it from `.env`; the worker, which has no `env_file`, gets it through its `environment` in `docker-compose.assess.yml`. Empty means no key. Never logged (SecretStr). |
 | `VEKTRA_ASSESS_LLM_EXTRA_BODY` | JSON object | - | Passed as `extra_body` on every discussion-model call, in the API and in the worker (Part B). For Qwen3 on vLLM: `{"chat_template_kwargs": {"enable_thinking": false}}`. Empty or unset: none. The RAG's `VEKTRA_LLM_EXTRA_BODY` is never used for assess. Invalid JSON or a non-object refuses startup. |
 | `VEKTRA_ASSESS_LLM_TEMPERATURE` | float | `0.2` | Sampling temperature of the discussion model (REQ-100 determinism). |
-| `VEKTRA_ASSESS_LLM_MAX_TOKENS` | int | `600` | Completion tokens per reply, reserved out of the context window before history is kept. |
+| `VEKTRA_ASSESS_LLM_MAX_TOKENS` | int | `600` | Completion tokens per reply, reserved out of the context window before history is kept. With a reasoning model it covers the reasoning **and** the answer: see [Reasoning models (assess)](#reasoning-models-assess). |
 | `VEKTRA_ASSESS_LLM_CONTEXT_WINDOW` | int | `8192` | Context window of the model. History is trimmed oldest first; the context bundle is never trimmed (a bundle that does not fit is an error). Range `2048`..`1048576`. |
 | `VEKTRA_ASSESS_LLM_SEED` | int | - | Passed to providers that support a seed. Range `0`..`2147483647`. |
 | `VEKTRA_ASSESS_OUTAGE_TIMEOUT_S` | float | `45` | No first token within this time is a provider outage (REQ-086); a slow stream that keeps producing is not. |
@@ -297,6 +297,38 @@ development (decided by the product owner on 2026-11-11):
 `VEKTRA_ENV=development`; a production deployment sets `VEKTRA_ENV=production`. Set the three in
 the deployment `.env`. The exact startup error and
 its fix are in the [deployment guide](../guides/operators/assess-deployment.md#the-safeguard-and-the-models-locality).
+
+#### Reasoning models (assess)
+
+`VEKTRA_ASSESS_LLM_MAX_TOKENS` is the provider's completion budget, and a reasoning model spends
+its reasoning tokens out of it before it writes any answer. When the reasoning uses the whole
+budget, the stream ends with `finish_reason=length` and no text. Measured with an OpenAI reasoning
+model at the default of 600, three runs out of three: the Part B (the opening of the
+discussion) on a realistic context spent all 600 tokens on reasoning and ended after about 9 s
+with no text. A turn or an opening
+with no text is a provider outage for the runner, so the Start was rolled back
+(`provider_unavailable`). The worker logs such a call as `assess_preflight_provider_outage` with
+`outage_cause=max_tokens_exhausted`, the configured `max_tokens` and
+`remediation_code=raise_llm_max_tokens_or_lower_reasoning_effort`, and the
+`assess_start_rollback` audit row carries `cause=max_tokens_exhausted`.
+
+Pick one of the two fixes, in this order:
+
+1. **Turn reasoning down or off** through `VEKTRA_ASSESS_LLM_EXTRA_BODY`, and keep the default
+   `VEKTRA_ASSESS_LLM_MAX_TOKENS=600` (Part B is capped at a few sentences, a turn is short):
+   - OpenAI reasoning models: `{"reasoning_effort": "low"}` (or `"minimal"` where the model
+     accepts it);
+   - Qwen3 on vLLM: `{"chat_template_kwargs": {"enable_thinking": false}}`, the same switch the
+     RAG uses ([Using a local vLLM instance](#using-a-local-vllm-instance)). It applies to any
+     vLLM model whose chat template reads `enable_thinking`.
+2. **Keep reasoning on and raise `VEKTRA_ASSESS_LLM_MAX_TOKENS`** so that reasoning plus answer
+   fit: start from 2048 and check the outage line and `make eval-assess` with your model. The
+   value is reserved out of `VEKTRA_ASSESS_LLM_CONTEXT_WINDOW` (it must stay below it), so a
+   larger budget leaves less room for the discussion history, and every turn takes longer. A
+   higher budget also lengthens the opening against the Start window `VEKTRA_ASSESS_START_T_S`.
+
+Either change is a configuration change of the discussion model: run `make eval-assess` again
+before you rely on it.
 
 #### Connection budget (assess)
 

@@ -249,6 +249,7 @@ class DiscussionTurnRunner:
             kwargs["seed"] = s.llm_seed
         started = _now()
         holder: list[AsyncIterator[CompletionChunk]] = []
+        finish: list[str | None] = [None]  # the last finish reason seen before any text
 
         async def acquire() -> CompletionChunk | None:
             stream = await self._llm.stream(
@@ -263,11 +264,19 @@ class DiscussionTurnRunner:
                 chunk = await anext(holder[0], None)
                 if chunk is None or chunk.content:
                     return chunk
+                finish[0] = getattr(chunk, "finish_reason", None) or finish[0]
 
-        async def give_up(outcome: CallOutcome, error: str | None = None) -> None:
+        async def give_up(
+            outcome: CallOutcome,
+            error: str | None = None,
+            cause: str | None = None,
+            status: int | None = None,
+        ) -> None:
             if holder:
                 await _close(holder[0])
-            records.append(ProviderCallRecord(started, None, _now(), outcome, error))
+            records.append(
+                ProviderCallRecord(started, None, _now(), outcome, error, cause, status)
+            )
 
         if stop is not None and stop.is_set():
             await give_up("cancelled")
@@ -291,16 +300,23 @@ class DiscussionTurnRunner:
             if stopper is not None and stopper in done:
                 await give_up("cancelled")
                 return None
-            await give_up("first_token_timeout")
+            await give_up("first_token_timeout", cause="first_token_timeout")
             raise self._outage(records[-1]) from None
         try:
             first = task.result()
         # any provider failure is an outage record, never its text
         except Exception as exc:
-            await give_up("error", type(exc).__name__)
+            await give_up("error", type(exc).__name__, *outage_cause(exc))
             raise self._outage(records[-1]) from None
         if first is None:
-            await give_up("error", "EmptyStream")
+            # finish_reason "length" with no text: max_tokens went on reasoning (a reasoning
+            # model); not the provider being down, but still no opening, so still an outage
+            spent = finish[0] == "length"
+            await give_up(
+                "error",
+                "EmptyStream",
+                "max_tokens_exhausted" if spent else "empty_stream",
+            )
             raise self._outage(records[-1]) from None
         return holder[0], first, started
 
@@ -442,12 +458,17 @@ class DiscussionTurnRunner:
                             )
                         except Exception as exc:
                             stall = isinstance(exc, TimeoutError)
+                            cause, status = (
+                                ("stream_stall", None) if stall else outage_cause(exc)
+                            )
                             rec = ProviderCallRecord(
                                 started,
                                 first_at,
                                 _now(),
                                 "error",
                                 "StreamStall" if stall else type(exc).__name__,
+                                cause,
+                                status,
                             )
                             records.append(rec)
                             await self._finish_failed(gate, turn, steps, t_all)
@@ -546,13 +567,23 @@ class DiscussionTurnRunner:
                     )
                 except TimeoutError:
                     rec = ProviderCallRecord(
-                        started, first_at, _now(), "error", "StreamStall"
+                        started,
+                        first_at,
+                        _now(),
+                        "error",
+                        "StreamStall",
+                        "stream_stall",
                     )
                     records.append(rec)
                     raise self._outage(rec) from None
                 except Exception as exc:
                     rec = ProviderCallRecord(
-                        started, first_at, _now(), "error", type(exc).__name__
+                        started,
+                        first_at,
+                        _now(),
+                        "error",
+                        type(exc).__name__,
+                        *outage_cause(exc),
                     )
                     records.append(rec)
                     raise self._outage(rec) from None
@@ -621,7 +652,13 @@ class DiscussionTurnRunner:
             ):
                 break  # no time left for a second generation
             t_attempt = time.monotonic()
-            text, codes, raw = await self._part_b_once(bundle, language, records)
+            try:
+                text, codes, raw = await self._part_b_once(bundle, language, records)
+            except ProviderOutageError as exc:
+                exc.attempt = (
+                    attempt  # the pre-flight logs and audits which generation failed
+                )
+                raise
             if self._metrics is not None:  # every completed call, accepted or rejected
                 self._metrics.call_outcome(records[-1].outcome)
             steps.add(
@@ -675,6 +712,73 @@ class DiscussionTurnRunner:
 
 def _now() -> datetime:
     return datetime.now(UTC)
+
+
+#: the HTTP client's (httpx) timeout classes, by name: the provider library wraps them and the
+#: runner imports neither, so the exception chain is matched on type names only
+_TIMEOUT_KINDS = {
+    "ConnectTimeout": "connect_timeout",
+    "ReadTimeout": "read_timeout",
+    "WriteTimeout": "write_timeout",
+    "PoolTimeout": "pool_timeout",
+}
+_TIMEOUT_NAMES = frozenset(
+    {"Timeout", "TimeoutError", "APITimeoutError", "TimeoutException"}
+)
+_CONNECTION_NAMES = frozenset(
+    {"APIConnectionError", "ConnectError", "ConnectionError", "RemoteProtocolError"}
+)
+
+
+def _chain(exc: BaseException) -> list[BaseException]:
+    """The exception, its ``__cause__``/``__context__`` and litellm's ``original_exception``."""
+    out: list[BaseException] = []
+    todo: list[BaseException | None] = [exc]
+    while todo and len(out) < 8:
+        e = todo.pop(0)
+        if e is None or any(e is seen for seen in out):
+            continue
+        out.append(e)
+        original = getattr(e, "original_exception", None)
+        todo += [
+            e.__cause__,
+            e.__context__,
+            original if isinstance(original, BaseException) else None,
+        ]
+    return out
+
+
+def _status(exc: BaseException) -> int | None:
+    for obj in (exc, getattr(exc, "response", None)):
+        code = getattr(obj, "status_code", None)
+        if isinstance(code, int) and not isinstance(code, bool) and 100 <= code <= 599:
+            return code
+    return None
+
+
+def outage_cause(exc: BaseException) -> tuple[str, int | None]:
+    """A provider exception as (``OutageCause`` code, HTTP status or None).
+
+    Type names and the integer status only: the message is never read, since it can echo the
+    request (the prompt) or the response. A timeout wins over a status (litellm gives its own
+    ``Timeout`` a 408), then a connection failure, then the status class.
+    """
+    chain = _chain(exc)
+    names = [{k.__name__ for k in type(e).__mro__} for e in chain]
+    status = next((s for s in map(_status, chain) if s is not None), None)
+    for kinds in names:
+        for name, cause in _TIMEOUT_KINDS.items():
+            if name in kinds:
+                return cause, status
+    if any(kinds & _TIMEOUT_NAMES for kinds in names):
+        return "timeout", status
+    if any(kinds & _CONNECTION_NAMES for kinds in names):
+        return "connection_error", status
+    if status is not None and 400 <= status <= 499:
+        return "http_4xx", status
+    if status is not None and 500 <= status <= 599:
+        return "http_5xx", status
+    return "provider_error", status
 
 
 _STOPPED = object()

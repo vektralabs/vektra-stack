@@ -58,9 +58,10 @@ sudo chown -R 1000:1000 secrets/assess # Linux engines only: see the keys runboo
 docker compose -f docker-compose.yml -f docker-compose.assess.yml --profile assess up -d
 ```
 
-`make assess-keys` runs `python -m vektra_assess.keys generate --out ./secrets/assess`. It writes
-every secret of the key matrix with kid `k1`; `assess_ws_tokens` and `assess_smtp` are written as
-empty JSON objects for you to fill (see [secrets](assess-secrets.md)). Set
+`make assess-keys` runs `python -m vektra_assess.keys generate --out ./secrets/assess
+--provider-secret assess_ws_tokens`. It writes every secret of the key matrix with kid `k1`, plus
+the credentials file the Moodle LMS provider declares; `assess_ws_tokens` and `assess_smtp` are
+written as empty JSON objects for you to fill (see [secrets](assess-secrets.md)). Set
 `VEKTRA_ASSESS_SECRETS_PATH` to mount the secrets from another host directory.
 
 For development and CI only, add `-f docker-compose.assess.dev.yml`: it sets
@@ -130,6 +131,14 @@ worker's `environment` in a local override file.
 (`VEKTRA_ASSESS_LMS_PROVIDER`, ADR-0033); the overlay passes it from `.env`. Unset, the worker
 refuses to start and lists the providers installed in the image.
 
+**The image with the provider.** The platform image installs no LMS provider (ADR-0033 D6). The
+overlay builds the variant with the Moodle one (`INSTALL_LMS_PROVIDER=moodle`, tagged
+`vektra-stack-lms-moodle`) and runs every assess service from it; the released equivalent is
+`ghcr.io/vektralabs/vektra:<version>-lms-moodle`. The provider has its own settings,
+`VEKTRA_LMS_MOODLE_*` ([configuration](../../reference/configuration.md#moodle-lms-provider-vektra-lms-moodle));
+the overlay does not name them, so set the ones you need in the worker's `environment` of a local
+override file.
+
 **Set shared values in `.env`, not as shell exports.** Compose interpolation (`${VAR:-}` in the
 overlay) takes a variable from the shell before `.env`, while the API container also reads `.env`
 itself (`env_file`). For a setting the overlay passes to the worker only, such as
@@ -153,7 +162,7 @@ Settings a production deployment must set (each is refused or unset by default):
 | `VEKTRA_ASSESS_PROVIDER_LOCALITY` | API | the default `cloud` is the safe one; declare `onprem` only for a model on the institution's hardware |
 | `VEKTRA_ASSESS_ERASURE_MODE` | API | the API refuses to start outside development (OQ-033, no implicit choice) |
 | `VEKTRA_ASSESS_DB_BACKUP_RETENTION_DAYS` | worker | a startup warning: the crypto-shredding scope is unknown |
-| `VEKTRA_ASSESS_INGEST_ACCOUNT_USERNAME` | worker (setup check) | the `not_ingestion_account` item is `UNVERIFIABLE`, so the setup check is not green |
+| `VEKTRA_LMS_MOODLE_INGEST_ACCOUNT_USERNAME` | worker (setup check) | the `not_ingestion_account` item is `UNVERIFIABLE`, so the setup check is not green |
 
 The model must also have a passing NFR-023 activation for its `prompt_version`
 (`POST /api/v1/assess/admin/model-activations` with the report of `make eval-assess`). Without
@@ -281,8 +290,8 @@ The deployment has one backend and two public `https` origins on the reverse pro
 
 TLS is terminated at the proxy (NFR-012). The proxy configuration, the distinct-origin rule and
 how to verify it are in [framing](assess-framing.md). The worker's connections to the LMS are
-`https` verified against the system store or `VEKTRA_ASSESS_MOODLE_CA_FILE`
-(`VEKTRA_ASSESS_MOODLE_ALLOW_HTTP` is honoured only in development); its SMTP connections use
+`https` verified against the system store or `VEKTRA_LMS_MOODLE_CA_FILE`
+(`VEKTRA_LMS_MOODLE_ALLOW_HTTP` is honoured only in development); its SMTP connections use
 STARTTLS or implicit TLS with verified certificates (`VEKTRA_ASSESS_SMTP_TLS_MODE`,
 `VEKTRA_ASSESS_SMTP_CA_FILE`).
 
@@ -325,7 +334,7 @@ discussion only while its latest finished report for the current LMS release has
    | `required_reads_quiz`, `required_reads_assign`, `required_reads_grade`, `required_reads_grading`, `required_reads_enrol`, `required_reads_files` | the service's function list and the role's capabilities ([service account](../assess-moodle-service-account.md)) |
    | `interactive_login_disabled` | the account's authentication method must be `webservice` |
    | `not_site_admin` | remove the account from the site administrators |
-   | `not_ingestion_account` | use a different account than the ingestion one; set `VEKTRA_ASSESS_INGEST_ACCOUNT_USERNAME` |
+   | `not_ingestion_account` | use a different account than the ingestion one; set `VEKTRA_LMS_MOODLE_INGEST_ACCOUNT_USERNAME` |
    | `denied_function_probe` | the service must have "authorised users only" and only the listed functions |
    | `no_grade_write` | remove every grade-write function from the service |
    | `ws_tls_ok` | `https` to the LMS, with a certificate the worker's CA store accepts |

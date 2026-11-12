@@ -170,7 +170,7 @@ verified is never assumed fine.
 | `required_reads_quiz`, `required_reads_assign`, `required_reads_grade`, `required_reads_grading`, `required_reads_enrol`, `required_reads_files` | each reader group returns a well-formed answer (one item per group) |
 | `interactive_login_disabled` | the account's `auth` is `webservice` |
 | `not_site_admin` | `userissiteadmin` is false |
-| `not_ingestion_account` | the account is not the ingestion account (`VEKTRA_ASSESS_INGEST_ACCOUNT_USERNAME`); unset means `UNVERIFIABLE` |
+| `not_ingestion_account` | the account is not the ingestion account (`VEKTRA_LMS_MOODLE_INGEST_ACCOUNT_USERNAME`); unset means `UNVERIFIABLE` |
 | `denied_function_probe` | a harmless read function left out of the service is refused (`accessexception`) |
 | `no_grade_write` | no grade-write function appears in the service's function list |
 | `ws_tls_ok` | the connection is https verified against the configured CA |

@@ -77,7 +77,7 @@ class KeyStoreProvider(Protocol):
 # ---------------------------------------------------------------------------
 
 LEGACY_SCOPES: frozenset[str] = frozenset({"admin", "ingest", "query"})
-# Site-bound scopes of the Moodle discussion plugin. Never satisfied by admin
+# Site-bound scopes of the LMS discussion plugin. Never satisfied by admin
 # (require_exact_scope) and never combined with a legacy scope on one key.
 ASSESS_SCOPES: frozenset[str] = frozenset(
     {"assess:mint", "assess:teacher", "assess:privacy-export", "assess:privacy-erase"}

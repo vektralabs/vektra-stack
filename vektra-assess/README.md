@@ -1,8 +1,10 @@
 # vektra-assess
 
 Backend of the assessment discussion chatbot: a per-attempt, time-boxed discussion between a
-student and an LLM about the student's own submitted and graded work, launched from Moodle by the
-`local_vektradiscuss` plugin (repository `vektra-moodle-discuss`).
+student and an LLM about the student's own submitted and graded work, launched from the LMS by
+its discussion plugin. The vertical reads the LMS only through the `LmsProvider` Protocol
+(`vektra_shared.lms`, ADR-0033); the provider is a separate distribution loaded by name
+(`VEKTRA_ASSESS_LMS_PROVIDER`), never imported (the Moodle one: `adapters/vektra-lms-moodle`).
 
 Dormant by default: with `VEKTRA_ASSESS_ENABLED=false` no `/api/v1/assess` route is mounted and
 the `assess-worker` / `assess-parser` entrypoints refuse to run.
@@ -12,8 +14,8 @@ the `assess-worker` / `assess-parser` entrypoints refuse to run.
 | Sub-package | Role |
 |---|---|
 | `api/` | HTTP routes (session, teacher, privacy), mounted by `vektra_app` |
-| `worker/` | Job loop; the only holder of the KEK, WS tokens and SMTP credentials |
-| `moodle/` | Typed Moodle web service readers (worker only) |
+| `worker/` | Job loop; the only holder of the KEK, the LMS provider's credentials and SMTP credentials |
+| `setup/` | REQ-079 setup-check runner and Vektra's own items (worker only) |
 | `worker/parser_client.py` | Client for the network-less parser sidecar (worker only) |
 | `parser_sidecar/` | The sidecar itself: server, supervised child, extractors (imports only `parser_protocol`) |
 | `parser_protocol.py` | Wire framing, `FileStatus` vocabulary and labels, limits (stdlib only, both sides) |

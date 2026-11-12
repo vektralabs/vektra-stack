@@ -701,7 +701,7 @@ class CorrelationIdMiddleware(BaseHTTPMiddleware):
 
 class FrameDenyMiddleware:
     """``X-Frame-Options: DENY`` on every response except the assess discussion UI page and its
-    assets (plan 9, ARCH-076), which may be framed by exactly the site's Moodle origin through
+    assets (plan 9, ARCH-076), which may be framed by exactly the site's LMS origin through
     their own CSP ``frame-ancestors``. Pure ASGI, so streamed responses (SSE) pass through
     unbuffered; a response that already sets the header keeps its own value."""
 

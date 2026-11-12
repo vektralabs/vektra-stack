@@ -39,6 +39,14 @@ Pico CSS uses `canvas` as the HTML element.
 
 The perimeter is read from `git ls-files`, so an untracked scratch file cannot make the
 guard pass or fail, and a missing git is a failure, never a silent pass.
+
+**LMS providers are outside it by the same rule** (ADR-0033 D6). A provider is its own
+distribution, staged in `adapters/` (the Moodle one: `adapters/vektra-lms-moodle`) until it
+moves to its home repository. `adapters/` is not a workspace member, so nothing under it is
+in the perimeter, and naming its LMS is the point there. Two checks keep that from being a
+perimeter trick: no workspace member may depend on a `vektra-lms-*` distribution (below), and
+the default image contains no provider package and no file of `adapters/`
+(`test_image_content_boundary.py`).
 """
 
 from __future__ import annotations
@@ -337,6 +345,15 @@ def test_every_spelling_of_a_product_is_matched() -> None:
     ]
 
 
+def test_an_adapter_is_outside_the_perimeter_by_its_own_rule() -> None:
+    """``adapters/`` is not a workspace member: the member rule alone keeps it out, with no
+    special case for it in ``in_perimeter``."""
+    path = "adapters/vektra-lms-moodle/src/vektra_lms_moodle/client.py"
+    assert not in_perimeter(path, MEMBERS)
+    # the same path WOULD be judged if adapters/vektra-lms-moodle were made a member
+    assert in_perimeter(path, [*MEMBERS, "adapters"])
+
+
 def test_the_perimeter_excludes_only_tests_vendored_assets_and_non_members() -> None:
     assert in_perimeter("vektra-core/src/vektra_core/x.py", MEMBERS)
     assert in_perimeter("vektra-learn/widget/src/chat-ui.js", MEMBERS)
@@ -386,3 +403,104 @@ def test_the_platform_names_no_lms_beyond_the_baseline() -> None:
     tree = tracked_tree(members, migrations)
     problems = violations(tree, members, load_baseline(), migrations)
     assert not problems, "\n".join(problems)
+
+
+def test_the_baseline_is_empty() -> None:
+    """Ratchet 1 and ratchet 2 closed (ADR-0033 D10, PR 2a-4): no entry left, and none may be
+    added. A change that seems to need one is an ADR question, not a baseline edit."""
+    baseline = load_baseline()
+    assert baseline.files == {} and baseline.directories == ()
+
+
+def test_no_workspace_member_is_an_adapter() -> None:
+    members = workspace_members()
+    assert not [m for m in members if m == "adapters" or m.startswith("adapters/")]
+    adapters = sorted(
+        p.parent.name for p in (REPO_ROOT / "adapters").glob("*/pyproject.toml")
+    )
+    assert adapters, "no adapter found: the next check would pass for nothing"
+    for name in adapters:
+        assert name.startswith(LMS_DIST_PREFIX), name
+        assert name not in members
+
+
+def test_the_adapter_names_its_lms_so_the_perimeter_rule_is_not_dead() -> None:
+    """Positive control of the predicate the acceptance criteria use: the same matcher that
+    finds nothing in the platform finds the provider's own mentions."""
+    out = subprocess.run(
+        ["git", "ls-files", "-z", "--", "adapters"],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        check=True,
+    ).stdout.decode()
+    sources = [p for p in out.split("\0") if "/src/" in p and p.endswith(".py")]
+    assert sources
+    named = [p for p in sources if mentions_in(p, (REPO_ROOT / p).read_text())]
+    assert len(named) > 10, named
+
+
+# ---------------------------------------------------------------------------
+# No workspace member depends on an LMS provider distribution (ADR-0033 D6, plan 2a-4b.9)
+# ---------------------------------------------------------------------------
+LMS_DIST_PREFIX = "vektra-lms-"
+_REQ_NAME = re.compile(r"^\s*([A-Za-z0-9][A-Za-z0-9._-]*)")
+
+
+def _names(requirements: list[object]) -> list[str]:
+    out = []
+    for req in requirements:
+        if isinstance(req, str):
+            m = _REQ_NAME.match(req)
+            if m:
+                out.append(m.group(1).lower().replace("_", "-"))
+    return out
+
+
+def provider_dependencies(pyproject: dict[str, object]) -> list[str]:
+    """Every ``vektra-lms-*`` a member declares, wherever a requirement can live: runtime
+    dependencies, extras and dependency groups (a group is installed by ``uv sync`` of the
+    member, so a dev group is a dependency too)."""
+    project = pyproject.get("project", {})
+    assert isinstance(project, dict)
+    found = _names(list(project.get("dependencies", [])))
+    for extra in dict(project.get("optional-dependencies", {})).values():
+        found += _names(list(extra))
+    for group in dict(pyproject.get("dependency-groups", {})).values():
+        found += _names(list(group))
+    return sorted(n for n in found if n.startswith(LMS_DIST_PREFIX))
+
+
+def test_no_workspace_member_depends_on_an_lms_provider() -> None:
+    offenders = {
+        member: deps
+        for member in workspace_members()
+        if (
+            deps := provider_dependencies(
+                tomllib.loads((REPO_ROOT / member / "pyproject.toml").read_text())
+            )
+        )
+    }
+    assert offenders == {}, (
+        f"workspace members depend on an LMS provider: {offenders}. The platform loads its "
+        "provider by entry point (vektra.lms_providers); only the repository root's opt-in "
+        "group `lms-moodle` installs one, for development"
+    )
+
+
+def test_a_planted_provider_dependency_is_red() -> None:
+    """Positive control: each place a requirement can live is read."""
+    planted = {
+        "project": {
+            "dependencies": ["vektra-shared", "vektra-lms-moodle>=0.8"],
+            "optional-dependencies": {"x": ["vektra_lms_canvas"]},
+        },
+        "dependency-groups": {
+            "dev": ["pytest", "vektra-lms-other ; python_version>'3'"]
+        },
+    }
+    assert provider_dependencies(planted) == [
+        "vektra-lms-canvas",
+        "vektra-lms-moodle",
+        "vektra-lms-other",
+    ]
+    assert provider_dependencies({"project": {"dependencies": ["vektra-shared"]}}) == []

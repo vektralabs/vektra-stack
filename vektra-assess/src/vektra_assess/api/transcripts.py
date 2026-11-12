@@ -4,7 +4,8 @@
     A site-bound key: ``assess:mint`` for the OWNER (body ``{"sub"}``, must be the transcript's
     student) or ``assess:teacher`` for a GRADER (body ``{"actor_userid"}``, verified as a grader of
     that activity against fresh worker-written facts; stale -> 403 and a refresh is queued). The
-    admin superscope never applies. Returns a single-use download token (``aud=transcript``,
+    admin superscope never applies. An optional ``cmid`` (the plugin's page) must be the
+    transcript's activity, else the 404 of an unknown transcript (audited). Returns a single-use download token (``aud=transcript``,
     TTL <= 120 s); its jti is stored hashed at mint.
 
 ``GET /transcripts/{tid}`` (the browser, ``Authorization: Bearer <download token>`` only)
@@ -19,7 +20,8 @@
     A grader (``assess:teacher`` + ``actor_userid``) or an operator (``admin`` key). Nobody can
     name a recipient: any recipient-like field in the body or the query is a 400
     ``ERR-ASSESS-019`` (an explicit envelope, not the 422 path). Round n+1 goes to the
-    recipients of the last round, through ``assess_enqueue_resend``.
+    recipients of the last round, through ``assess_enqueue_resend``. An optional ``cmid`` scopes
+    it to the plugin page's activity, like the download-token mint.
 """
 
 from __future__ import annotations
@@ -89,15 +91,23 @@ SERVE_HEADERS = {
 }
 
 
+#: the plugin's PAGE cmid (optional): the transcript must belong to that activity, or it is
+#: refused exactly as an unknown transcript (plugin request; the plugin checks the capability on
+#: its page's cmid, Vektra the grader role on the transcript's activity)
+PageCmid = Field(None, gt=0, lt=2**53, strict=True)
+
+
 class MintBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
     sub: int | None = Field(None, ge=1)
     actor_userid: int | None = Field(None, ge=1)
+    cmid: int | None = PageCmid
 
 
 class ResendBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
     actor_userid: int | None = Field(None, ge=1)
+    cmid: int | None = PageCmid
 
 
 _TRANSCRIPT = text(
@@ -217,7 +227,12 @@ async def mint_download_token(
         row = (await conn.execute(_TRANSCRIPT, {"t": t})).first()
         if row is None or row.site_id != site or row.ciphertext is None:
             raise fail(await _gone_or_missing(conn, t, site, role, requester))
-        if role == "owner" and int(row.student_userid) != requester:
+        refused = await _other_activity(
+            conn, row, body.cmid, "transcript_download_token_cmid"
+        )
+        if refused is not None:
+            pass  # another activity than the page's: refused before any role check
+        elif role == "owner" and int(row.student_userid) != requester:
             await write_event(
                 conn,
                 AssessAuditEvent.OWNERSHIP_MISMATCH_REJECTED,
@@ -287,6 +302,26 @@ async def _gone_or_missing(
     ref = (await conn.execute(_TOMBSTONE, {"t": t, "s": site})).scalar()
     if ref is not None and ref == subject_ref(site, requester):
         return transcript_expired()
+    return transcript_not_found()
+
+
+async def _other_activity(
+    conn: Any, row: Any, cmid: int | None, reason: str
+) -> ErrorResponse | None:
+    """The page-cmid check: ``None`` when no cmid was sent or the transcript's session belongs
+    to it; otherwise the refusal of an UNKNOWN transcript (404 ``ERR-ASSESS-017``, the same
+    envelope, so the check never tells whether the transcript exists), audited as an ownership
+    mismatch like the session gate's cross-activity refusal. The caller raises it after commit."""
+    if cmid is None or int(row.cmid) == cmid:
+        return None
+    await write_event(
+        conn,
+        AssessAuditEvent.OWNERSHIP_MISMATCH_REJECTED,
+        actor="api",
+        site_id=row.site_id,
+        session_id=row.id,
+        reason_code=reason,
+    )
     return transcript_not_found()
 
 
@@ -427,13 +462,22 @@ async def resend_transcript(
             site = await site_of_key(conn, key, "teacher")
             if row is None or row.site_id != site:
                 raise fail(transcript_not_found())
-            check = await _grader_ok(conn, row, int(body.actor_userid or 0), settings)
-            if check is not GraderCheck.OK:
-                refused = teacher_unverified(stale=check is GraderCheck.STALE)
+            refused = await _other_activity(
+                conn, row, body.cmid, "transcript_resend_cmid"
+            )
+            if refused is None:
+                check = await _grader_ok(
+                    conn, row, int(body.actor_userid or 0), settings
+                )
+                if check is not GraderCheck.OK:
+                    refused = teacher_unverified(stale=check is GraderCheck.STALE)
             actor = f"grader:{body.actor_userid}"
         else:
             if row is None:
                 raise fail(transcript_not_found())
+            refused = await _other_activity(
+                conn, row, body.cmid, "transcript_resend_cmid"
+            )
             actor = f"operator:{key.key_id}"[:64]
         if refused is None:
             gap = settings.resend_min_interval_s

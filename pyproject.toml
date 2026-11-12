@@ -13,7 +13,7 @@ constraint-dependencies = ["numpy<2"]
 environments = ["python_version < '3.13'"]
 
 [tool.uv.workspace]
-members = ["vektra-shared", "vektra-core", "vektra-ingest", "vektra-index", "vektra-admin", "vektra-analytics", "vektra-learn", "vektra-assess", "vektra-app"]
+members = ["vektra-shared", "vektra-core", "vektra-ingest", "vektra-index", "vektra-admin", "vektra-analytics", "vektra-learn", "vektra-assess", "vektra-app", "testkit"]
 
 # PyTorch CPU-only index for CI and development (no NVIDIA CUDA packages).
 # Only used by packages with an explicit source override (explicit = true).
@@ -34,7 +34,12 @@ dev = [
     "mypy>=2.2.0",
     "import-linter>=2.13",
     "aiosmtpd>=1.4",
+    # the recording test doubles and the LMS conformance kit (plan task 3.1): dev only
+    "vektra-testkit",
 ]
+
+[tool.uv.sources]
+vektra-testkit = { workspace = true }
 
 # ---------------------------------------------------------------------------
 # Ruff: linter and formatter (replaces flake8, isort, black)
@@ -73,6 +78,7 @@ known-first-party = [
     "vektra_analytics",
     "vektra_learn",
     "vektra_assess",
+    "vektra_testkit",
 ]
 
 [tool.ruff.format]

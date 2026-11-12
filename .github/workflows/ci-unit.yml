@@ -36,6 +36,7 @@ jobs:
           filters: |
             shared:
               - 'vektra-shared/**'
+              - 'testkit/**'
             core:
               - 'vektra-core/**'
               - 'vektra-shared/**'
@@ -57,11 +58,13 @@ jobs:
             assess:
               - 'vektra-assess/**'
               - 'vektra-shared/**'
+              - 'testkit/**'
             assess-ui:
               - 'vektra-assess/ui/**'
             app:
               - 'vektra-app/**'
               - 'vektra-*/**'
+              - 'testkit/**'
 
   test-shared:
     name: Test vektra-shared

@@ -16,7 +16,7 @@ import assess_adapter as A  # noqa: E402
 
 from vektra_assess.config import VektraAssessSettings  # noqa: E402
 from vektra_shared.safeguards import PassthroughSafeguard  # noqa: E402
-from vektra_shared.testing_recorders import RecordingLLMProvider  # noqa: E402
+from vektra_testkit.recorders import RecordingLLMProvider  # noqa: E402
 
 
 def _settings(**kw: object) -> VektraAssessSettings:

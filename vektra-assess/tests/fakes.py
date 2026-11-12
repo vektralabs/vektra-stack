@@ -15,8 +15,8 @@ import asyncio
 from collections.abc import AsyncIterator, Mapping
 from typing import Any
 
-from vektra_shared.testing_recorders import RecordingLLMProvider
 from vektra_shared.types import CompletionChunk, QueryTrace, SafeguardResult
+from vektra_testkit.recorders import RecordingLLMProvider
 
 __all__ = [
     "FORBIDDEN",

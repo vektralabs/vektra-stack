@@ -29,6 +29,7 @@ hypothetical one.
 
 from __future__ import annotations
 
+import itertools
 import posixpath
 import re
 import shlex
@@ -477,8 +478,9 @@ def test_the_nginx_example_serves_the_assess_ui_on_its_own_origin() -> None:
 
 def test_the_shared_tests_import_no_other_vektra_package() -> None:
     """CodeRabbit 4501067261: the shared foundation's tests run without the other packages
-    installed, so they import ``vektra_shared`` only (checks that need ``vektra_assess`` live
-    in the assess tests)."""
+    installed, so they import ``vektra_shared`` and the dev-only ``vektra_testkit`` only (checks
+    that need ``vektra_assess`` live in the assess tests; the kit itself depends on
+    ``vektra_shared`` alone, plan task 3.1)."""
     import ast
 
     offenders = []
@@ -493,7 +495,10 @@ def test_the_shared_tests_import_no_other_vektra_package() -> None:
             )
             for name in names:
                 top = name.split(".")[0]
-                if top.startswith("vektra_") and top != "vektra_shared":
+                if top.startswith("vektra_") and top not in {
+                    "vektra_shared",
+                    "vektra_testkit",
+                }:
                     offenders.append(f"{path.name}:{node.lineno} {name}")
     assert offenders == []
 
@@ -670,3 +675,210 @@ def test_a_canary_string_in_shipped_migrations_is_caught() -> None:
     assert canary_offenders(["migrations", "vektra-assess/src"], files) == [
         "migrations/versions/0099_x.py"
     ]
+
+
+# --- plan task 3.1: the test kit never ships -------------------------------------------------
+# The recording doubles and the LMS conformance kit live in ``vektra-testkit`` (``testkit/``), a
+# workspace member installed by the dev dependency groups only. A workspace member is installed
+# by a plain ``uv sync`` even with ``--no-dev``, so the Dockerfile skips it by name: these checks
+# replay the Dockerfile's own ``uv sync`` flags against the lock, build the ``vektra_shared``
+# wheel, and each has a negative control proving it can say no.
+TESTKIT = "vektra-testkit"
+TESTKIT_MODULES = ("testing_recorders", "vektra_testkit")
+_UV_SYNC = re.compile(r"\buv sync\b[^;&|]*")
+
+
+def _uv() -> str:
+    """The uv binary: ``uv run`` exports it as ``UV``; a missing uv fails, it never skips."""
+    import os
+    import shutil
+
+    uv = os.environ.get("UV") or shutil.which("uv")
+    assert uv, "uv not found: the test kit boundary cannot be checked"
+    return uv
+
+
+def dockerfile_uv_syncs(dockerfile_text: str) -> list[list[str]]:
+    """The argument list of every ``uv sync`` the Dockerfile runs (both branches of an if)."""
+    return [
+        shlex.split(m.group(0))[2:]
+        for line in _logical_lines(dockerfile_text)
+        if line.split(maxsplit=1)[0].upper() == "RUN"
+        for m in _UV_SYNC.finditer(line)
+    ]
+
+
+def exported_packages(sync_args: list[str]) -> set[str]:
+    """The distributions a ``uv sync`` with these flags installs, read from the lock by
+    ``uv export`` (same resolution, nothing installed)."""
+    import subprocess
+
+    out = subprocess.run(
+        [_uv(), "export", "--no-hashes", "--no-annotate", "--no-header", *sync_args],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+    names = set()
+    for line in out.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("./"):  # a workspace member, by path
+            path = line.split()[0]
+            names.add(_member_name(REPO_ROOT / path / "pyproject.toml"))
+            continue
+        names.add(re.split(r"[=<>!~ ;\[]", line, maxsplit=1)[0].lower())
+    return names
+
+
+def _member_name(pyproject: Path) -> str:
+    import tomllib
+
+    return str(tomllib.loads(pyproject.read_text())["project"]["name"])
+
+
+def kit_offenders(names: list[str]) -> list[str]:
+    """The archive entries that are test kit modules."""
+    return sorted(
+        n for n in names if any(m in n.replace("\\", "/") for m in TESTKIT_MODULES)
+    )
+
+
+def _build_wheel(package: str, out_dir: Path) -> list[str]:
+    import subprocess
+    import zipfile
+
+    subprocess.run(
+        [_uv(), "build", "--wheel", "--package", package, "--out-dir", str(out_dir)],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    (wheel,) = out_dir.glob("*.whl")
+    with zipfile.ZipFile(wheel) as zf:
+        return zf.namelist()
+
+
+def test_the_test_kit_is_a_dev_dependency_only() -> None:
+    """``vektra-testkit`` is in dev groups only: no shipped package depends on it at runtime,
+    no shipped source imports it, and ``testing_recorders`` is gone from ``vektra_shared``."""
+    import tomllib
+
+    root = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text())
+    assert "testkit" in root["tool"]["uv"]["workspace"]["members"]
+    assert TESTKIT in root["dependency-groups"]["dev"]
+    for pyproject in sorted(REPO_ROOT.glob("vektra-*/pyproject.toml")):
+        project = tomllib.loads(pyproject.read_text()).get("project", {})
+        runtime = list(project.get("dependencies", []))
+        for extra in project.get("optional-dependencies", {}).values():
+            runtime.extend(extra)
+        assert not any(d.startswith(TESTKIT) for d in runtime), pyproject
+    assert not (
+        REPO_ROOT / "vektra-shared/src/vektra_shared/testing_recorders.py"
+    ).exists()
+    importers = [
+        f"{p.relative_to(REPO_ROOT).as_posix()}: {name}"
+        for p in sorted(REPO_ROOT.glob("vektra-*/src/**/*.py"))
+        for name in kit_imports(p.read_text(errors="replace"))
+    ]
+    assert importers == []
+
+
+def kit_imports(source: str) -> list[str]:
+    """The test-kit modules a source imports, read from its AST: every alias of every
+    ``import`` (``import os, vektra_testkit.recorders`` included) and every ``from`` import,
+    by module and by imported name (``from vektra_shared import testing_recorders``, and the
+    relative ``from . import testing_recorders``)."""
+    import ast
+
+    found = []
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, ast.Import):
+            names = [a.name for a in node.names]
+        elif isinstance(node, ast.ImportFrom):
+            module = node.module or ""
+            names = [module] if module else []
+            names += [f"{module}.{a.name}" if module else a.name for a in node.names]
+        else:
+            continue
+        for name in names:
+            parts = name.split(".")
+            if parts[0] == "vektra_testkit" or "testing_recorders" in parts:
+                found.append(name)
+    return found
+
+
+def test_the_kit_import_check_can_say_no() -> None:
+    """Negative control (CodeRabbit 4544866406): every import form of the kit is caught,
+    the multi-import line included, and an unrelated import is not."""
+    source = "\n".join(
+        [
+            "import os, vektra_testkit.recorders",
+            "import json as j, vektra_testkit",
+            "from vektra_testkit.lms_conformance import kit",
+            "from vektra_shared import testing_recorders",
+            "from vektra_shared.testing_recorders import RecordingLLMProvider",
+            "from . import testing_recorders",
+            "import vektra_shared.registry",
+            "from vektra_shared.types import Message",
+        ]
+    )
+    assert kit_imports(source) == [
+        "vektra_testkit.recorders",
+        "vektra_testkit",
+        "vektra_testkit.lms_conformance",
+        "vektra_testkit.lms_conformance.kit",
+        "vektra_shared.testing_recorders",
+        "vektra_shared.testing_recorders",
+        "vektra_shared.testing_recorders.RecordingLLMProvider",
+        "testing_recorders",
+    ]
+
+
+def test_the_dockerfile_never_copies_the_test_kit_source() -> None:
+    sources = [_normalise(s) for s in context_copy_sources(DOCKERFILE.read_text())]
+    assert "testkit/pyproject.toml" in sources  # uv needs the member's manifest
+    assert [
+        s for s in sources if _under(s, "testkit") and s != "testkit/pyproject.toml"
+    ] == []
+
+
+def test_every_image_sync_skips_the_test_kit() -> None:
+    syncs = dockerfile_uv_syncs(DOCKERFILE.read_text())
+    assert len(syncs) >= 3, syncs  # dependencies layer + both branches of the install
+    for args in syncs:
+        assert "--no-dev" in args, args
+        pairs = list(itertools.pairwise(args))
+        assert ("--no-install-package", TESTKIT) in pairs, args
+
+
+def test_the_image_resolution_has_no_test_kit_and_no_pytest() -> None:
+    """Replays the Dockerfile's final ``uv sync`` flags against ``uv.lock``."""
+    install = dockerfile_uv_syncs(DOCKERFILE.read_text())[-1]
+    names = exported_packages(install)
+    assert "vektra-shared" in names and "vektra-app" in names, sorted(names)
+    assert TESTKIT not in names
+    assert "pytest" not in names
+
+
+def test_the_image_resolution_check_can_say_no() -> None:
+    """Negative control: the same sync without the skip installs the kit, so the check above
+    is not vacuous (a plain ``--no-dev`` sync installs every workspace member)."""
+    install = dockerfile_uv_syncs(DOCKERFILE.read_text())[-1]
+    i = install.index("--no-install-package")
+    assert TESTKIT in exported_packages(install[:i] + install[i + 2 :])
+
+
+def test_the_vektra_shared_wheel_has_no_test_kit(tmp_path: Path) -> None:
+    names = _build_wheel("vektra-shared", tmp_path)
+    assert "vektra_shared/registry.py" in names, names[:20]
+    assert kit_offenders(names) == []
+
+
+def test_the_wheel_check_can_say_no(tmp_path: Path) -> None:
+    """Negative control: the test kit's own wheel is caught by the same check."""
+    names = _build_wheel(TESTKIT, tmp_path)
+    assert "vektra_testkit/recorders.py" in kit_offenders(names)

@@ -23,6 +23,7 @@ members = [
     "vektra-ingest",
     "vektra-learn",
     "vektra-shared",
+    "vektra-testkit",
 ]
 constraints = [{ name = "numpy", specifier = "<2" }]
 
@@ -38,6 +39,7 @@ dev = [
     { name = "pyyaml", specifier = ">=6.0.3" },
     { name = "ruff", specifier = ">=0.15.21" },
     { name = "testcontainers", extras = ["postgres"], specifier = ">=4.14.2" },
+    { name = "vektra-testkit", editable = "testkit" },
 ]
 
 [[package]]
@@ -5377,6 +5379,7 @@ dev = [
     { name = "pytest", marker = "python_full_version < '3.13'" },
     { name = "pytest-asyncio", marker = "python_full_version < '3.13'" },
     { name = "testcontainers", marker = "python_full_version < '3.13'" },
+    { name = "vektra-testkit", marker = "python_full_version < '3.13'" },
 ]
 
 [package.metadata]
@@ -5401,6 +5404,7 @@ dev = [
     { name = "pytest", specifier = ">=8.0" },
     { name = "pytest-asyncio", specifier = ">=0.24" },
     { name = "testcontainers", extras = ["postgres"], specifier = ">=4.8" },
+    { name = "vektra-testkit", editable = "testkit" },
 ]
 
 [[package]]
@@ -5431,6 +5435,7 @@ dev = [
     { name = "httpx", marker = "python_full_version < '3.13'" },
     { name = "pytest", marker = "python_full_version < '3.13'" },
     { name = "pytest-asyncio", marker = "python_full_version < '3.13'" },
+    { name = "vektra-testkit", marker = "python_full_version < '3.13'" },
 ]
 
 [package.metadata]
@@ -5458,6 +5463,7 @@ dev = [
     { name = "httpx", specifier = ">=0.27" },
     { name = "pytest", specifier = ">=8.0" },
     { name = "pytest-asyncio", specifier = ">=1.0" },
+    { name = "vektra-testkit", editable = "testkit" },
 ]
 
 [[package]]
@@ -5686,6 +5692,7 @@ dev = [
     { name = "pytest", marker = "python_full_version < '3.13'" },
     { name = "pytest-asyncio", marker = "python_full_version < '3.13'" },
     { name = "pyyaml", marker = "python_full_version < '3.13'" },
+    { name = "vektra-testkit", marker = "python_full_version < '3.13'" },
 ]
 
 [package.metadata]
@@ -5707,6 +5714,22 @@ dev = [
     { name = "pytest", specifier = ">=8.0" },
     { name = "pytest-asyncio", specifier = ">=0.24" },
     { name = "pyyaml", specifier = ">=6.0.3" },
+    { name = "vektra-testkit", editable = "testkit" },
+]
+
+[[package]]
+name = "vektra-testkit"
+version = "0.8.0"
+source = { editable = "testkit" }
+dependencies = [
+    { name = "structlog", marker = "python_full_version < '3.13'" },
+    { name = "vektra-shared", marker = "python_full_version < '3.13'" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "structlog", specifier = ">=24.0" },
+    { name = "vektra-shared", editable = "vektra-shared" },
 ]
 
 [[package]]

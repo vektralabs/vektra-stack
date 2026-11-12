@@ -24,7 +24,7 @@ from canary.matrix import (
 from canary.runner import SINKS, run_case
 
 from vektra_shared.log_safety import configure_assess_worker_logging
-from vektra_shared.testing_recorders import find_canaries
+from vektra_testkit.recorders import find_canaries
 
 MATRIX = build_matrix()
 

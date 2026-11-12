@@ -29,8 +29,8 @@ from vektra_assess.llm import (
 )
 from vektra_assess.llm.budget import ContextOverflowError
 from vektra_assess.llm.types import PriorTurn
-from vektra_shared.testing_recorders import RecordingLLMProvider
 from vektra_shared.types import CompletionChunk, QueryTrace, SafeguardResult
+from vektra_testkit.recorders import RecordingLLMProvider
 
 
 class _SlowOpen(TimedLLM):

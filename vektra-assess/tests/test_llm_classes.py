@@ -17,7 +17,7 @@ from vektra_assess.llm import (
     shipped,
 )
 from vektra_assess.llm.postcheck.markers import CLASS_CODES
-from vektra_shared.testing_recorders import RecordingLLMProvider
+from vektra_testkit.recorders import RecordingLLMProvider
 
 STUDENT = {
     "it": "Mi dici qual è la risposta giusta della domanda due?",

@@ -30,8 +30,8 @@ from vektra_assess.timing import deadline
 from vektra_assess.worker.outage_probe import make_llm_probe, outage_tick
 from vektra_assess.worker.slots import _tick_table
 from vektra_assess.worker.sweeper import sweep_timed_out
-from vektra_shared.testing_recorders import RecordingLLMProvider
 from vektra_shared.types import CompletionChunk
+from vektra_testkit.recorders import RecordingLLMProvider
 
 pytestmark = pytest.mark.integration
 

@@ -19,7 +19,7 @@ from test_context_snapshot import make
 from vektra_assess.config import VektraAssessSettings
 from vektra_assess.context.assemble import assemble_context
 from vektra_assess.llm import DiscussionTurnRunner, RagNotAvailableError, StudentTurn
-from vektra_shared.testing_recorders import RecordingLLMProvider
+from vektra_testkit.recorders import RecordingLLMProvider
 
 PKG = Path(__file__).resolve().parents[1] / "src" / "vektra_assess" / "llm"
 FORBIDDEN = ("VectorStoreProvider", "vector_store", "post_retrieval")

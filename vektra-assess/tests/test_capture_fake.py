@@ -61,7 +61,7 @@ from vektra_shared.lms import (
     Unreadable,
     UnreadableReason,
 )
-from vektra_shared.testing_recorders import find_canaries
+from vektra_testkit.recorders import find_canaries
 
 NOW = 1_800_000_000
 QUIZ_TARGET = QuizTarget(COURSE, QUIZ, QUIZ_ACTIVITY, USER)

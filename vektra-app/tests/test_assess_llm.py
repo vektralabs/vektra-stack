@@ -15,7 +15,7 @@ from vektra_app.assess_llm import (
 from vektra_assess.config import VektraAssessSettings
 from vektra_shared.safeguards import PassthroughSafeguard
 from vektra_shared.startup import StartupValidationError
-from vektra_shared.testing_recorders import RecordingLLMProvider
+from vektra_testkit.recorders import RecordingLLMProvider
 
 
 class _Real:

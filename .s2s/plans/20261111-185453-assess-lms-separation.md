@@ -444,7 +444,8 @@ Each criterion is checked against the guard's data file. A status line or a gree
     - `assess_live_session_count` (the Start admission cap);
     - `assess_configured_site_count` (`/health/assess`);
     - `assess_pending_replies` (the PendingTurnDriver; each answer task binds its session's site);
-    - `assess_transcript_site` (resend with an admin key).
+    - `assess_transcript_site` (resend with an admin key);
+    - `assess_session_exists` (review of #209: the gate keeps auditing a cross-site probe as an ownership mismatch, with the same not-found answer).
   - **Admin routes bind the path site** once it has been checked: `PUT`/`GET /sites/{site_id}/privacy`, and the setup check (a teacher key must belong to the path site).
   - **Unchanged**: the model activations and the SMTP test touch no table that has a `site_id`. The UI router and the origin check read `assess_sites`, which is not covered.
   - **Not covered**, each for a stated reason:
@@ -453,5 +454,5 @@ Each criterion is checked against the guard's data file. A status line or a gree
     - `assess_sites` and the child tables without a `site_id`.
   - **Runtime guard**: `tests/support/binding_guard.py`, installed by `support.world`, fails a route test when a statement reaches a covered table before the site is bound. Its positive control is in `test_api_rls.py`.
   - **Tests that used the API role directly** needed the binding a route provides. They now bind it with `pg.conn("api", site=...)`, `pg.run(..., site=...)` or `support.world.bind`.
-  - **Golden**: regenerated. The diff contains additions only: the policies, the 5 functions and the definer's column grants.
+  - **Golden**: regenerated. The diff contains additions only: the policies, the 6 functions and the definer's column grants.
   - **Open**: the child tables (`assess_transcripts`, `assess_turn_flags`, `assess_turn_notes`, `assess_enrolment_checks`, `assess_outage_incidents`, `assess_deliveries`, `assess_consumed_jtis`) have no policy of their own. A policy built on an `EXISTS` through `assess_sessions` would cover them, and is a possible follow-up. The definer's policy is unconditional. Restricting it to the bound site when a site is bound would also hold the definer functions to the request's site. That is not done here: D9.2 kept the definer paths unchanged.

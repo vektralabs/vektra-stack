@@ -244,15 +244,32 @@ unset or empty, it reads **no rows** and can write none.
   `vektra_assess_definer` (the owner of the `SECURITY DEFINER` functions) has its own
   unconditional policy, so the definer functions work as before.
 - **The migration user is not restricted.** It owns the tables, and the revision enables RLS
-  without `FORCE`, so migrations and `pg_dump` still see every row.
+  without `FORCE`, so the migrations see every row.
+- **Backups and reports need a role that sees every row.** Only a superuser, the tables' owner
+  (the migration user) or a role with `BYPASSRLS` sees every row. For any other role:
+  - **`pg_dump` fails.** Run by a role without these rights, it stops with
+    `query would be affected by row-level security policy for table "assess_sessions"`.
+    (`pg_dump` turns row security off for its session, and PostgreSQL refuses that for such a
+    role.)
+  - **`pg_dump --enable-row-security` is no workaround.** It completes, but dumps only the rows
+    that role's policies show, which for a role with no policy is none. Do not use it for a
+    backup.
+  - **The recipe.** Dump as the migration user, or create a dedicated backup or report role:
+    `CREATE ROLE vektra_backup LOGIN BYPASSRLS PASSWORD '...'`, with `SELECT` on the assess
+    tables. The trade-off: `BYPASSRLS` turns off every policy for that role, so it reads every
+    site's rows. Keep it read-only, give it to backup and reporting only, and never to an
+    application process.
+  - **The NFR report needs such a role too.** `scripts/assess_nfr_report.py` refuses a role
+    that RLS restricts (exit 3, naming the tables), rather than reporting an empty campaign.
 - **The cross-site reads go through definer functions.** A few API reads need no site or cover
   every site, and each is a `SECURITY DEFINER` function returning ids or counts:
   `assess_site_of_key` (resolving a key's site, before anything is bound),
   `assess_live_session_count` (the deployment-wide admission cap), `assess_configured_site_count`
   (`/health/assess`), `assess_pending_replies` (the API's pending-turn poller, which then binds
-  each answer to its session's site) and `assess_transcript_site` (an operator's transcript
-  resend).
-- **The roles must stay `NOBYPASSRLS`.** A role with `BYPASSRLS`, or a superuser, ignores every
+  each answer to its session's site), `assess_transcript_site` (an operator's transcript
+  resend) and `assess_session_exists` (one boolean, so that the audit still records a cross-site
+  session probe as an ownership mismatch; the HTTP answer is the same not-found envelope).
+- **The assess roles must stay `NOBYPASSRLS`.** A role with `BYPASSRLS`, or a superuser, ignores every
   policy. `vektra-assess-db-init` creates the roles `NOBYPASSRLS`; keep it that way on managed
   Postgres too.
 - **Connection poolers.** The setting is transaction-local (`set_config(..., true)`), so it works

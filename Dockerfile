@@ -115,7 +115,11 @@ RUN if [ "$INSTALL_UNSTRUCTURED" = "true" ]; then \
 #                     the build fails, nothing is installed;
 #   --no-deps         the wheel requires vektra-shared, which is on no index: the venv already
 #                     holds the workspace's, and `uv pip check` then fails the build if any
-#                     requirement of the wheel is not met by what the venv holds;
+#                     requirement of the wheel is not met by what the venv holds. It cannot
+#                     catch a platform the provider no longer fits: the wheel declares
+#                     vektra-shared with no version bound, so any vektra-shared satisfies it.
+#                     That check is the test-lms-provider CI job (the provider's suites, at
+#                     the pinned release, run against this tree);
 #   --no-config       the root pyproject's [tool.uv] settings are the workspace's, not this
 #                     install's (its numpy constraint is not a pinned, hashed requirement).
 # --------------------------------------------------------------------------

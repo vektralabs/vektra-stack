@@ -28,6 +28,7 @@ jobs:
       assess:    ${{ steps.filter.outputs.assess }}
       assess-ui: ${{ steps.filter.outputs.assess-ui }}
       app:       ${{ steps.filter.outputs.app }}
+      lms-provider: ${{ steps.filter.outputs.lms-provider }}
     steps:
       - uses: actions/checkout@v7
       - uses: dorny/paths-filter@v4
@@ -37,6 +38,8 @@ jobs:
             shared:
               - 'vektra-shared/**'
               - 'testkit/**'
+              - 'docker/lms-providers/**'
+              - 'Dockerfile'
             core:
               - 'vektra-core/**'
               - 'vektra-shared/**'
@@ -59,12 +62,25 @@ jobs:
               - 'vektra-assess/**'
               - 'vektra-shared/**'
               - 'testkit/**'
+              - 'docker/lms-providers/**'
+              - 'Dockerfile'
             assess-ui:
               - 'vektra-assess/ui/**'
             app:
               - 'vektra-app/**'
               - 'vektra-*/**'
               - 'testkit/**'
+            # what the LMS provider's suites depend on (see test-lms-provider)
+            lms-provider:
+              - 'vektra-shared/**'
+              - 'vektra-assess/**'
+              - 'vektra-app/**'
+              - 'testkit/**'
+              - 'docker/lms-providers/**'
+              - 'Dockerfile'
+              - 'pyproject.toml'
+              - 'uv.lock'
+              - '.github/workflows/ci-unit.yml'
 
   test-shared:
     name: Test vektra-shared
@@ -325,11 +341,111 @@ jobs:
           vektra-shared/tests/test_lms_boundary.py
           -v --tb=short
 
+  # The released Moodle LMS provider against THIS PR's platform (ADR-0033 D6, phase 2b). The
+  # provider lives in vektra-moodle-discuss and its own CI tests it against a pinned vektra-stack
+  # commit, so without this job a platform change that breaks the provider (vektra_shared.lms, the
+  # vertical's harness its joint suites import, the conformance kit in testkit) would surface only
+  # when that pin is next bumped. It installs this PR's workspace plus the pinned wheel (the same
+  # bytes the lms-moodle image installs, hash-checked the same way), checks out the provider's
+  # tests at the release tag of that wheel (read from the pin file, never written twice), and runs
+  # them with VEKTRA_STACK_ROOT at this checkout: unit, conformance kit on the 4.3 and 5.2
+  # recordings, canary matrix and the joint suites on real Postgres. The live suites (-m moodle)
+  # need the dev Moodle sites and are deselected; provider-live.yml runs them weekly there.
+  #
+  # This is also the real check of the wheel's requirements: it declares `vektra-shared` with no
+  # version bound, so the image stage's `uv pip check` passes against ANY vektra-shared; only
+  # running the provider on this platform shows the two still fit.
+  #
+  # Skip-safe (DEBT-031): the job always runs and is in the CI gate; it skips its work, saying
+  # so, only when nothing it depends on changed (the lms-provider filter above), and always runs
+  # it on a push to develop or main.
+  test-lms-provider:
+    name: The released Moodle LMS provider against this platform
+    needs: detect-changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      RELEVANT: ${{ github.event_name == 'push' || needs.detect-changes.outputs.lms-provider == 'true' }}
+    steps:
+      - name: Skipped (nothing the provider depends on changed)
+        if: env.RELEVANT != 'true'
+        run: echo "no change under the lms-provider filter; the provider's suites are not re-run"
+      - uses: actions/checkout@v7
+        if: env.RELEVANT == 'true'
+        with:
+          # Runs PR-authored test code; don't leave the token in .git/config
+          persist-credentials: false
+      - name: Read the provider release from the pin
+        if: env.RELEVANT == 'true'
+        id: pin
+        run: |
+          echo "tag=$(python3 vektra-shared/tests/lms_pins.py tag moodle)" >> "$GITHUB_OUTPUT"
+          echo "version=$(python3 vektra-shared/tests/lms_pins.py version moodle)" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v7
+        if: env.RELEVANT == 'true'
+        with:
+          repository: vektralabs/vektra-moodle-discuss
+          ref: refs/tags/${{ steps.pin.outputs.tag }}
+          path: _lms-provider
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v7
+        if: env.RELEVANT == 'true'
+        with:
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+      # the pinned wheel, as the image installs it (hash-checked, no resolution): the suites run
+      # on the released bytes, not on a rebuild of the tag's source
+      - name: Install this workspace and the pinned provider wheel
+        if: env.RELEVANT == 'true'
+        run: |
+          uv sync --dev --frozen
+          uv pip install --no-config --python .venv/bin/python --no-index --no-cache \
+            --require-hashes --no-deps -r docker/lms-providers/moodle.txt
+          .venv/bin/python -c "import importlib.metadata as m, sys; v = m.version('vektra-lms-moodle'); print('vektra-lms-moodle', v); sys.exit(v != '${{ steps.pin.outputs.version }}')"
+      - name: The provider's suites, on this platform
+        if: env.RELEVANT == 'true'
+        working-directory: _lms-provider
+        env:
+          VEKTRA_STACK_ROOT: ${{ github.workspace }}
+          # the joint suites' fixtures run `uv run alembic`: never sync the provider away mid-run
+          UV_NO_SYNC: "1"
+        run: >
+          "$VEKTRA_STACK_ROOT/.venv/bin/python" -m pytest provider/tests -m "not moodle"
+          -v -rs --tb=short -p no:cacheprovider --junitxml="$GITHUB_WORKSPACE/lms-provider.xml"
+      # A green job is not evidence on its own: the conformance kit ran on both recorded releases,
+      # and the joint suites on real Postgres ran, not skipped.
+      - name: The conformance kit and the joint suites must have run
+        if: env.RELEVANT == 'true'
+        run: |
+          python3 - <<'PY'
+          import sys
+          import xml.etree.ElementTree as ET
+
+          cases = list(ET.parse("lms-provider.xml").getroot().iter("testcase"))
+          problems = []
+          for fragment, minimum in (
+              ("TestMoodle43Conformance", 5),
+              ("TestMoodle52Conformance", 5),
+              ("integration_moodle.", 8),
+              ("integration_moodle.test_setup_check_run", 5),
+              ("integration_moodle.test_idor_moodle", 2),
+              ("integration_moodle.test_snapshot_canary_db", 1),
+              ("test_canary_matrix", 2),
+          ):
+              hit = [c for c in cases if fragment in (c.get("classname") or "")]
+              skipped = [c.get("name") for c in hit if c.find("skipped") is not None]
+              print(f"{fragment}: {len(hit)} collected, {len(skipped)} skipped")
+              if len(hit) < minimum or skipped:
+                  problems.append(f"{fragment}: {len(hit)} collected, skipped={skipped}")
+          if problems:
+              sys.exit("; ".join(problems))
+          PY
+
   # Aggregator job used as the single required status check in branch protection.
   # Passes if no upstream job failed (skipped jobs are treated as passing).
   ci-gate:
     name: CI gate
-    needs: [detect-changes, test-shared, test-core, test-ingest, test-index, test-admin, test-analytics, test-learn, test-learn-widget, test-assess-ui, test-assess, test-app, test-structure]
+    needs: [detect-changes, test-shared, test-core, test-ingest, test-index, test-admin, test-analytics, test-learn, test-learn-widget, test-assess-ui, test-assess, test-app, test-structure, test-lms-provider]
     runs-on: ubuntu-latest
     if: always()
     steps:

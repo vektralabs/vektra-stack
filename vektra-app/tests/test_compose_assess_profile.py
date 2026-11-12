@@ -438,3 +438,45 @@ def test_the_api_sees_the_relay_and_the_operator_address(  # type: ignore[type-a
         "VEKTRA_ASSESS_OPERATOR_EMAIL",
     ):
         assert env[name] == worker.get(name), name
+
+
+# --- every documented combination is a valid project, with and without the profile ------------
+# CI builds the image variant with ``-f docker-compose.yml -f docker-compose.assess.yml build
+# vektra`` and no --profile (integration.yml, assess-stack); an operator may do the same. The API's
+# dependency on the profile-gated role provisioning must not make that project invalid.
+COMBINATIONS = [
+    ("docker-compose.yml",),
+    ("docker-compose.yml", "docker-compose.assess.yml"),
+    (
+        "docker-compose.yml",
+        "docker-compose.assess.yml",
+        "docker-compose.assess.dev.yml",
+    ),
+    (
+        "docker-compose.yml",
+        "docker-compose.assess.yml",
+        "docker-compose.assess.dev.yml",
+        ".github/ci/compose.hf-cache.yml",
+    ),
+]
+
+
+@pytest.mark.parametrize("profile", [None, "assess"])
+@pytest.mark.parametrize("files", COMBINATIONS, ids=lambda f: "+".join(f))
+def test_every_documented_combination_is_a_valid_project(
+    files: tuple[str, ...], profile: str | None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("HF_CACHE_DIR", "/tmp/hf-cache")  # required by the CI-only file
+    assert "vektra" in _render(*files, profile=profile)["services"]
+
+
+def test_with_the_profile_the_api_still_waits_for_the_role_provisioning() -> None:
+    """``required: false`` only lets the dependency be absent (no profile); when the profile
+    brings the one-shot provisioning in, the API still starts after it completed."""
+    rendered = _render("docker-compose.yml", "docker-compose.assess.yml")
+    dep = rendered["services"]["vektra"]["depends_on"]["vektra-assess-db-init"]
+    assert dep["condition"] == "service_completed_successfully"
+    worker = rendered["services"]["vektra-assess-worker"]["depends_on"]
+    assert (
+        worker["vektra-assess-db-init"]["condition"] == "service_completed_successfully"
+    )

@@ -58,6 +58,10 @@ services:
     depends_on:
       vektra-assess-db-init:
         condition: service_completed_successfully
+        # the provisioning is in the assess profile; the API is always on. Without the profile
+        # (an image build: `-f docker-compose.yml -f docker-compose.assess.yml build vektra`)
+        # the dependency is absent, not an invalid project; with it, the API still waits
+        required: false
 
   # One-shot: sets LOGIN and the passwords of the two assess roles. Holds only the
   # two role passwords (and the superuser password it already needs to connect).

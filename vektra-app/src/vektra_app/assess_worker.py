@@ -635,6 +635,12 @@ def _delivery_parts(checked: Checked) -> DeliveryParts:
         # plan 12b: a notification chain whose job died gets its next run back, and an SMTP test
         # whose single-attempt job died ends FAILED interrupted (review #2)
         await rescue_dead_chains(engine.connect)
+        # OQ-033: an erasure request still open past the threshold alerts the operator once
+        from vektra_assess.privacy.erasure import alert_overdue_erasures
+
+        await alert_overdue_erasures(
+            engine.connect, after_s=settings.erasure_alert_after_s
+        )
         from vektra_assess.delivery.smtp_test import reap_interrupted_tests
 
         await reap_interrupted_tests(

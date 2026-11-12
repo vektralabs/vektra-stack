@@ -688,6 +688,18 @@ class VektraAssessSettings(BaseSettings):
             "ERR-ASSESS-027 pending (the same request again is idempotent)."
         ),
     )
+    erasure_alert_after_s: int = Field(
+        3600,
+        ge=300,
+        le=43_200,
+        alias="VEKTRA_ASSESS_ERASURE_ALERT_AFTER_S",
+        description=(
+            "An erasure request still not completed this many seconds after it was made "
+            "queues one operator_notify (erasure_overdue, OQ-033: the LMS cannot fail its own "
+            "request). At most 12 h: the daily purge records a request older than a day as "
+            "failed (abandoned)."
+        ),
+    )
     db_backup_retention_days: int | None = Field(
         None,
         ge=0,

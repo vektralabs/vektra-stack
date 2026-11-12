@@ -290,6 +290,41 @@ by it.
 `/metrics` are described in the [API reference](../../reference/api.md#get-healthcomponent);
 example alert rules are in `deploy/prometheus/assess-alerts.yml.example`.
 
+## Erasure alerts
+
+An erasure request comes from the LMS's privacy API (OQ-033). The LMS cannot leave its own
+request failed: Moodle's privacy manager catches whatever the plugin's provider raises, tells
+the site's DPOs and completes the request anyway. So a request that does not complete on the
+Vektra side would go unnoticed there, and Vektra emails the operator instead
+(`operator_notify`, to `VEKTRA_ASSESS_OPERATOR_EMAIL` through the transcript relay):
+
+| Alert | When | Sent |
+|---|---|---|
+| `erasure_verification_failed` | the worker's count after the deletion found rows left: the deletion was rolled back and the request recorded `failed` (`error_code` `verification_failed`) | once per request, in the transaction that records the failure |
+| `erasure_overdue` | the request is still not completed `VEKTRA_ASSESS_ERASURE_ALERT_AFTER_S` (default 3600 s) after it was made: its job is waiting for work in flight, retrying, or dead | once per request, from the worker's `delivery_retry` tick (every 30 s); a request completed before the email goes out sends nothing |
+
+The email and the job carry the site id, the request id (`assess_erasure_records.id`), the
+scope (`subject` or `activity`) and the reason code: never a user id, the subject's hash or the
+activity. The worker also logs `assess.erasure.alert` with the same `alert` name. The
+alerts need the relay (`VEKTRA_ASSESS_SMTP_*`) and `VEKTRA_ASSESS_OPERATOR_EMAIL`, like every
+operator notification.
+
+What to do:
+
+1. Find the request: `SELECT id, scope, requested_at, completed_at, outcome, error_code FROM
+   assess_erasure_records WHERE id = <request id>`, and its job: `SELECT state, attempts,
+   last_error_code FROM assess_jobs WHERE kind = 'erasure' AND (args->>'erasure_id')::bigint =
+   <request id>`.
+2. `erasure_overdue` with a live job: the erasure waits while a session of the scope is live
+   or a transcript send is in flight (at most 15 minutes after the send started); check the
+   worker's log and `GET /health/assess`. A dead job is queued again by the plugin's retry of
+   the same request.
+3. `erasure_verification_failed`: nothing was deleted. Read the worker's log line
+   (`left=` names the tables), fix the cause, then have the DPO repeat the request from the
+   LMS (a new request; the failed one stays recorded).
+4. A request still open after a day is recorded `failed` (`abandoned`) by the daily purge; it
+   has already been reported as overdue.
+
 ## TLS and the two public origins
 
 The deployment has one backend and two public `https` origins on the reverse proxy:

@@ -848,3 +848,92 @@ async def test_an_address_removed_while_waiting_for_the_relay_is_not_mailed() ->
     deps = _deps(None, sender, clock, recipients=Changing(("a@uni.example",), ()))
     got = await n.notify(deps, JobKind.TEACHER_NOTIFY, _ctx(box))
     assert got is not None and sender.sent == [] and got.next_run is not None
+
+
+# --- erasure alerts (OQ-033: the LMS cannot fail the request, Vektra tells the operator) -----
+
+
+def _erasure_args(kind: str, **over: Any) -> dict[str, Any]:
+    return {
+        "site_id": str(SITE),
+        "kind": kind,
+        "erasure_id": 41,
+        "scope": "subject",
+        **over,
+    }
+
+
+async def test_the_erasure_alerts_are_read_for_the_operator_only() -> None:
+    failed = await n.read_event(
+        Conn(), JobKind.OPERATOR_NOTIFY, _erasure_args("erasure_verification_failed")
+    )
+    assert failed == n.Event(
+        "erasure_verification_failed",
+        SITE,
+        reason="verification_failed",
+        erasure_id=41,
+        scope="subject",
+    )
+    # overdue is re-read: still open -> the alert; completed since -> a no-op
+    open_row = SimpleNamespace(completed_at=None)
+    overdue = await n.read_event(
+        Conn(open_row),
+        JobKind.OPERATOR_NOTIFY,
+        _erasure_args("erasure_overdue", scope="activity"),
+    )
+    assert overdue == n.Event(
+        "erasure_overdue", SITE, reason="not_completed", erasure_id=41, scope="activity"
+    )
+    done_row = SimpleNamespace(completed_at=WHEN)
+    for row in (done_row, None):
+        assert (
+            await n.read_event(
+                Conn(row), JobKind.OPERATOR_NOTIFY, _erasure_args("erasure_overdue")
+            )
+            is None
+        )
+
+
+@pytest.mark.parametrize(
+    ("kind", "args"),
+    [
+        (JobKind.TEACHER_NOTIFY, _erasure_args("erasure_verification_failed")),
+        (
+            JobKind.OPERATOR_NOTIFY,
+            _erasure_args("erasure_verification_failed", erasure_id="x"),
+        ),
+        (
+            JobKind.OPERATOR_NOTIFY,
+            _erasure_args("erasure_verification_failed", erasure_id=True),
+        ),
+        (
+            JobKind.OPERATOR_NOTIFY,
+            _erasure_args("erasure_verification_failed", scope="all"),
+        ),
+        (JobKind.OPERATOR_NOTIFY, _erasure_args("erasure_overdue", erasure_id=None)),
+    ],
+)
+async def test_a_malformed_erasure_alert_is_a_no_op(
+    kind: JobKind, args: dict[str, Any]
+) -> None:
+    assert (
+        await n.read_event(Conn(SimpleNamespace(completed_at=None)), kind, args) is None
+    )
+
+
+def test_the_erasure_emails_carry_ids_and_codes_only() -> None:
+    for code, reason in (
+        ("erasure_verification_failed", "verification_failed"),
+        ("erasure_overdue", "not_completed"),
+    ):
+        e = n.Event(code, SITE, reason=reason, erasure_id=41, scope="activity")
+        msg = _mail(JobKind.OPERATOR_NOTIFY, e)
+        body = msg.get_content()
+        assert str(SITE) in body and "41" in body and "activity" in body
+        assert reason in body
+        assert "41" in str(msg["Subject"])
+    with pytest.raises(ValueError, match="no text"):
+        _mail(
+            JobKind.TEACHER_NOTIFY,
+            n.Event("erasure_overdue", SITE, reason="not_completed", erasure_id=1),
+        )

@@ -21,22 +21,15 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
-from urllib.parse import urlsplit
 from uuid import UUID
 
 from sqlalchemy import text
 
+from vektra_assess.privacy_text import TEXT_BOUNDS, text_field_error
+
 RETENTION_MIN_DAYS = 1
 RETENTION_MAX_DAYS = 3650
 
-#: field -> (minimum, maximum) length; the bounds of revision 0040's CHECKs
-TEXT_BOUNDS: dict[str, tuple[int, int]] = {
-    "legal_basis_label": (1, 200),
-    "legal_basis_text": (1, 4000),
-    "notice_url": (9, 2000),
-    "notice_text": (1, 8000),
-    "notice_version": (1, 40),
-}
 FIELDS = ("retention_days", *TEXT_BOUNDS)
 
 #: REQ-089: always part of the pre-session summary, whatever the DPO's texts say
@@ -59,8 +52,11 @@ class PrivacySettings:
     updated_at: datetime | None = None
 
 
-def field_errors(doc: dict[str, Any]) -> list[dict[str, object]]:
-    """``{field, code}`` per invalid or missing field (never the value). Empty: valid."""
+def field_errors(
+    doc: dict[str, Any], *, legacy: bool = False
+) -> list[dict[str, object]]:
+    """``{field, code}`` per invalid or missing field (never the value). Empty: valid.
+    ``legacy``: the read-side control-character rule (``privacy_text``)."""
     errors: list[dict[str, object]] = []
     days = doc.get("retention_days")
     if days is None:
@@ -76,7 +72,7 @@ def field_errors(doc: dict[str, Any]) -> list[dict[str, object]]:
             }
         )
     for name in TEXT_BOUNDS:
-        error = text_field_error(name, doc.get(name))
+        error = text_field_error(name, doc.get(name), legacy=legacy)
         if error is not None:
             errors.append(error)
     unknown = sorted(set(doc) - set(FIELDS))
@@ -86,37 +82,25 @@ def field_errors(doc: dict[str, Any]) -> list[dict[str, object]]:
     return errors
 
 
-def text_field_error(name: str, value: Any) -> dict[str, object] | None:
-    """``{field, code}`` when one text setting (a ``TEXT_BOUNDS`` name) is invalid or missing,
-    ``None`` when it is valid. The one rule of the stored row, also applied to the notice version
-    a mint echoes (plugin request P3)."""
-    low, high = TEXT_BOUNDS[name]
-    if value is None:
-        return {"field": name, "code": "required"}
-    if not isinstance(value, str):
-        return {"field": name, "code": "not_a_string"}
-    if not value.strip():
-        return {"field": name, "code": "empty"}
-    if len(value) < low:
-        return {"field": name, "code": "too_short", "min": low}
-    if len(value) > high:
-        return {"field": name, "code": "too_long", "max": high}
-    if name == "notice_url" and not value.startswith("https://"):
-        return {"field": name, "code": "not_https"}
-    if name == "notice_url" and not _has_host(value):
-        return {"field": name, "code": "invalid_url"}
-    if any(ord(ch) < 32 and ch not in "\n\t" for ch in value):
-        return {"field": name, "code": "control_character"}
-    return None
+#: what the pre-session screen shows the student (``pre_session_privacy``): changing any of it
+#: is a new notice, so it needs a new ``notice_version`` (plugin request P3)
+SHOWN_FIELDS = (
+    "retention_days",
+    "legal_basis_label",
+    "legal_basis_text",
+    "notice_url",
+    "notice_text",
+)
+MUST_CHANGE: list[dict[str, object]] = [
+    {"field": "notice_version", "code": "must_change"}
+]
 
 
-def _has_host(url: str) -> bool:
-    """A URL a browser can follow: it parses and names a host (``https:///x`` does not, and
-    ``https://[x`` does not parse: never an exception out of the validation)."""
-    try:
-        return bool(urlsplit(url).hostname)
-    except ValueError:
+def version_must_change(old: Any, doc: dict[str, Any]) -> bool:
+    """Whether ``doc`` (a valid new row) changes a shown field of ``old`` but keeps its version."""
+    if doc["notice_version"] != getattr(old, "notice_version", None):
         return False
+    return any(getattr(old, name, None) != doc[name] for name in SHOWN_FIELDS)
 
 
 def passes(row: Any) -> bool:
@@ -124,7 +108,7 @@ def passes(row: Any) -> bool:
     if row is None:
         return False
     doc = {name: getattr(row, name, None) for name in FIELDS}
-    return not field_errors(doc)
+    return not field_errors(doc, legacy=True)
 
 
 READ = text(
@@ -170,8 +154,13 @@ async def current_notice_version(conn: Any, site_id: UUID) -> str | None:
 async def shown_notice_version(conn: Any, site_id: UUID, fallback: str) -> str:
     """The notice version a student is shown before Start: the site's current one, or the
     deployment value ``fallback`` (``VEKTRA_ASSESS_PRIVACY_NOTICE_VERSION``) that ``GET /state``
-    shows for a site with no settings. The one rule of ``/state``, the mint check and Start."""
-    return await current_notice_version(conn, site_id) or fallback
+    shows for a site with no settings. The one rule of ``/state`` and Start."""
+    return shown_version(await read(conn, site_id), fallback)
+
+
+def shown_version(settings: PrivacySettings | None, fallback: str) -> str:
+    """``shown_notice_version`` on settings already read (``GET /state`` reads them whole)."""
+    return settings.notice_version if settings is not None else fallback
 
 
 def summary_text(settings: PrivacySettings) -> str:

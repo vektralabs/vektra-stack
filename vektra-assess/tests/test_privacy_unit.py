@@ -301,15 +301,24 @@ def test_a_busy_pool_answers_pending_on_time() -> None:
         ("", "empty"),
         ("  ", "empty"),
         ("v\x01", "control_character"),
+        ("v\r", "control_character"),
+        ("v\x7f", "control_character"),
+        ("v\x80", "control_character"),
+        ("v\x9f", "control_character"),
+        ("v\u00a0x", None),  # NBSP is not a control character
+        ("v\tx", None),
         (7, "not_a_string"),
         (None, "required"),
     ],
 )
 def test_one_text_field_has_the_same_rule_as_the_whole_row(value, code) -> None:  # type: ignore[no-untyped-def]
-    """Plugin request P3: the mint validates the presented notice version with the very rule
-    of the stored one (``text_field_error``), never a copy of it."""
-    one = pc.text_field_error("notice_version", value)
+    """Plugin request P3: the echoed notice version, the token claim, the deployment stand-in
+    and the stored row share one rule (``privacy_text``), never a copy of it."""
+    from vektra_assess.privacy_text import notice_version_error, text_field_error
+
+    one = text_field_error("notice_version", value)
     assert (one or {}).get("code") == code
+    assert notice_version_error(value) == code
     row = [
         e
         for e in pc.field_errors({**GOOD, "notice_version": value})
@@ -318,9 +327,55 @@ def test_one_text_field_has_the_same_rule_as_the_whole_row(value, code) -> None:
     assert row == ([one] if one else [])
 
 
-def test_the_mint_body_validates_the_presented_version() -> None:
+def test_the_text_rule_module_has_no_database_dependency() -> None:
+    """Review finding 8: ``tokens`` and the settings import the rule without the DB layer."""
+    import ast
+    from pathlib import Path
+
+    import vektra_assess.privacy_text as mod
+
+    tree = ast.parse(Path(mod.__file__).read_text())
+    imported = {
+        (n.module or "") if isinstance(n, ast.ImportFrom) else a.name
+        for n in ast.walk(tree)
+        if isinstance(n, ast.Import | ast.ImportFrom)
+        for a in (n.names if isinstance(n, ast.Import) else [n])  # type: ignore[attr-defined]
+    }
+    assert imported <= {"__future__", "typing", "urllib.parse"}, imported
+
+
+def test_a_stored_row_with_del_or_c1_stays_readable() -> None:
+    """Review finding 9: DEL and C1 are refused on every new write, but a row stored under
+    the earlier rule stays configured (readable and startable)."""
+    legacy = {**GOOD, "notice_text": "Informativa\x85."}
+    assert pc.field_errors(legacy) == [
+        {"field": "notice_text", "code": "control_character"}
+    ]
+    assert pc.passes(SimpleNamespace(**legacy)) is True
+    assert pc.passes(SimpleNamespace(**{**GOOD, "notice_text": "x\x01"})) is False
+
+
+@pytest.mark.parametrize("bad", ["", "   ", "v\r", "v\x85", "x" * 41])
+def test_the_stand_in_version_meets_the_echo_rule(bad: str) -> None:
+    """Review finding 3: /state can never show a stand-in the mint would refuse."""
     from pydantic import ValidationError
 
+    with pytest.raises(ValidationError) as exc:
+        VektraAssessSettings.model_validate(
+            {"VEKTRA_ASSESS_PRIVACY_NOTICE_VERSION": bad}
+        )
+    assert "VEKTRA_ASSESS_PRIVACY_NOTICE_VERSION" in str(exc.value)
+    assert (
+        VektraAssessSettings.model_validate(
+            {"VEKTRA_ASSESS_PRIVACY_NOTICE_VERSION": "2026-11"}
+        ).privacy_notice_version
+        == "2026-11"
+    )
+
+
+def test_the_mint_body_types_the_version_loosely() -> None:
+    """Review finding 4: the model accepts any value; the route checks the format after the
+    login-as assertion (``notice_version_problem``)."""
     from vektra_assess.api.models import MintRequest
 
     base = {
@@ -330,16 +385,30 @@ def test_the_mint_body_validates_the_presented_version() -> None:
         "realuser_id": None,
         "plugin_version": "1",
     }
-    assert MintRequest.model_validate(base).privacy_notice_version is None
+    assert MintRequest.model_validate(base).notice_version_problem() is None
     nulled = MintRequest.model_validate({**base, "privacy_notice_version": None})
-    assert nulled.privacy_notice_version is None
+    assert nulled.notice_version_problem() is None
     shown = MintRequest.model_validate({**base, "privacy_notice_version": "v1"})
     assert shown.privacy_notice_version == "v1"
-    with pytest.raises(ValidationError) as exc:
-        MintRequest.model_validate({**base, "privacy_notice_version": "x" * 41})
-    first = exc.value.errors()[0]
-    assert first["type"] == "too_long"
-    assert first["loc"] == ("privacy_notice_version",)
+    assert shown.notice_version_problem() is None
+    bad = MintRequest.model_validate({**base, "privacy_notice_version": "x" * 41})
+    assert bad.notice_version_problem() == "too_long:privacy_notice_version"
+    bad = MintRequest.model_validate({**base, "privacy_notice_version": 7})
+    assert bad.notice_version_problem() == "not_a_string:privacy_notice_version"
+
+
+def test_a_shown_field_change_needs_a_new_version() -> None:
+    """Review finding 1: the operator rule, on the pure function."""
+    old = SimpleNamespace(**GOOD)
+    assert pc.version_must_change(old, dict(GOOD)) is False
+    for field in pc.SHOWN_FIELDS:
+        new = {
+            **GOOD,
+            field: 31 if field == "retention_days" else "https://x.example/v2",
+        }
+        assert pc.version_must_change(old, new) is True, field
+        assert pc.version_must_change(old, {**new, "notice_version": "v2"}) is False
+    assert set(pc.SHOWN_FIELDS) == set(pc.FIELDS) - {"notice_version"}
 
 
 def test_the_notice_changed_error_is_a_409() -> None:

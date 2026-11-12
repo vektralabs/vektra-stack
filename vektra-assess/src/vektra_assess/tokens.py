@@ -8,8 +8,9 @@ aud, iss, exp, iat and kid are always required.
 
 - *Pre-session* (minted by ``POST /tokens``): ``sub, site, cmid, jti, loginas=false,
   stage="pre"``, ``exp <= iat + 120 s``. Single use: Start or resume consumes its jti. Optional
-  ``notice_version``: the privacy-notice version the mint checked as the one the student saw
-  (plugin request P3); Start refuses when the site's current version differs.
+  ``notice_version``: the privacy-notice version the plugin says the student saw
+  (plugin request P3), never compared at mint; Start refuses when the site's current version
+  differs, every other use of the token ignores it.
 - *Session-bound* (returned by Start and resume): ``sub, site, cmid, sid, seq, epoch, jti,
   loginas=false, stage="session"``, ``exp <= min(deadline + grace, iat + session TTL)``. ``seq``
   is the session number N; ``epoch`` the session's revocation counter.
@@ -33,7 +34,7 @@ import jwt
 
 from vektra_assess.config import VektraAssessSettings
 from vektra_assess.keys import AssessKeyring
-from vektra_assess.privacy.config import text_field_error
+from vektra_assess.privacy_text import notice_version_error
 from vektra_shared.tokens import Keyring, SigningKey, decode_jwt, encode_jwt
 
 AUDIENCE = "discussion"
@@ -267,10 +268,7 @@ class AssessTokens:
             if exp - iat > 120:
                 raise TokenError("presession_ttl")
             notice = claims.get("notice_version")
-            if notice is not None and (
-                not isinstance(notice, str)
-                or text_field_error("notice_version", notice) is not None
-            ):
+            if notice is not None and notice_version_error(notice) is not None:
                 raise TokenError("claim_notice_version")
             return PreClaims(sub, site, cmid, jti, iat, exp, notice)
         return SessionClaims(

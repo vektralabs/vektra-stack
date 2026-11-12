@@ -155,10 +155,12 @@ class _Refused(Exception):
         err: ErrorResponse,
         audit_reason: str | None = None,
         event: AssessAuditEvent = AssessAuditEvent.START_REFUSED,
+        audit_data: dict[str, Any] | None = None,
     ) -> None:
         super().__init__(err.code)
         self.err = err
         self.event = event
+        self.audit_data = audit_data or {}
         self.audit_reason = (
             audit_reason  # audited after the rollback, in its own transaction
         )
@@ -333,7 +335,14 @@ async def start_session(
             # refused when the notice changed since (rolled back: nothing consumed, audited)
             presented = claims.notice_version
             if presented is not None and presented != notice_version:
-                raise _Refused(privacy_notice_changed(), "privacy_notice_changed")
+                raise _Refused(
+                    privacy_notice_changed(),
+                    "privacy_notice_changed",
+                    audit_data={
+                        "presented_notice_version": presented,
+                        "current_notice_version": notice_version,
+                    },
+                )
             row = (
                 await conn.execute(
                     _INSERT_SESSION,
@@ -384,7 +393,7 @@ async def start_session(
                     actor="api",
                     site_id=claims.site,
                     reason_code=exc.audit_reason,
-                    data={"cmid": claims.cmid},
+                    data={"cmid": claims.cmid, **exc.audit_data},
                 )
     except IntegrityError as exc:
         if _ONE_OPEN not in str(exc.orig):

@@ -494,8 +494,8 @@ def privacy_config_invalid(fields: list[dict[str, object]]) -> ErrorResponse:
 
 def privacy_notice_changed() -> ErrorResponse:
     """409 (plugin request P3): the privacy-notice version the student was shown is no longer
-    the site's current one. Refused at mint (no token row) and at Start (no session, nothing
-    consumed); the page must be reopened to show the current notice."""
+    the site's current one. Refused by Start only (no session, nothing consumed): the mint
+    checks the echoed version's format, never its value. The page must be reopened."""
     return ErrorResponse(
         category=ErrorCategory.PERMANENT,
         code=ERR_ASSESS_029,

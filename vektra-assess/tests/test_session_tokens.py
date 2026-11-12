@@ -257,7 +257,7 @@ def test_presession_carries_the_presented_notice_version_only_when_given() -> No
     assert t.verify(shown.token, stage="pre").notice_version == "2026-11"
 
 
-@pytest.mark.parametrize("bad", [7, "", "x" * 41, ["v1"], "v\x01"])
+@pytest.mark.parametrize("bad", [7, "", "x" * 41, ["v1"], "v\x01", "v\x7f", "v\x9f"])
 def test_a_malformed_notice_version_claim_is_refused(bad: object) -> None:
     r = ring("k1")
     tok = _forge(_base(notice_version=bad), r.keys["k1"])

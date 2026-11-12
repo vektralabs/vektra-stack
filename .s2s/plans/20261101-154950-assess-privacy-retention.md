@@ -369,14 +369,15 @@ no log files fails rather than passing.
 > - echo the `notice_version` the student saw in the Start request, so the API can refuse a
 >   Start whose notice changed meanwhile (CodeRabbit 4516399732). Until then the Start records
 >   the site's version at commit; the window is the pre-session token's TTL (at most 120 s).
->   **API side done (2026-11-12, branch `feat/assess-mint-notice-version`):** the mint body
->   takes an optional `privacy_notice_version` (the stored `notice_version`'s rule,
->   `privacy.config.text_field_error`); when present it must equal the version shown now, or
->   `409 ERR-ASSESS-029` `privacy_notice_changed` and no token row. The version travels in the
->   pre-session token (claim `notice_version`, no schema change); Start re-checks it inside its
->   transaction and refuses with the same error (no session, jti not consumed, audited
->   `assess_start_refused`), and `assess_start` records `presented_notice_version`. Absent or
->   null changes nothing (the `/state` mint). The plugin sends it in its Start-time mint.
+>   **API side done (2026-11-12, branch `feat/assess-mint-notice-version`, PR #211):** the mint
+>   body takes an optional `privacy_notice_version`; the mint checks its format only (the rule of
+>   the stored `notice_version`, `vektra_assess.privacy_text`, after the login-as assertion) and
+>   carries it in the pre-session token (claim `notice_version`, no schema change). Only Start
+>   compares it with the site's current version: `409 ERR-ASSESS-029` `privacy_notice_changed`, no
+>   session, jti not consumed, audited `assess_start_refused` with both versions; `assess_start`
+>   records `presented_notice_version`. `/state` and a resume ignore the claim. **Plugin: send it
+>   on the Start mint** (harmless on the `/state` and resume mints). The operator's PUT refuses a
+>   change to a shown field under the same `notice_version` (`must_change`).
 
 > **12b, the items moved from 12a (2026-11-10).**
 > - `delivery_retry` safety net for the notification chains (`delivery.notify.rescue_dead_chains`,

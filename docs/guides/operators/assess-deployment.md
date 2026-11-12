@@ -19,7 +19,7 @@ Related operator documents:
 `vektra_assess.worker.slots.assert_all_bound` refuses to start a worker while any job kind or
 reaper has no handler, unless `VEKTRA_ASSESS_WORKER_ALLOW_UNBOUND=true`, which is honoured only with
 `VEKTRA_ENV=development`. In the current tree every slot is bound: the `rotate_keys` job kind,
-which had no handler and blocked every production start, was removed (revision `0044`; key
+which had no handler and blocked every production start, was removed (revision `0044`, now part of the assess base revision; key
 rotation is the `python -m vektra_assess.keys rewrap` command). The guard test
 `vektra-app/tests/test_assess_processes.py` composes a fully keyed production worker without the
 override and requires every slot bound. See the [pilot go/no-go](assess-pilot-go-no-go.md).
@@ -32,7 +32,7 @@ is always on and Compose has no optional secrets) and gated by the `assess` prof
 
 | Service | `CMD_TARGET` | What it does | Database role | Network | Limits |
 |---|---|---|---|---|---|
-| `vektra` (API) | `server` | runs `alembic upgrade head`, then serves `/api/v1/assess` (only with `VEKTRA_ASSESS_ENABLED=true`) | `vektra_assess_api` through `VEKTRA_ASSESS_API_DATABASE_URL`, next to the main `VEKTRA_DATABASE_URL` | default | `memory: 3G` (base file) |
+| `vektra` (API) | `server` | runs `alembic upgrade platform@head` and, only with `VEKTRA_ASSESS_ENABLED=true`, `alembic upgrade assess@head` (see [the assess schema](#the-assess-schema-a-migration-branch-of-its-own)), then serves `/api/v1/assess` (only when enabled) | `vektra_assess_api` through `VEKTRA_ASSESS_API_DATABASE_URL`, next to the main `VEKTRA_DATABASE_URL` | default | `memory: 3G` (base file) |
 | `vektra-assess-db-init` | none (`psql`) | one-shot: sets `LOGIN` and the passwords of the two assess roles (`deploy/postgres/assess-roles.sql`) | the Postgres superuser | default | `restart: "no"` |
 | `vektra-assess-worker` | `assess-worker` | the job loop, the ticks, LMS reads, the Start pre-flight, transcripts, SMTP | `vektra_assess_worker` through `VEKTRA_ASSESS_WORKER_DATABASE_URL` | default, no published port | `mem_limit: 512m`, `stop_grace_period: 30s` |
 | `vektra-assess-parser` | `assess-parser` | parses submitted files, each in a fresh child process | none | `network_mode: none` | `read_only`, user `1000:1000`, `mem_limit: 768m`, `pids_limit: 64`, `cpus: 1.5`, `cap_drop: [ALL]`, `no-new-privileges`, `/tmp` tmpfs 64m |
@@ -160,10 +160,33 @@ The model must also have a passing NFR-023 activation for its `prompt_version`
 one the API starts degraded and the pre-flight refuses every discussion. See the
 [API reference](../../reference/api.md#assess-model-activation-nfr-023).
 
+## The assess schema: a migration branch of its own
+
+The assess tables, the three `vektra_assess_*` roles and the `SECURITY DEFINER` functions are
+one Alembic branch, `assess`, separate from the platform's `platform` branch (ADR-0033 D7;
+`vektra-assess/src/vektra_assess/migrations/versions/a0001_assess_base.py`). The `server` and
+`migrate` entrypoint targets always run `alembic upgrade platform@head`, and run
+`alembic upgrade assess@head` only with `VEKTRA_ASSESS_ENABLED=true`. A deployment that never
+enables assess gets none of its tables, roles or functions, and its migration user needs no
+`CREATEROLE`. The API's startup check requires the assess branch at its head only when assess
+is enabled; a deployment that turns assess off keeps its schema and still starts.
+
+Enabling assess later is the same: set `VEKTRA_ASSESS_ENABLED=true` and restart the API, whose
+entrypoint then applies the branch. On managed Postgres, the migration user's requirements
+(the three roles pre-created, membership of `vektra_assess_definer`) are those of the
+CHANGELOG upgrade note and apply only from then on.
+
+**Development databases migrated by the old chain.** The 36 assess revisions `0009` to `0044` of the
+root chain were squashed into the branch's base revision `a0001`, with neutral column names
+(`lms_site_uuid`, `lms_origin`, `lms_release`). No released version ever shipped them, and no
+assess data is migrated: a development database that holds them is re-created. Drop the
+database (or its volume), then start the stack again; `alembic upgrade` refuses a database
+recorded at `0044` (`Can't locate revision`).
+
 ## Database roles and DSNs
 
-The two roles are created NOLOGIN by `deploy/postgres/init.sql` or migration `0009`, or by
-`assess-roles.sql` itself if neither has run yet; `vektra-assess-db-init` then sets them `LOGIN NOSUPERUSER NOCREATEROLE NOCREATEDB
+The three roles are created NOLOGIN by the assess migration branch, or the two login roles by
+`assess-roles.sql` itself if the branch has not run yet; `vektra-assess-db-init` then sets them `LOGIN NOSUPERUSER NOCREATEROLE NOCREATEDB
 NOBYPASSRLS NOINHERIT` with the passwords from `assess_db_api_password` and
 `assess_db_worker_password`. Grants are set by the migrations, not by this script.
 

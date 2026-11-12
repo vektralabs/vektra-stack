@@ -249,7 +249,7 @@ Only mounted when `VEKTRA_ASSESS_ENABLED=true`. Callable by an `admin` key or by
 | POST | `/api/v1/assess/sites/{site_id}/setup-check` | `202 {"report_id": "<uuid>"}` | `401 ERR-AUTH-001`, `403 ERR-AUTH-003`, `404 ERR-ASSESS-003`, `429 ERR-ASSESS-002` (one check per site per 5 minutes, `Retry-After` set), `503 ERR-ASSESS-001` (no fresh worker heartbeat: the check would otherwise stay queued forever) |
 | GET | `/api/v1/assess/sites/{site_id}/setup-check/{report_id}` | `200` content-free report | `401`, `403`, `404 ERR-ASSESS-003` |
 
-The report is `{"report_id", "site_id", "status": "queued|running|done|failed", "moodle_release", "items": [{"name", "result": "OK|MISSING|UNVERIFIABLE", "reason_code"}], "created_at", "finished_at"}`. It carries no Moodle text, no emails and no ids beyond `site_id`. The feature is available for a site only if its latest finished report for the current Moodle release has every item `OK`.
+The report is `{"report_id", "site_id", "status": "queued|running|done|failed", "lms_release", "items": [{"name", "result": "OK|MISSING|UNVERIFIABLE", "reason_code"}], "created_at", "finished_at"}`. It carries no Moodle text, no emails and no ids beyond `site_id`. The feature is available for a site only if its latest finished report for the current Moodle release has every item `OK`.
 
 ### Assess model activation (NFR-023)
 
@@ -314,7 +314,7 @@ saved) are required. Every other field is optional; ABSENT means unchanged. `nul
 what can be empty: the write-only fields below, `cap_minutes` and `available_until`; `null` on
 `enabled`, `show_solution`, `rag_enabled` or `rubric_source` is the field error `null_not_allowed`
 (never a silent `false`).
-`enabled` (bool), `cap_minutes` (5-120), `rubric_source` (`none`/`pasted`, plus `moodle` for an
+`enabled` (bool), `cap_minutes` (5-120), `rubric_source` (`none`/`pasted`, plus `lms` for an
 assignment), `show_solution` (bool, default off), `rag_enabled` (only `false` is accepted: `true`
 is the field error `rag_unavailable` with `reason: operator_flag_off`), `available_until`
 (ISO 8601 with a time zone, or `null` for no limit; after the effective opening).
@@ -334,9 +334,9 @@ always, until plan assess-privacy-retention lands) and a setup check that is not
 `"0-20000"`, `"1-20000"`, `"1-3"`), `allowed_domains`, `index` (the recipient's position, never
 the address), `reason`, `opening_at`. Codes: `out_of_range`, `too_long`, `empty`, `required`,
 `invalid_address`, `domain_not_allowed`, `too_many`, `null_not_allowed`, `rag_unavailable`, `not_for_activity_type`,
-`timezone_required`, `out_of_range` (also on `available_until`), `opening_unknown`, `not_after_opening`, `moodle_rubric_missing`, and on
+`timezone_required`, `out_of_range` (also on `available_until`), `opening_unknown`, `not_after_opening`, `lms_rubric_missing`, and on
 `enabled`: `quiz_without_close_date`, `assignment_without_cutoff`, `team_submission`,
-`marking_guide`, `moodle_facts_unreadable`, `privacy_unset`, `setup_check_red`.
+`marking_guide`, `lms_facts_unreadable`, `privacy_unset`, `setup_check_red`.
 
 View (GET and PUT): `cmid`, `activity_type`, `version`, `configured`, `enabled`, `cap_minutes`,
 `rubric_source`, `show_solution`, `rag_enabled` (always `false`), `available_until`,
@@ -517,7 +517,7 @@ configured transcript recipients (ids and the event only, no content) within the
 
 `GET /api/v1/assess/ui?site=<site id>` is the student discussion page, on
 `VEKTRA_ASSESS_UI_ORIGIN`, framed by the site's Moodle origin only (`frame-ancestors`, the
-site's `moodle_origin`). It is public: it carries no data and no credential, and never reads a
+site's `lms_origin`). It is public: it carries no data and no credential, and never reads a
 token from its URL (no route does). Response headers: the strict CSP (`default-src 'none'`,
 `'self'` for scripts, styles, connections, images and fonts, `frame-ancestors <moodle origin>`,
 trusted types with no policy), `Referrer-Policy: no-referrer`, `X-Content-Type-Options: nosniff`,
@@ -528,7 +528,7 @@ other API response has `X-Frame-Options: DENY`). An unknown or disabled site is 
 `404 ERR-ASSESS-003` (unknown site or asset), `429 ERR-ASSESS-012` (`ui_page_rate`, `Retry-After`),
 `503 ERR-ASSESS-001` (remediation names `ui_origin`, `site_origin` or `ui_bundle`). Assets: `GET /api/v1/assess/ui/assets/{name}`, content-hashed names
 from the build manifest only.
-The page carries a JSON data block (never executed) with `site`, `moodleOrigin`, `apiBase` and
+The page carries a JSON data block (never executed) with `site`, `parentOrigin`, `apiBase` and
 `maxMessageChars` (`VEKTRA_ASSESS_MAX_MESSAGE_CHARS`, the composer's limit).
 
 The page works inside the plugin's iframe sandbox `allow-scripts allow-same-origin

@@ -28,7 +28,7 @@ not start in production) is fixed; most criteria are blocked on the target envir
 
 | # | Criterion | Status | Evidence or what is missing |
 |---|---|---|---|
-| 0 | A production worker starts: no unbound slot | **PASS** | The unhandled `rotate_keys` kind was removed (revision `0044`). `vektra-app/tests/test_assess_processes.py` composes a fully keyed production worker without the development override and requires every slot bound. See [deployment](assess-deployment.md#worker-start-check) |
+| 0 | A production worker starts: no unbound slot | **PASS** | The unhandled `rotate_keys` kind was removed (revision `0044`, now part of the assess base revision). `vektra-app/tests/test_assess_processes.py` composes a fully keyed production worker without the development override and requires every slot bound. See [deployment](assess-deployment.md#worker-start-check) |
 
 ### Robustness (REQ-067, REQ-071, REQ-075, ARCH-068)
 

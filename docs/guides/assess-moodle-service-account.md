@@ -108,15 +108,15 @@ No API route creates a site or binds a key to it. Both are rows the operator wri
 1. **The site**, as the database owner:
 
    ```sql
-   INSERT INTO assess_sites (moodle_site_uuid, base_url, moodle_origin)
+   INSERT INTO assess_sites (lms_site_uuid, base_url, lms_origin)
    VALUES ('<unique site identifier>', 'https://moodle.uni.example', 'https://moodle.uni.example')
    RETURNING id;
    ```
 
    `id` is the site id used everywhere else: the `assess_ws_tokens` key, the setup-check and
-   privacy routes, the UI's `?site=`. `moodle_site_uuid` must be unique; no code reads it beyond
+   privacy routes, the UI's `?site=`. `lms_site_uuid` must be unique; no code reads it beyond
    that, so use an identifier you can trace to the LMS site (which value the plugin expects there,
-   if any, is not verified in this repository). `moodle_origin` is the framing origin
+   if any, is not verified in this repository). `lms_origin` is the framing origin
    ([framing](operators/assess-framing.md)). `min_plugin_version` (optional) raises the minimum
    plugin release for this site above `VEKTRA_ASSESS_MIN_PLUGIN_VERSION`.
 2. **Four API keys**, one per purpose, each with a single `assess:*` scope (an `assess:*` scope
@@ -202,7 +202,7 @@ every row at once and queues a new check; Starts are blocked until it passes.
 ## The discussion UI origin and framing
 
 The discussion page is served by Vektra on its own origin and framed by the LMS. The origins, the
-per-site `moodle_origin`, the reverse proxy and how to verify them are in the
+per-site `lms_origin`, the reverse proxy and how to verify them are in the
 [framing runbook](operators/assess-framing.md).
 
 ## Transcript recipients and the domain allowlist (plan 10b)

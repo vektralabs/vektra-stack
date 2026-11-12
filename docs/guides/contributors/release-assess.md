@@ -13,7 +13,7 @@ assess work ships in the next minor, `0.9.0`. Nothing in this repository has bee
 
 - [ ] **No unbound worker slot.** `vektra-app/tests/test_assess_processes.py` passes with
       `vektra_assess.worker.slots.PENDING_OWNER_PLANS` empty (it is, since the `rotate_keys`
-      kind was removed in revision `0044`), so a production worker starts
+      kind is not in the assess base revision's `ck_assess_jobs_kind`), so a production worker starts
       ([deployment](../operators/assess-deployment.md#worker-start-check)). A new job kind
       without a handler reopens this gate.
 - [ ] **Chaos suite.** `make test-chaos-assess` exits 0 (its gate fails on a skipped case, on
@@ -58,8 +58,9 @@ Follow CONTRIBUTING.md, with these points for assess:
 - [ ] `CHANGELOG.md`: `[Unreleased]` becomes `[X.Y.0] - YYYY-MM-DD` with a fresh empty
       `[Unreleased]` above it. The assess entries under `[Unreleased]` stay in this release's
       section; check that none of them describes a behaviour that changed later in the cycle.
-- [ ] Add an **upgrade** entry: the assess migrations run with the API's
-      `alembic upgrade head`; the feature stays dormant unless `VEKTRA_ASSESS_ENABLED=true`, and
+- [ ] Add an **upgrade** entry: the assess schema is its own migration branch, applied by the
+      API's entrypoint only with `VEKTRA_ASSESS_ENABLED=true` (`alembic upgrade assess@head`,
+      after `platform@head`; ADR-0033 D7); the feature stays dormant unless it is enabled, and
       the API applies the forbidden column of the key matrix even when it is off (an API
       container that mounts a worker-only secret no longer starts).
 - [ ] Bump the published-image examples (`docs/getting-started/index.md`,

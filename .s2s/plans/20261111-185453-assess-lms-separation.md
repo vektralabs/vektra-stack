@@ -1,10 +1,10 @@
 # Implementation Plan: Separating `vektra-assess` from the LMS (the `LmsProvider` Protocol)
 
 **ID**: 20261111-185453-assess-lms-separation
-**Status**: in_progress (ADR-0033 accepted 2026-11-11, with OD-1 to OD-6 decided; phase 4, the ADR itself, is in review in #201; PR 2a-1 done on `feat/lms-provider-protocol`, in review; PR 2a-2 done on `feat/assess-on-lms-protocol`, stacked on #203)
+**Status**: in_progress (ADR-0033 accepted 2026-11-11, with OD-1 to OD-6 decided; phase 4, the ADR itself, is in review in #201; PR 2a-1 done on `feat/lms-provider-protocol`, in review; PR 2a-2 done on `feat/assess-on-lms-protocol`, stacked on #203; PR 2a-3 done on `feat/assess-schema-branch`, stacked on #205, 2a-3.9 waiting for the coordinator)
 **Branch**: `docs/assess-lms-separation-adr` (phase 4), `feat/lms-provider-protocol` (2a-1, stacked on #201). Each later PR has its own branch, listed in the PR split below.
 **Created**: 2026-11-11T18:54:53Z
-**Updated**: 2026-11-11T21:30:00Z
+**Updated**: 2026-11-12T03:30:00Z
 
 ## Traceability
 
@@ -130,10 +130,10 @@ Regrouped by the product owner on 2026-11-11 (relayed by the coordinator): phase
 
   Record both results in `## Notes`. If either is false, **stop**: OD-1 is decided again by the owner, and 2a-3 follows the fallback above.
 - [x] 2a-3.1 before deleting anything: run 0001 to 0044 on an empty cluster and commit the normalised schema golden `vektra-assess/tests/golden/assess_schema_head.sql` (`pg_dump --schema-only`, normalised), with the D5 rename map applied, plus the effective-privilege dump of the grant matrix
-- [ ] 2a-3.2 `vektra-assess/src/vektra_assess/migrations/versions/a0001_assess_base.py`: one revision, `branch_labels=("assess",)`, `depends_on="0008"`, creating the head schema with `lms_site_uuid`, `lms_origin` (CHECK `ck_assess_sites_lms_origin`) and `lms_release`; the CREATEROLE error message names all three roles; delete `migrations/versions/0009…0044` (36 files)
-- [ ] 2a-3.3 `alembic.ini` `version_locations`; `migrations/env.py`; branch label `platform` on `migrations/versions/0001_initial_schema.py`; `docker/entrypoint.sh` (lines 21, 33) runs `alembic upgrade platform@head`, and `assess@head` only when `VEKTRA_ASSESS_ENABLED=true`
-- [ ] 2a-3.4 test `vektra-assess/tests/integration/test_schema_branch.py`: the squash equals the golden (schema and effective privileges); with assess off, a clean cluster has 0 `assess_*` tables, 0 `vektra_assess_*` roles and 0 assess functions after the entrypoint ran (counted); with assess on, a cluster without CREATEROLE fails with the three-role message, and the platform with assess off migrates without CREATEROLE (the review's managed-Postgres case)
-- [ ] 2a-3.5 renames in place (ADR-0033 D5):
+- [x] 2a-3.2 `vektra-assess/src/vektra_assess/migrations/versions/a0001_assess_base.py`: one revision, `branch_labels=("assess",)`, `depends_on="0008"`, creating the head schema with `lms_site_uuid`, `lms_origin` (CHECK `ck_assess_sites_lms_origin`) and `lms_release`; the CREATEROLE error message names all three roles; delete `migrations/versions/0009…0044` (36 files)
+- [x] 2a-3.3 `alembic.ini` `version_locations`; `migrations/env.py`; branch label `platform` on `migrations/versions/0001_initial_schema.py`; `docker/entrypoint.sh` (lines 21, 33) runs `alembic upgrade platform@head`, and `assess@head` only when `VEKTRA_ASSESS_ENABLED=true`
+- [x] 2a-3.4 test `vektra-assess/tests/integration/test_schema_branch.py`: the squash equals the golden (schema and effective privileges); with assess off, a clean cluster has 0 `assess_*` tables, 0 `vektra_assess_*` roles and 0 assess functions after the entrypoint ran (counted); with assess on, a cluster without CREATEROLE fails with the three-role message, and the platform with assess off migrates without CREATEROLE (the review's managed-Postgres case)
+- [x] 2a-3.5 renames in place (ADR-0033 D5):
   - `db/models.py`, `db/grants.py`, `ui/origins.py`, `vektra-app/src/vektra_app/assess_wiring.py`, `capabilities.py`, `api/setup_check.py` (JSON `lms_release`)
   - `context/snapshot.py` (`lms_release`, `rubric_source` `"lms"`), `teacher/schemas.py`, `teacher/validation.py`, `api/teacher_config.py`, `api/teacher_ops.py`
   - `worker/render.py` (`lms_reasons`), `worker/start_source.py` (`lms_rubric`), `worker/start_guard.py` and `delivery/notify.py` (`lms_unreachable`)
@@ -141,12 +141,12 @@ Regrouped by the product owner on 2026-11-11 (relayed by the coordinator): phase
   - `vektra_assess/errors.py` messages and remediations
   - `ui/src/main.ts`, `ui/src/bridge.ts` (`parentOrigin`) and `ui/router.py`
   - the comment-only mentions in the vertical, for example `gates.py:3,97`, `audit.py:15`, `llm/strings/*.yaml:1`, `llm/shipped.py:6`
-- [ ] 2a-3.6 tests that name revisions are rewritten against the branch: `test_migration_0009.py`, `test_migration_0033.py`, `test_schema_0010_0013.py`, `test_schema_0018_jobs.py`, `test_grants.py`, `integration/test_migration_managed_postgres.py`, `test_render_moodle_reasons.py` (renamed `test_render_lms_reasons.py`)
-- [ ] 2a-3.7 docs:
+- [x] 2a-3.6 tests that name revisions are rewritten against the branch: `test_migration_0009.py`, `test_migration_0033.py`, `test_schema_0010_0013.py`, `test_schema_0018_jobs.py`, `test_grants.py`, `integration/test_migration_managed_postgres.py`, `test_render_moodle_reasons.py` (renamed `test_render_lms_reasons.py`)
+- [x] 2a-3.7 docs:
   - `docs/guides/assess-moodle-service-account.md:111` (provisioning SQL), `docs/guides/operators/assess-framing.md`, `assess-deployment.md`
   - `docs/reference/{api,configuration,error-codes}.md`; the upgrade note: "re-create the development assess schema"
   - CHANGELOG `[Unreleased]`
-- [ ] 2a-3.8 baseline: delete the 18 `migrations/versions/*` entries and lower `assess_wiring.py`, in the same commit; guard green
+- [x] 2a-3.8 baseline: delete the 18 `migrations/versions/*` entries and lower `assess_wiring.py`, in the same commit; guard green
 - [ ] 2a-3.9 the databases. What is known:
   - the only database with assess data is the local F1 stack's Postgres (the `vektra-f1-postgres` container on the developer machine);
   - testcontainers are ephemeral;
@@ -228,7 +228,7 @@ Each criterion is checked against the guard's data file. A status line or a gree
 
 **Phase 3 (ratchet 2, if not already closed)**
 - [ ] `lms_boundary_baseline.toml` contains no entries, and the guard is green.
-- [ ] With `VEKTRA_ASSESS_ENABLED=false`, a clean cluster has 0 `assess_*` tables, 0 `vektra_assess_*` roles and 0 assess functions after `docker/entrypoint.sh` ran (counted with `\dt assess_*`, `\du vektra_assess*`, `\df`), and the platform migrates without CREATEROLE.
+- [x] With `VEKTRA_ASSESS_ENABLED=false`, a clean cluster has 0 `assess_*` tables, 0 `vektra_assess_*` roles and 0 assess functions after `docker/entrypoint.sh` ran (counted with `\dt assess_*`, `\du vektra_assess*`, `\df`), and the platform migrates without CREATEROLE. Met in 2a-3: `integration/test_schema_branch.py::test_a_*` (counted in SQL) and `integration/test_migration_managed_postgres.py::test_a_0_*`.
 - [ ] The production image contains no `testing_recorders` module.
 - [ ] The RLS test reads 0 rows of site B from a connection bound to site A, with the route predicate removed.
 
@@ -331,3 +331,35 @@ Each criterion is checked against the guard's data file. A status line or a gree
 
   Both facts hold: OD-1 = (a) stays valid, and 2a-3 squashes.
 - 2026-11-12, task 2a-3.1: the goldens were taken from the old chain (0001 to 0044, `alembic upgrade head` on an empty pgvector/pg16 container) before any revision was deleted, by `vektra-assess/tests/support/schema_dump.py`: `assess_schema_head.sql` (the database's normalised `pg_dump --schema-only`, plus the seeded `namespaces` rows) and `assess_privileges_head.txt` (the three roles' attributes and memberships, and every effective privilege on schema public, sorted: 819 lines). The D5 renames (`moodle_site_uuid`, `moodle_origin`, `ck_assess_sites_moodle_origin`, `moodle_release` to their `lms_*` names) are applied to both; 4 lines of the old dump carried them, and no line of either golden names an LMS.
+- 2026-11-12, PR 2a-3, where it deviates from the task text or adds to it:
+  - **The squash is pg_dump's spelling.** `a0001_assess_base.py` carries the old head's `pg_dump --schema-only` DDL (renamed), grouped per table, then the foreign keys, the functions and the triggers, plus the hand-written parts of the old chain: the namespace refusal (formerly 0019), the role creation with the CREATEROLE message (formerly 0009 and 0012, now one message naming all three roles), the `api_keys` and `query_traces` changes (0009, 0019, 0020), the definer ownership and `GRANT_STATEMENTS` (the rendered matrix). One CHECK (`ck_assess_privacy_url`) keeps the source spelling of 0040: pg_dump's deparse, re-parsed, nests its `AND`s differently. With that, the dumps are identical on the first comparison.
+  - **Alembic records only `a0001`** once the branch is applied: `0008` is implied by `depends_on`. So `alembic_version` holds one row (`a0001`) with assess on, and `0008` with it off.
+  - **`vektra_shared.startup.check_database_schema`** (not in the task list) had to change: it read only `migrations/versions` and compared the current heads with all heads, so an assess-enabled database (`a0001`) would have failed the API's step 3. It now loads `alembic.ini`, requires the heads of the branches it is given (`platform` always, `assess` only when enabled: `vektra_app.assess_wiring.migration_branches()`), counts a revision as applied when a current one depends on it, and refuses a revision unknown to the release by name (a database still at `0044`).
+  - **`alembic upgrade head` fails now** (two heads). Platform test fixtures run `platform@head`; the assess, admin (assess scopes and the reserved namespace are tested there) and chaos fixtures run `heads`.
+  - **`migrations/env.py`** needed no change: the assess location is `version_locations` in `alembic.ini` (`path_separator = newline`). The image copies `vektra-assess/src/vektra_assess/migrations/` to the same path under `/app`.
+  - **`deploy/postgres/init.sql` no longer creates the two assess roles**: a fresh compose volume with assess off then has 0 of them, as the acceptance criterion counts. With assess on, the branch creates all three and `assess-roles.sql` (db-init) sets LOGIN.
+  - **Consequence for the admin UI with assess off**: an assess-scope key is refused by the platform's `ck_api_keys_scopes` (the assess scopes are added by the assess branch). Not changed here; an admin UI that hides the assess scopes when assess is off would be a follow-up.
+  - **Tests of intermediate data migrations deleted**, since the revisions they drove no longer exist: the round trips to 0033, 0034, 0035, 0038, 0017 (`test_delivery_schema.py`, `test_transcript_schema.py`, `test_teacher_config_schema.py`, `test_schema_assess_jobs.py`), the 0033 `moodle_origin` backfill and the 0036 composite-config refusal. Kept as head guarantees: the `rotate_keys` refusal of `ck_assess_jobs_kind` (`test_jobs_outbox.py`), the origin CHECK against the code's normalisation (`test_schema_lms_origin.py`), the 0019 namespace refusal and the reserved-row downgrade (`test_trace_pipeline_db.py`, now `assess@base`), the scopes and the assess-key downgrade refusal (`test_schema_assess_scopes.py`), the sessions downgrade refusal (`test_schema_assess_tables.py`). `test_schema_branch.py` adds the full round trip: `downgrade assess@base` gives back the platform schema at 0008 byte for byte.
+  - **Renamed test files**: `test_migration_0009.py` -> `test_schema_assess_scopes.py`, `test_migration_0033.py` -> `test_schema_lms_origin.py`, `test_schema_0010_0013.py` -> `test_schema_assess_tables.py`, `test_schema_0018_jobs.py` -> `test_schema_assess_jobs.py`, `test_render_moodle_reasons.py` -> `test_render_lms_reasons.py`. `test_grants.py` names no revision and is unchanged; the revision-naming grant test is `integration/test_grant_matrix.py`, now pointed at the assess location. New: `test_assess_migrations_static.py` (one revision, branch, the guard's matcher finds no LMS in the branch, the rendered matrix, the three-role message).
+  - **Renames beyond the D5 table**, in the same spirit: the setup reason `same_site_as_moodle` -> `same_site_as_lms`, the reference rejection `moodle_id` -> `lms_id`, the Italian notification and transcript texts ("id Moodle" -> "id LMS"), and every other prose mention of the vertical outside `moodle/` and `config.py`. Left for 2a-4: `config.py` (15 mentions, the settings that move with the provider, 2a-4b.2) and 8 citations of the plan slug `assess-moodle-ws` in 5 files (`worker/slots.py` uses it as a value).
+  - **`prompt_version` changes again**: the shipped string files' header comments name the LMS no more, and their bytes enter the version: `806fa729` -> `2a40bfa0`; a new NFR-023 activation is needed (CHANGELOG).
+  - **Baseline**: the 18 migration entries are deleted, and `assess_wiring.py` reached 0 mentions (its 5 remaining were startup remediation texts), so its entry is deleted too rather than lowered. 19 entries removed, none added, no count raised; 6 entries remain (the `vektra-assess` directory and 5 platform files), for 2a-4.
+  - **Size**: about 190 files, 36 of them deleted revisions and 12 regenerated eval fixtures. Local review only (CodeRabbit reviews 2a-2 only).
+- 2026-11-12, task 2a-3.9, the commands (not run by this session; the coordinator runs them after the merge, on the owner's pre-authorisation of OD-1, which 2a-3.0 confirmed):
+  - **Local F1 database** (container `vektra-f1-postgres-1`, volume `vektra-f1_vektra_pgdata`; at the cut it is at revision `0037` with 34 `assess_*` tables, the 3 roles, 2 namespaces, 5 API keys, 0 source documents). Its assess revisions no longer exist, so the whole test database is re-created; the API keys and the `assess_sites` rows are provisioned again afterwards (with `lms_site_uuid` / `lms_origin`).
+    ```sh
+    # 0. read-only, before
+    docker exec vektra-f1-postgres-1 psql -U vektra -d vektra -Atc "SELECT version_num FROM alembic_version; SELECT count(*) FROM pg_tables WHERE schemaname='public' AND tablename LIKE 'assess\_%'"
+    # 1. stop the F1 stack (volumes kept), then drop its database volume
+    /private/tmp/claude-501/-Users-scalzo-my-Unical-2025-DEH-ALMA-vektralabs-vektra-stack/75a21cc1-8da1-4d11-a7aa-b674ff0e9e4c/scratchpad/f1/dc.sh down
+    docker volume rm vektra-f1_vektra_pgdata
+    # 2. with the 2a-3 tree checked out in the main checkout (the stack builds from it): rebuild and start
+    /private/tmp/claude-501/-Users-scalzo-my-Unical-2025-DEH-ALMA-vektralabs-vektra-stack/75a21cc1-8da1-4d11-a7aa-b674ff0e9e4c/scratchpad/f1/dc.sh up -d --build
+    # 3. verify: expect "a0001", then 37, 3, 17
+    docker exec vektra-f1-postgres-1 psql -U vektra -d vektra -Atc "SELECT version_num FROM alembic_version; SELECT count(*) FROM pg_tables WHERE schemaname='public' AND tablename LIKE 'assess\_%'; SELECT count(*) FROM pg_roles WHERE rolname LIKE 'vektra\_assess\_%'; SELECT count(*) FROM pg_proc WHERE pronamespace='public'::regnamespace AND (proname LIKE 'assess\_%' OR proname='get_session_material')"
+    ```
+  - **Deploy VM** (a request to the internal-ops session; read-only; this session does not touch it), with that host's Postgres container, user and database:
+    ```sh
+    docker exec <postgres container> psql -U <db user> -d <db> -Atc "SELECT version_num FROM alembic_version; SELECT count(*) FROM pg_tables WHERE schemaname='public' AND tablename LIKE 'assess\_%'; SELECT count(*) FROM pg_roles WHERE rolname LIKE 'vektra\_assess\_%'"
+    ```
+    Expected on v0.8.0: `0008`, `0`, `0` (v0.8.0 has no assess revision and its `init.sql` creates no assess role). Any `assess_*` table makes it a recreate request, after the owner's go.

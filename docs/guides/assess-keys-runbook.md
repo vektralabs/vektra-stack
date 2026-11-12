@@ -263,7 +263,8 @@ compose() { docker compose -f docker-compose.yml -f docker-compose.assess.yml --
    `VEKTRA_ASSESS_OPERATOR_EMAIL` at a mail sink, so a delivery still pending in the dump cannot
    mail a teacher. Neither credentials file is checked by `verify`. Then bring the stack up:
    `compose up -d`. `vektra-assess-db-init` sets the role passwords from the restored secret
-   files, and the API's `alembic upgrade head` finds the schema already at its revision.
+   files, and the API's migrations (`alembic upgrade platform@head`, then `assess@head` with
+   `VEKTRA_ASSESS_ENABLED=true`) find the schema already at its revision.
 5. Verify the keys:
 
    ```bash

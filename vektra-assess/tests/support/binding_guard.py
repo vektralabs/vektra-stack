@@ -32,17 +32,29 @@ _FLAG = "assess_site_bound_test_guard"
 
 
 class BindingGuard:
+    """Watches one or more API engines (``watch``: a test that swaps the app's engine for
+    another must have the new one watched too); ``remove`` detaches from all of them."""
+
     def __init__(self, engine: AsyncEngine) -> None:
         self.violations: list[str] = []
-        self._sync = engine.sync_engine
-        event.listen(self._sync, "before_cursor_execute", self._before)
-        event.listen(self._sync, "commit", self._end)
-        event.listen(self._sync, "rollback", self._end)
+        self._engines: list[Any] = []
+        self.watch(engine)
+
+    def watch(self, engine: AsyncEngine) -> AsyncEngine:
+        sync = engine.sync_engine
+        if sync not in self._engines:
+            event.listen(sync, "before_cursor_execute", self._before)
+            event.listen(sync, "commit", self._end)
+            event.listen(sync, "rollback", self._end)
+            self._engines.append(sync)
+        return engine
 
     def remove(self) -> None:
-        event.remove(self._sync, "before_cursor_execute", self._before)
-        event.remove(self._sync, "commit", self._end)
-        event.remove(self._sync, "rollback", self._end)
+        for sync in self._engines:
+            event.remove(sync, "before_cursor_execute", self._before)
+            event.remove(sync, "commit", self._end)
+            event.remove(sync, "rollback", self._end)
+        self._engines.clear()
 
     def _end(self, conn: Any) -> None:
         conn.info.pop(_FLAG, None)

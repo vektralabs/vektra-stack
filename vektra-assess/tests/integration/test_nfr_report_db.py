@@ -248,6 +248,53 @@ async def test_a_role_that_rls_restricts_is_refused_not_reported(pg, tmp_path) -
         .render_as_string(hide_password=False)
     )
     await r.load(cfg(url))
+    # CodeRabbit on #209: a role WITHOUT BYPASSRLS that an unconditional permissive policy opens
+    # is accepted, unless a restrictive read policy that is not unconditional also applies to
+    # it (PostgreSQL ANDs it with the permissive one: a partial campaign)
+    reader = f"nfr_policy_{uuid.uuid4().hex[:8]}"
+    await pg.run("super", f"CREATE ROLE {reader} LOGIN PASSWORD 'reader-password-0123'")
+    await pg.run(
+        "super",
+        "GRANT SELECT ON assess_sessions, assess_turns, assess_start_attempts, "
+        f"assess_audit_events TO {reader}",
+    )
+    policies = [
+        (f"nfr_open_{t}", t) for t in ("assess_sessions", "assess_start_attempts")
+    ]
+    restrictive = "nfr_restrict_assess_sessions"
+    try:
+        for name, table in policies:
+            await pg.run(
+                "super",
+                f"CREATE POLICY {name} ON {table} AS PERMISSIVE FOR SELECT TO {reader} "
+                "USING (true)",
+            )
+        reader_url = (
+            make_url(pg.super_url)
+            .set(username=reader, password="reader-password-0123")
+            .render_as_string(hide_password=False)
+        )
+        await r.load(cfg(reader_url))  # unconditional: accepted
+        await pg.run(
+            "super",
+            f"CREATE POLICY {restrictive} ON assess_sessions AS RESTRICTIVE FOR SELECT "
+            f"TO {reader} USING (cmid > 0)",
+        )
+        with pytest.raises(r.RowSecurityRefusal) as exc:
+            await r.load(cfg(reader_url))
+        assert exc.value.tables == ["assess_sessions"]
+        # a restrictive policy that is provably unconditional does not refuse
+        await pg.run("super", f"DROP POLICY {restrictive} ON assess_sessions")
+        await pg.run(
+            "super",
+            f"CREATE POLICY {restrictive} ON assess_sessions AS RESTRICTIVE FOR SELECT "
+            f"TO {reader} USING (true)",
+        )
+        await r.load(cfg(reader_url))
+    finally:
+        await pg.run("super", f"DROP POLICY IF EXISTS {restrictive} ON assess_sessions")
+        for name, table in policies:
+            await pg.run("super", f"DROP POLICY IF EXISTS {name} ON {table}")
     # through the entry point: exit 3, verdict REFUSED, no report file
     code, res = await asyncio.to_thread(r.run, cfg(pg.url("api")), tmp_path)
     assert (code, res["verdict"]) == (3, "REFUSED")

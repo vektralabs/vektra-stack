@@ -297,14 +297,22 @@ SQL_LIVE = (
 
 #: the tables the report reads that the assess revision a0002 puts under row-level security
 RLS_TABLES = ("assess_sessions", "assess_start_attempts")
+#: the policies that apply to the connecting role's reads of a table
+_APPLIES = (
+    "p.schemaname = 'public' AND p.tablename = c.relname AND p.cmd IN ('SELECT', 'ALL') "
+    "AND (current_user = ANY(p.roles) OR 'public' = ANY(p.roles))"
+)
 #: those of them on which RLS is active for the connecting role (not the owner, no BYPASSRLS,
-#: not a superuser: ``row_security_active``) without an unconditional policy naming it
+#: not a superuser: ``row_security_active``) and a read could miss rows: no unconditional
+#: PERMISSIVE policy applies to it, or a RESTRICTIVE one applies that is not provably
+#: unconditional (its predicate is ANDed with every permissive one)
 SQL_HIDDEN = (
     "SELECT c.relname FROM pg_class c WHERE c.relnamespace = 'public'::regnamespace "
     "AND c.relname = ANY(:t) AND row_security_active(c.oid) "
-    "AND NOT EXISTS (SELECT 1 FROM pg_policies p WHERE p.schemaname = 'public' "
-    "AND p.tablename = c.relname AND p.permissive = 'PERMISSIVE' AND p.qual = 'true' "
-    "AND (current_user = ANY(p.roles) OR 'public' = ANY(p.roles))) ORDER BY 1"
+    "AND (NOT EXISTS (SELECT 1 FROM pg_policies p WHERE " + _APPLIES + " "
+    "AND p.permissive = 'PERMISSIVE' AND p.qual = 'true') "
+    "OR EXISTS (SELECT 1 FROM pg_policies p WHERE " + _APPLIES + " "
+    "AND p.permissive = 'RESTRICTIVE' AND p.qual IS DISTINCT FROM 'true')) ORDER BY 1"
 )
 
 

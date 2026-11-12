@@ -131,6 +131,16 @@ class World:
     settings: VektraAssessSettings
     extra: dict[str, Any] = field(default_factory=dict)
 
+    def use_api_engine(self, engine: AsyncEngine) -> AsyncEngine:
+        """Swap the app's API engine for ``engine`` the way the world's own one is set up: the
+        site binding installed (as step 12 does) and the runtime binding guard watching it, so
+        a route's unbound read on the replacement fails the test too. The guard detaches at the
+        world's teardown; the caller still disposes the engine it made."""
+        install_site_binding(engine)
+        self.extra["binding_guard"].watch(engine)
+        self.app.state.assess_engine = engine
+        return engine
+
     async def mint(
         self,
         sub: int = 101,

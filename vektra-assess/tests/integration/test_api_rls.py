@@ -40,7 +40,7 @@ from vektra_assess.api.site_binding import (
 from vektra_assess.db import grants as g
 from vektra_shared.auth import ApiKeyInfo, require_exact_scope
 
-from .conftest import make_session
+from .conftest import Pg, make_session
 
 pytestmark = pytest.mark.integration
 
@@ -57,7 +57,7 @@ COVERED = (
 BIND = "SELECT set_config('app.assess_site_id', :s, true)"
 
 
-async def _two_sites(pg: Any) -> tuple[uuid.UUID, uuid.UUID, uuid.UUID, uuid.UUID]:
+async def _two_sites(pg: Pg) -> tuple[uuid.UUID, uuid.UUID, uuid.UUID, uuid.UUID]:
     """Sites A and B, each with a session, an activity, a minted jti and a Start attempt."""
     a, b = await make_site(pg), await make_site(pg)
     sids = []
@@ -86,7 +86,7 @@ async def _two_sites(pg: Any) -> tuple[uuid.UUID, uuid.UUID, uuid.UUID, uuid.UUI
 
 
 async def _as_api(
-    pg: Any, site: uuid.UUID | str | None, sql: str, **params: Any
+    pg: Pg, site: uuid.UUID | str | None, sql: str, **params: Any
 ) -> list[Any]:
     async with pg.conn("api") as c:
         if site is not None:
@@ -99,7 +99,7 @@ async def _as_api(
 # --- 1. the catalog ----------------------------------------------------------------------
 
 
-async def test_every_site_scoped_table_the_api_reads_has_the_policy(pg) -> None:
+async def test_every_site_scoped_table_the_api_reads_has_the_policy(pg: Pg) -> None:
     async with pg.conn("super") as c:
         covered = [r[0] for r in (await c.execute(text(COVERED))).fetchall()]
         flags = {
@@ -152,7 +152,7 @@ async def test_every_site_scoped_table_the_api_reads_has_the_policy(pg) -> None:
 
 
 async def test_a_route_statement_without_its_site_predicate_reads_nothing_of_site_b(
-    pg,
+    pg: Pg,
 ) -> None:
     """The plan's acceptance test: the Start route's activity read (``start._ACTIVITY``) with
     its ``site_id`` predicate removed, run as the API role bound to site A, for site B's
@@ -179,7 +179,7 @@ async def test_a_route_statement_without_its_site_predicate_reads_nothing_of_sit
         assert [r[0] for r in rows] == [a], table
 
 
-async def test_a_session_read_by_id_alone_cannot_reach_another_site(pg) -> None:
+async def test_a_session_read_by_id_alone_cannot_reach_another_site(pg: Pg) -> None:
     """The allowlisted by-id reads of the static test (``session_gate``'s row read): bound to
     A, site B's session id reads no row, whatever the caller compares afterwards."""
     a, b, sid_a, sid_b = await _two_sites(pg)
@@ -193,7 +193,9 @@ async def test_a_session_read_by_id_alone_cannot_reach_another_site(pg) -> None:
 
 
 @pytest.mark.parametrize("binding", [None, ""])
-async def test_without_a_binding_the_api_role_reads_nothing(pg, binding) -> None:
+async def test_without_a_binding_the_api_role_reads_nothing(
+    pg: Pg, binding: str | None
+) -> None:
     await _two_sites(pg)
     async with pg.conn("super") as c:
         covered = [r[0] for r in (await c.execute(text(COVERED))).fetchall()]
@@ -201,7 +203,9 @@ async def test_without_a_binding_the_api_role_reads_nothing(pg, binding) -> None
         assert await _as_api(pg, binding, f"SELECT 1 FROM {table}") == [], table
 
 
-async def test_a_binding_ends_with_its_transaction_on_a_pooled_connection(pg) -> None:
+async def test_a_binding_ends_with_its_transaction_on_a_pooled_connection(
+    pg: Pg,
+) -> None:
     """``set_config(..., true)`` is transaction-local: a pooled connection handed to the next
     request after a commit carries an empty value, which reads nothing (never the last site)."""
     a, _b, _sa, _sb = await _two_sites(pg)
@@ -226,7 +230,7 @@ async def test_a_binding_ends_with_its_transaction_on_a_pooled_connection(pg) ->
         await engine.dispose()
 
 
-async def test_a_malformed_binding_is_an_error_never_a_wider_read(pg) -> None:
+async def test_a_malformed_binding_is_an_error_never_a_wider_read(pg: Pg) -> None:
     await _two_sites(pg)
     with pytest.raises(DBAPIError) as exc:
         await _as_api(pg, "not-a-uuid", "SELECT 1 FROM assess_sessions")
@@ -236,7 +240,7 @@ async def test_a_malformed_binding_is_an_error_never_a_wider_read(pg) -> None:
 # --- 4. writes ---------------------------------------------------------------------------
 
 
-async def test_a_bound_api_connection_cannot_write_into_another_site(pg) -> None:
+async def test_a_bound_api_connection_cannot_write_into_another_site(pg: Pg) -> None:
     a, b, _sa, _sb = await _two_sites(pg)
     insert = (
         "INSERT INTO assess_start_attempts (site_id, cmid, student_userid, outcome) "
@@ -260,7 +264,7 @@ async def test_a_bound_api_connection_cannot_write_into_another_site(pg) -> None
 # --- 5. the other roles and the definer paths ----------------------------------------------
 
 
-async def test_the_worker_still_sees_and_writes_every_site(pg) -> None:
+async def test_the_worker_still_sees_and_writes_every_site(pg: Pg) -> None:
     a, b, _sa, _sb = await _two_sites(pg)
     rows = await pg.run("worker", "SELECT DISTINCT site_id FROM assess_sessions")
     assert {a, b} <= {r[0] for r in rows}
@@ -283,14 +287,22 @@ async def test_the_worker_still_sees_and_writes_every_site(pg) -> None:
     )
 
 
-async def test_the_definer_functions_the_api_calls_still_work(pg) -> None:
+async def test_the_definer_functions_the_api_calls_still_work(pg: Pg) -> None:
     """A SECURITY DEFINER function runs as ``vektra_assess_definer``, which owns no table: it
     is under RLS like any role, and keeps every row only through its own policy. Each function
     the API calls, run as the API role, against rows of two sites."""
     a, b, sid_a, sid_b = await _two_sites(pg)
-    # the cross-site counts and lookups that replace the API's direct reads
-    live = await pg.run("api", "SELECT assess_live_session_count()")
-    assert live[0][0] >= 2
+    # the cross-site counts and lookups that replace the API's direct reads: the API role,
+    # bound to one site, gets exactly the deployment-wide count the superuser sees (the module
+    # container holds sessions of earlier tests too, so the reference is counted, not assumed)
+    every = "SELECT count(*) FROM assess_sessions WHERE state <> 'CLOSED'"
+    expected = (await pg.run("super", every))[0][0]
+    assert expected >= 2
+    live = await pg.run("api", "SELECT assess_live_session_count()", site=a)
+    assert live[0][0] == expected
+    # its own read of the same table, bound to a, sees only a's live sessions
+    own = await pg.run("api", every, site=a)
+    assert own[0][0] == 1 < expected
     key = await make_key(pg, ["assess:teacher"], b, "teacher")
     got = await pg.run(
         "api",
@@ -327,7 +339,7 @@ async def test_the_definer_functions_the_api_calls_still_work(pg) -> None:
     assert closed_b[0][0] is True
 
 
-async def test_the_pending_reply_scan_spans_sites_and_names_each_site(pg) -> None:
+async def test_the_pending_reply_scan_spans_sites_and_names_each_site(pg: Pg) -> None:
     a, b, sid_a, sid_b = await _two_sites(pg)
     await pg.run(
         "super",
@@ -342,7 +354,7 @@ async def test_the_pending_reply_scan_spans_sites_and_names_each_site(pg) -> Non
 # --- 6. performance ----------------------------------------------------------------------
 
 
-async def test_the_policy_predicate_is_an_index_condition(pg) -> None:
+async def test_the_policy_predicate_is_an_index_condition(pg: Pg) -> None:
     a, _b, _sa, _sb = await _two_sites(pg)
     async with pg.conn("api") as c:
         await c.execute(text(BIND), {"s": str(a)})
@@ -398,7 +410,9 @@ async def planted_unbound(
     return {"n": n}
 
 
-async def test_through_a_route_a_missing_predicate_reads_the_key_site_only(pg) -> None:
+async def test_through_a_route_a_missing_predicate_reads_the_key_site_only(
+    pg: Pg,
+) -> None:
     async with world(pg) as w:
         w.app.include_router(planted)
         for site in (w.site, w.other_site):
@@ -435,7 +449,7 @@ async def test_through_a_route_a_missing_predicate_reads_the_key_site_only(pg) -
         assert both[0][0] == 2
 
 
-async def test_binding_a_second_site_in_one_request_is_refused(pg) -> None:
+async def test_binding_a_second_site_in_one_request_is_refused(pg: Pg) -> None:
     """One request, one site: rebinding to another site is a programming error, never a
     silent switch."""
     a, b = await make_site(pg), await make_site(pg)
@@ -464,7 +478,7 @@ def _session_token(w: Any, *, site: uuid.UUID, sid: uuid.UUID) -> str:
     ).token
 
 
-async def _audit(pg: Any, sid: uuid.UUID) -> list[tuple[str, str]]:
+async def _audit(pg: Pg, sid: uuid.UUID) -> list[tuple[str, str]]:
     rows = await pg.run(
         "super",
         "SELECT event, reason_code FROM assess_audit_events WHERE session_id = :s",
@@ -474,7 +488,7 @@ async def _audit(pg: Any, sid: uuid.UUID) -> list[tuple[str, str]]:
 
 
 async def test_a_cross_site_session_probe_is_audited_as_an_ownership_mismatch(
-    pg,
+    pg: Pg,
 ) -> None:
     """Review finding 1: before RLS, a site A token naming site B's session read the row and
     was audited ``not_owner`` (OWNERSHIP_MISMATCH_REJECTED). RLS hides the row; the gate asks
@@ -515,7 +529,7 @@ async def test_a_cross_site_session_probe_is_audited_as_an_ownership_mismatch(
         ]
 
 
-async def test_a_signed_token_with_a_malformed_site_is_the_audited_401(pg) -> None:
+async def test_a_signed_token_with_a_malformed_site_is_the_audited_401(pg: Pg) -> None:
     """Review finding 4: a correctly signed session token whose ``site`` is not a uuid never
     reaches the binding as a 500: it is the token refusal, audited like any other."""
     import jwt
@@ -536,7 +550,7 @@ async def test_a_signed_token_with_a_malformed_site_is_the_audited_401(pg) -> No
         assert await _audit(pg, sid) == [("assess_in_session_gate_rejected", "token")]
 
 
-async def test_the_existence_check_answers_one_boolean(pg) -> None:
+async def test_the_existence_check_answers_one_boolean(pg: Pg) -> None:
     # unbound, from no site: an id of site B exists, a random one does not; nothing else
     *_, sid_b = await _two_sites(pg)
     got = await pg.run("api", "SELECT assess_session_exists(:s)", {"s": sid_b})
@@ -546,7 +560,7 @@ async def test_the_existence_check_answers_one_boolean(pg) -> None:
 
 
 async def test_a_request_bound_to_a_learns_the_documented_minimum_of_the_definers(
-    pg,
+    pg: Pg,
 ) -> None:
     """Review finding 8: the two lookups that cross the binding answer one value each, and
     nothing for an id they do not know."""
@@ -582,7 +596,7 @@ async def test_a_request_bound_to_a_learns_the_documented_minimum_of_the_definer
         await c.rollback()
 
 
-async def test_the_gate_binds_once_per_transaction(pg) -> None:
+async def test_the_gate_binds_once_per_transaction(pg: Pg) -> None:
     """Review finding 5: a transaction already bound at its start (the request's site) is not
     bound again by ``bind_site``; one bound to another site is refused."""
     a, b = await make_site(pg), await make_site(pg)
@@ -617,26 +631,33 @@ async def test_the_gate_binds_once_per_transaction(pg) -> None:
         await engine.dispose()
 
 
-async def test_pg_dump_by_a_role_rls_restricts_fails_loudly(pg) -> None:
+async def test_pg_dump_by_a_role_rls_restricts_fails_loudly(pg: Pg) -> None:
     """Review finding 2, the operator doc's claim: pg_dump as a role that neither owns the
     tables nor has BYPASSRLS stops with an error (it never writes a silently partial dump); the
     superuser dumps the same table."""
-    import subprocess
+    import asyncio
 
     from .conftest import ROLE_PASSWORD
 
-    def dump(user: str, password: str) -> subprocess.CompletedProcess[str]:
-        return subprocess.run(
-            [
-                "docker", "exec", "-e", f"PGPASSWORD={password}", pg.container_id,
-                "pg_dump", "-h", "127.0.0.1", "-U", user, "--data-only",
-                "-t", "assess_sessions", "test",
-            ],
-            capture_output=True,
-            text=True,
+    async def dump(user: str, password: str) -> tuple[int, str]:
+        """``docker exec pg_dump`` without blocking the loop, bounded: killed after 60 s."""
+        proc = await asyncio.create_subprocess_exec(
+            "docker", "exec", "-e", f"PGPASSWORD={password}", pg.container_id,
+            "pg_dump", "-h", "127.0.0.1", "-U", user, "--data-only",
+            "-t", "assess_sessions", "test",
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.PIPE,
         )  # fmt: skip
+        try:
+            _out, err = await asyncio.wait_for(proc.communicate(), 60)
+        except TimeoutError:
+            proc.kill()
+            await proc.wait()
+            raise
+        assert proc.returncode is not None
+        return proc.returncode, err.decode()
 
-    denied = dump("vektra_assess_api", ROLE_PASSWORD)
-    assert denied.returncode != 0
-    assert "query would be affected by row-level security policy" in denied.stderr
-    assert dump("test", "test").returncode == 0
+    code, stderr = await dump("vektra_assess_api", ROLE_PASSWORD)
+    assert code != 0
+    assert "query would be affected by row-level security policy" in stderr
+    assert (await dump("test", "test"))[0] == 0

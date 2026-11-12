@@ -85,7 +85,8 @@ test: ## Run unit tests with coverage
 # `uv run alembic` would otherwise sync the venv back to the default groups mid-run.
 test-lms-moodle: ## Moodle LMS provider (adapters/): its tests, the conformance kit, the joint suites (needs Docker)
 	uv sync --frozen --group lms-moodle
-	UV_NO_SYNC=1 uv run pytest adapters/vektra-lms-moodle/tests -v --tb=short
+	UV_NO_SYNC=1 uv run pytest adapters/vektra-lms-moodle/tests -v --tb=short \
+		--cov=vektra_lms_moodle --cov-report=term-missing --cov-fail-under=95
 
 test-assess-ui: ## Assess discussion UI: no-HTML-sink lint, type check, build, vitest (needs Node 22)
 	cd vektra-assess/ui && npm ci --ignore-scripts && npm run lint && npm run typecheck && npm run build && npm test

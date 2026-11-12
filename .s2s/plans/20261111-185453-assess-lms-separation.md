@@ -378,6 +378,19 @@ Each criterion is checked against the guard's data file. A status line or a gree
   8. The factory is called with `development=` (the vertical's resolved flag); `MoodleSettings` lost `env`, `is_development` and `env_described`, and `MoodleWsClient` takes `development` (default False).
   9. `keys.py`: the redundant `granted` set is gone, one `is_provider_secret_name` helper, and the not-found case comes from `check_secret_file`.
   10. The provider module's docstring is current.
+- 2026-11-12, PR 2a-4 (#207), CI on 75b0ef82, two real failures, both fixed:
+  1. **Compose without the profile.** CI now builds the image variant with `-f docker-compose.yml -f docker-compose.assess.yml build vektra`, without `--profile assess` (on develop it built the base file only, so it never met this). The API's `depends_on: vektra-assess-db-init` then named a service missing from the project. It is `required: false` now: absent without the profile, still `service_completed_successfully` with it. `test_compose_assess_profile.py` renders every documented combination (base; +assess; +assess.dev; +the CI cache file), with and without the profile; the CI command was run for real.
+  2. **Unit coverage of `vektra-assess`, measured with the workflow's command** (`uv sync --dev --frozen --package vektra-assess`, then `pytest vektra-assess/tests/ -m "not integration" --cov=vektra_assess`):
+
+     | | statements | missed | covered |
+     |---|---:|---:|---:|
+     | develop 01dfe327, whole package | 17217 | 3330 | 80.66% |
+     | the moved `moodle/` (37 modules) | 3070 | 86 | 97.2% |
+     | develop without `moodle/` | 14147 | 3244 | 77.07% |
+     | this branch before the fix | 14128 | 3382 | 76.06% |
+     | this branch after the fix | 14128 | 3244 | 77.04% |
+
+     The 138 lines the branch had lost were the vertical's own code that only the recorded suites reached (the generic setup items, the payload and Part A renderers, capture's file and online-text budgets, the review-HTML extractor, attempt selection, the setup-check job keys). They are covered again on neutral values: `test_setup_generic_items.py`, `test_context_rendering_variants.py`, `test_capture_submission_text.py`, `test_review_html_profile.py`, `test_setup_check_job_keys.py`, and new cases in `test_context_selection.py`. After that the missed count equals develop's for the same code; the drop is the denominator. 80% would need about 420 more lines, all in DB-bound handlers (`delivery/handler.py`, `api/turns.py`, `worker/preflight.py`, `api/transcripts.py`, ...) that the integration suites cover, not mocks, so the gate is lowered to 77 with this justification (workflow comment, CHANGELOG). The provider gets its own gate in `test-lms-moodle` and `make test-lms-moodle`: 95%, measured at 98% (3003 statements, 58 missed).
 - 2026-11-12, request for phase 2b (to the plugin session that owns `vektra-moodle-discuss`; not sent from here, this session never edits that repository):
 
   > Phase 2b of the LMS separation (ADR-0033 D6, OD-5, OD-6; plan 20261111-185453-assess-lms-separation, tasks 2b.1 to 2b.3). In vektra-stack, PR 2a-4 staged the Moodle LMS provider as its own distribution in `adapters/vektra-lms-moodle/` (package `vektra_lms_moodle`, distribution `vektra-lms-moodle`, entry point `vektra.lms_providers: moodle = vektra_lms_moodle.provider:build_provider`, depends on `vektra-shared` only). Please host it in `vektra-moodle-discuss`:

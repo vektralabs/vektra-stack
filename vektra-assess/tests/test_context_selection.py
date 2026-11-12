@@ -160,3 +160,48 @@ def test_assign_fully_graded(
     method: str, grade: float | None, crit: Any, filled: Any, out: Any
 ) -> None:
     assert assign_fully_graded(method, grade, crit, filled) == out
+
+
+# --- the refusals, one by one (they ran only on the recordings before 2a-4) -----------------------
+
+
+def test_an_open_attempt_blocks_the_selection() -> None:
+    attempts = Readable((_a(1), _a(2, AttemptState.IN_PROGRESS)))
+    assert select_attempt(attempts, "highest", {101: True}, released=True) == (
+        NotEligible(NotEligibleReason.IN_PROGRESS)
+    )
+
+
+def test_no_finished_attempt_is_no_submission() -> None:
+    attempts = Readable((_a(1, AttemptState.ABANDONED),))
+    assert select_attempt(attempts, "highest", {}, released=True) == (
+        NotEligible(NotEligibleReason.NO_SUBMISSION)
+    )
+
+
+def test_a_finished_attempt_not_fully_graded_blocks_the_selection() -> None:
+    attempts = Readable((_a(1), _a(2)))
+    assert select_attempt(
+        attempts, "highest", {101: True, 102: False}, released=True
+    ) == (NotEligible(NotEligibleReason.NOT_GRADED))
+    # graded, but without a total: not graded either (never guess a mark)
+    attempts = Readable((_a(1, s=None),))
+    assert select_attempt(attempts, "highest", {101: True}, released=True) == (
+        NotEligible(NotEligibleReason.NOT_GRADED)
+    )
+
+
+def test_an_unreleased_grade_blocks_the_selection() -> None:
+    assert select_attempt(
+        Readable((_a(1),)), "highest", {101: True}, released=False
+    ) == (NotEligible(NotEligibleReason.NOT_RELEASED))
+
+
+@pytest.mark.parametrize(
+    ("method", "chosen"), [("first", 1), ("last", 3), ("average", 3)]
+)
+def test_first_last_and_average_choose_by_number(method: str, chosen: int) -> None:
+    attempts = Readable((_a(3, s=1.0), _a(1, s=5.0), _a(2, s=9.0)))
+    graded = {101: True, 102: True, 103: True}
+    out = select_attempt(attempts, method, graded, released=True)
+    assert isinstance(out, Selected) and out.attempt_number == chosen

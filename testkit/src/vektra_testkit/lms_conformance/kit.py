@@ -29,6 +29,7 @@ from __future__ import annotations
 import dataclasses
 import io
 import logging
+import math
 import re
 from collections.abc import (
     AsyncIterator,
@@ -47,6 +48,7 @@ from typing import Any
 import structlog
 
 from vektra_shared.lms import (
+    MAX_CALL_DEADLINE_S,
     NOT_IN_USER_COURSES,
     SETUP_MISSING,
     SETUP_OK,
@@ -208,6 +210,7 @@ OTHER_MEMBERS = frozenset(
         "name",
         "setup_items",
         "required_secrets",
+        "call_deadline_s",
         "startup_problems",
         "aclose",
         "service_account_check",
@@ -562,6 +565,13 @@ async def check_lifecycle(target: ConformanceTarget) -> None:
     async with built(target, TransportMode.RECORDED) as provider:
         secrets = provider.required_secrets
         assert isinstance(secrets, tuple) and all(isinstance(s, str) for s in secrets)
+        deadline = provider.call_deadline_s
+        assert isinstance(deadline, float | int) and not isinstance(deadline, bool), (
+            "call_deadline_s is a number"
+        )
+        assert math.isfinite(deadline) and 0 < deadline <= MAX_CALL_DEADLINE_S, (
+            f"call_deadline_s is in (0, {MAX_CALL_DEADLINE_S:g}]: {deadline!r}"
+        )
         for development in (True, False):
             problems = provider.startup_problems(development)
             assert isinstance(problems, tuple)

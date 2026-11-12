@@ -74,8 +74,6 @@ def preflight_defaults(start_t_s: float) -> KindPolicy:
 #: ``read_quiz_close_inputs``), each bounded by the WS call deadline, plus its DB statements
 TEACHER_GATE_STAGES = 3
 TEACHER_GATE_DB_MARGIN_S = 5.0
-#: the LMS call deadline the default budget assumes (the provider's own default)
-TEACHER_GATE_ASSUMED_CALL_DEADLINE_S = 30.0
 
 
 def teacher_gate_defaults(ws_total_s: float) -> KindPolicy:
@@ -89,10 +87,8 @@ KIND_DEFAULTS: dict[JobKind, KindPolicy] = {
     JobKind.ENROLMENT_RECHECK: _WS,
     JobKind.GATE_REFRESH: _WS,
     JobKind.RENDER_CHECK: _WS,
-    # plan 11: three sequential LMS calls at a 30 s deadline each, plus the DB margin. The deadline
-    # is the LMS provider's own setting (ADR-0033 D5), which the vertical does not read: a
-    # deployment that raises it raises VEKTRA_ASSESS_JOB_TEACHER_GATE_BUDGET_S with it
-    JobKind.TEACHER_GATE: teacher_gate_defaults(TEACHER_GATE_ASSUMED_CALL_DEADLINE_S),
+    # JobKind.TEACHER_GATE (plan 11) has no static default: ``load_policy`` derives it from the
+    # LMS provider's call deadline (``LmsProvider.call_deadline_s``), ``teacher_gate_defaults``
     JobKind.TRANSCRIPT_GENERATE: KindPolicy("transcript", 30, 60),
     # up to 3 recipients through at most VEKTRA_ASSESS_SMTP_MAX_CONNECTIONS sessions, each with
     # a 30 s hard timeout (plan transcript-delivery 10b); the lease is also the crash window
@@ -167,7 +163,14 @@ def _start_t(env: Mapping[str, str]) -> float:
         ) from None
 
 
-def load_policy(env: Mapping[str, str]) -> WorkerPolicy:
+def load_policy(env: Mapping[str, str], *, lms_call_deadline_s: float) -> WorkerPolicy:
+    """The worker policy from ``env``. ``lms_call_deadline_s`` is the composed LMS provider's
+    call deadline (``LmsProvider.call_deadline_s``): the jobs that make sequential LMS calls are
+    budgeted from it (``teacher_gate``)."""
+    if not (math.isfinite(lms_call_deadline_s) and lms_call_deadline_s >= 0):
+        raise WorkerPolicyError(
+            f"the LMS provider's call deadline ({lms_call_deadline_s!r}) is not a duration"
+        )
     pools = dict(POOL_DEFAULTS)
     kinds = dict(KIND_DEFAULTS)
     # The typo check must not reject the other settings that share the prefix
@@ -190,7 +193,8 @@ def load_policy(env: Mapping[str, str]) -> WorkerPolicy:
             pools[pool] = int(_number(name, raw, int, MAX_COUNT))
 
     start_t = _start_t(env)
-    for kind, base in KIND_DEFAULTS.items():
+    derived = {JobKind.TEACHER_GATE: teacher_gate_defaults(lms_call_deadline_s)}
+    for kind, base in {**KIND_DEFAULTS, **derived}.items():
         if kind is JobKind.PREFLIGHT:
             base = preflight_defaults(start_t)
         names = {f: f"{_JOB_PREFIX}{kind.value.upper()}_{f}" for f in _KIND_FIELDS}

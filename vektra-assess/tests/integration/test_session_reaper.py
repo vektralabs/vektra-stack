@@ -113,7 +113,9 @@ async def test_a_budget_cancellation_rolls_back_at_once(pg) -> None:  # type: ig
 
     await _reset(pg)
     await activate(pg)
-    pol = load_policy({"VEKTRA_ASSESS_START_T_S": "120"}).kinds[JobKind.PREFLIGHT]
+    pol = load_policy(
+        {"VEKTRA_ASSESS_START_T_S": "120"}, lms_call_deadline_s=30.0
+    ).kinds[JobKind.PREFLIGHT]
     assert (pol.budget_s, pol.lease_s) == (105, 210)
     worker = create_async_engine(pg.url("worker"))
     settings = default_settings(VEKTRA_ASSESS_START_T_S=120)

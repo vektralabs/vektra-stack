@@ -34,7 +34,9 @@ PRODUCTION_TICKS = [
 
 
 def _slots(bindings: Bindings | None = None) -> Slots:
-    return build_slots(load_policy({}), VektraAssessSettings(), bindings)
+    return build_slots(
+        load_policy({}, lms_call_deadline_s=30.0), VektraAssessSettings(), bindings
+    )
 
 
 def test_the_production_slot_set_is_exactly_the_reviewed_one() -> None:
@@ -69,7 +71,9 @@ def test_every_tick_has_its_own_lock_from_the_registry_and_a_sane_schedule() -> 
 
 
 def test_every_handler_takes_budget_lease_and_attempts_from_the_policy() -> None:
-    policy = load_policy({"VEKTRA_ASSESS_JOB_PURGE_BUDGET_S": "90"})
+    policy = load_policy(
+        {"VEKTRA_ASSESS_JOB_PURGE_BUDGET_S": "90"}, lms_call_deadline_s=30.0
+    )
     slots = build_slots(policy, VektraAssessSettings())
     purge = next(h for h in slots.handlers if h.kind is JobKind.PURGE)
     assert (purge.pool, purge.budget_s, purge.lease_s) == ("maintenance", 90, 180)
@@ -116,7 +120,7 @@ def test_the_smtp_probe_tick_fits_a_whole_probe(timeout_s: int) -> None:
     )
     tick = next(
         t
-        for t in build_slots(load_policy({}), settings).ticks
+        for t in build_slots(load_policy({}, lms_call_deadline_s=30.0), settings).ticks
         if t.name == "smtp_probe"
     )
     assert tick.timeout_s > 2 * timeout_s + QUIT_TIMEOUT_S

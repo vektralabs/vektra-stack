@@ -1,10 +1,15 @@
 """The real worker process against a real Postgres (plan assess-job-loop, group C/D).
 
-Starts ``python -m vektra_app.assess_worker`` as the deployment does (development override for the
-unbound slots), and checks from the outside: it reaches ``ready``, a job of an unbound kind fails
+Starts the worker's production ``main`` in its own process, as ``python -m vektra_app.assess_worker``
+does (development override for the unbound slots), and checks from the outside: it reaches ``ready``, a job of an unbound kind fails
 closed (dead, ``handler_not_bound``, one audit event), its connection count stays within the
 5 + 1 budget, and SIGTERM ends it with exit code 0 inside the 30 s grace period and a ``stopped``
 heartbeat. This subprocess spawn imports nothing from ``vektra_app``.
+
+The platform installs no LMS provider (ADR-0033 D6), so the process is offered the scenario fake
+through ``main``'s development-only entry-point seam (``lms_entry_points``), the way the chaos
+worker is; the fake declares no secret and connects nowhere, and loads only because the process
+runs with ``VEKTRA_ENV=development``.
 """
 
 from __future__ import annotations
@@ -44,6 +49,24 @@ def _worker_secrets(d: Path) -> Path:
     return d
 
 
+#: the worker's ``main`` with the scenario fake as the one installed provider
+_MAIN = f"""
+import sys
+sys.path.insert(0, {str(Path(__file__).resolve().parents[1])!r})
+from dataclasses import dataclass
+from support.fake_lms import scenario_provider
+from vektra_app import assess_worker
+
+@dataclass
+class _EP:
+    name: str
+    def load(self):
+        return scenario_provider
+
+assess_worker.main(lms_entry_points=lambda: [_EP("fake")])
+"""
+
+
 async def _until(cond, timeout_s: float, what: str) -> None:
     async with asyncio.timeout(timeout_s):
         while not await cond():
@@ -68,8 +91,8 @@ async def test_worker_process_runs_fails_closed_and_exits_zero_on_sigterm(
         **{k: v for k, v in os.environ.items() if not k.startswith("VEKTRA_")},
         "VEKTRA_ENV": "development",
         "VEKTRA_ASSESS_ENABLED": "true",
-        # the deployment's provider (ADR-0033 D2), loaded by entry point; nothing connects
-        "VEKTRA_ASSESS_LMS_PROVIDER": "moodle",
+        # the provider, loaded by entry point (ADR-0033 D2): the development-only fake below
+        "VEKTRA_ASSESS_LMS_PROVIDER": "fake",
         "VEKTRA_ASSESS_SECRETS_DIR": str(secrets),
         "VEKTRA_ASSESS_WORKER_DATABASE_URL": worker_url,
         "VEKTRA_ASSESS_WORKER_ALLOW_UNBOUND": "true",
@@ -81,7 +104,7 @@ async def test_worker_process_runs_fails_closed_and_exits_zero_on_sigterm(
         "VEKTRA_ASSESS_JOB_POLL_INTERVAL_S": "0.2",
     }
     proc = subprocess.Popen(
-        [sys.executable, "-m", "vektra_app.assess_worker"],
+        [sys.executable, "-c", _MAIN],
         env=env,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,

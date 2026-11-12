@@ -50,6 +50,7 @@ FORBIDDEN_MODULES: tuple[str, ...] = (
 # The only vektra_assess modules the parser process may hold: its own packages plus the
 # two the entry itself uses for the "holds nothing" proof.
 ALLOWED_ASSESS = ("vektra_assess.parser_protocol", "vektra_assess.parser_sidecar")
+LMS_PROVIDER_PACKAGE_PREFIX = "vektra_lms_"
 ALLOWED_ASSESS_EXACT = ("vektra_assess", "vektra_assess.config", "vektra_assess.keys")
 
 
@@ -64,9 +65,14 @@ def assert_import_ceiling(loaded: Iterable[str] | None = None) -> None:
     stray = sorted(
         m
         for m in modules
-        if m.startswith("vektra_assess.")
-        and m not in ALLOWED_ASSESS_EXACT
-        and not any(m == a or m.startswith(a + ".") for a in ALLOWED_ASSESS)
+        if (
+            m.startswith("vektra_assess.")
+            and m not in ALLOWED_ASSESS_EXACT
+            and not any(m == a or m.startswith(a + ".") for a in ALLOWED_ASSESS)
+        )
+        # an LMS provider (its client, its credentials reader) is never the parser's, whatever
+        # the provider is called (ADR-0033 D6: providers are ``vektra_lms_*`` distributions)
+        or m.split(".", 1)[0].startswith(LMS_PROVIDER_PACKAGE_PREFIX)
     )
     if present or stray:
         raise StartupValidationError(

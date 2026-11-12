@@ -1,16 +1,17 @@
 """Egress guard: resolve once, validate every address, pin the connection to one IP.
 
-Used by the assess Moodle WS client (plan assess-moodle-ws, ARCH-070). It is a COPY of the
+A generic primitive for any client that calls out to an operator-registered host (ADR-0033 D8):
+an LMS provider's web-service client is its first user (ARCH-070). It is a COPY of the
 idea in ``vektra_learn.api._resolve_and_validate_url``, not a move: learn denies every
-private address (right for a public document URL), while an on-prem Moodle usually sits on a
-private address, so assess needs an allowlist policy instead. Learn is untouched; unifying
+private address (right for a public document URL), while an on-prem LMS usually sits on a
+private address, so an allowlist policy is needed instead. Learn is untouched; unifying
 the two (one implementation, the policy as a parameter) is DEBT-042 in ``.s2s/BACKLOG.md``.
 
 Policy, applied to EVERY address the name resolves to (not only the first):
 
 - ``allowed_hosts``: the URL host must be one of them (case-insensitive). Required.
 - ``allowed_cidrs``: when given, every address must lie inside one of them. This is how an
-  operator allows a private Moodle (``10.20.0.0/16``) without opening all of RFC 1918.
+  operator allows a private LMS host (``10.20.0.0/16``) without opening all of RFC 1918.
 - ``deny_private`` (default True): without CIDRs, private/loopback/reserved addresses are
   refused.
 - always refused, whatever the settings: unspecified, multicast and link-local addresses
@@ -92,7 +93,7 @@ def resolve_pinned(
     """Validate ``url`` and pin it to one resolved address.
 
     ``allowed_hosts`` is the caller's allowlist. A caller that builds the URL from a
-    registered base URL and passes that URL's own host (as the assess Moodle client does)
+    registered base URL and passes that URL's own host (as an LMS provider's client does)
     makes this check tautological ON PURPOSE: the registered URL is written only by
     operator provisioning, so the host is trusted by construction and the real guard here
     is the address check below.

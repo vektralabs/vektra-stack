@@ -577,7 +577,7 @@ def test_tracked_test_assets_fall_outside_every_copied_directory() -> None:
     roots = _shipped_roots()
     assets = [
         p.relative_to(REPO_ROOT).as_posix()
-        for pattern in ("vektra-*/tests/**/*", "tests/**/*")
+        for pattern in ("vektra-*/tests/**/*", "tests/**/*", "adapters/*/tests/**/*")
         for p in REPO_ROOT.glob(pattern)
         if p.is_file() and "__pycache__" not in p.parts
     ]
@@ -586,6 +586,10 @@ def test_tracked_test_assets_fall_outside_every_copied_directory() -> None:
         "mail sink not found"
     )
     assert any("/canary/" in a for a in assets), "canary datasets not found"
+    # the LMS provider's recordings (ADR-0033 D10) are test assets too, and judged the same way
+    assert any("/fixtures/moodle_ws/" in a for a in assets), (
+        "provider recordings not found"
+    )
     shipped = sorted(a for a in assets if any(_under(a, r) for r in roots))
     assert shipped == [], f"test assets inside a copied directory: {shipped[:20]}"
 
@@ -856,8 +860,8 @@ def test_every_image_sync_skips_the_test_kit() -> None:
 
 
 def test_the_image_resolution_has_no_test_kit_and_no_pytest() -> None:
-    """Replays the Dockerfile's final ``uv sync`` flags against ``uv.lock``."""
-    install = dockerfile_uv_syncs(DOCKERFILE.read_text())[-1]
+    """Replays the default build's final ``uv sync`` flags against ``uv.lock``."""
+    install = default_install()
     names = exported_packages(install)
     assert "vektra-shared" in names and "vektra-app" in names, sorted(names)
     assert TESTKIT not in names
@@ -867,7 +871,7 @@ def test_the_image_resolution_has_no_test_kit_and_no_pytest() -> None:
 def test_the_image_resolution_check_can_say_no() -> None:
     """Negative control: the same sync without the skip installs the kit, so the check above
     is not vacuous (a plain ``--no-dev`` sync installs every workspace member)."""
-    install = dockerfile_uv_syncs(DOCKERFILE.read_text())[-1]
+    install = default_install()
     i = install.index("--no-install-package")
     assert TESTKIT in exported_packages(install[:i] + install[i + 2 :])
 
@@ -882,3 +886,113 @@ def test_the_wheel_check_can_say_no(tmp_path: Path) -> None:
     """Negative control: the test kit's own wheel is caught by the same check."""
     names = _build_wheel(TESTKIT, tmp_path)
     assert "vektra_testkit/recorders.py" in kit_offenders(names)
+
+
+# --- ADR-0033 D6, OD-6 (plan task 2a-4b.10): an LMS provider ships only in its image variant ------
+# The default image holds no provider: no ``vektra_lms_*`` package, no file of ``adapters/``. The
+# variant built with ``--build-arg INSTALL_LMS_PROVIDER=moodle`` holds the Moodle one. The build
+# picks a provider stage by that argument (``FROM lms-provider-${INSTALL_LMS_PROVIDER:-none}``),
+# and BuildKit builds only the stage it picks, so the checks below read the Dockerfile per stage.
+LMS_ARG = "INSTALL_LMS_PROVIDER"
+LMS_DIST_PREFIX = "vektra-lms-"
+ADAPTERS = "adapters"
+_FROM = re.compile(r"^FROM\s+(\S+)(?:\s+AS\s+(\S+))?", re.IGNORECASE)
+
+
+def dockerfile_stages(dockerfile_text: str) -> list[tuple[str, str, list[str]]]:
+    """(name, base, logical lines) of every stage, in order; lines before the first FROM are
+    the global section, named ``""``."""
+    stages: list[tuple[str, str, list[str]]] = [("", "", [])]
+    for line in _logical_lines(dockerfile_text):
+        m = _FROM.match(line)
+        if m:
+            stages.append((m.group(2) or "", m.group(1), []))
+        else:
+            stages[-1][2].append(line)
+    return stages
+
+
+def _stage(name: str) -> tuple[str, str, list[str]]:
+    (found,) = [s for s in dockerfile_stages(DOCKERFILE.read_text()) if s[0] == name]
+    return found
+
+
+def selected_provider_stage(dockerfile_text: str, value: str) -> str:
+    """The stage the ``venv`` stage is built FROM with ``INSTALL_LMS_PROVIDER=value``."""
+    (base,) = [b for n, b, _ in dockerfile_stages(dockerfile_text) if n == "venv"]
+    m = re.fullmatch(r"(.*)\$\{" + LMS_ARG + r":-([^}]*)\}(.*)", base)
+    assert m, f"the venv stage is not chosen by {LMS_ARG}: FROM {base}"
+    return m.group(1) + (value or m.group(2)) + m.group(3)
+
+
+def _stage_syncs(name: str) -> list[list[str]]:
+    return dockerfile_uv_syncs("\n".join(_stage(name)[2]))
+
+
+def default_install() -> list[str]:
+    """The last ``uv sync`` of the default build (the builder stage's install)."""
+    return _stage_syncs("builder")[-1]
+
+
+def test_the_default_build_selects_the_stage_without_a_provider() -> None:
+    text = DOCKERFILE.read_text()
+    global_lines = dockerfile_stages(text)[0][2]
+    assert f"ARG {LMS_ARG}=" in global_lines, "the argument must default to empty"
+    assert selected_provider_stage(text, "") == "lms-provider-none"
+    assert selected_provider_stage(text, "moodle") == "lms-provider-moodle"
+    names = [n for n, _b, _l in dockerfile_stages(text)]
+    assert {"lms-provider-none", "lms-provider-moodle", "venv"} <= set(names)
+    _n, base, lines = _stage("lms-provider-none")
+    assert base == "builder" and lines == [], "the no-provider stage adds nothing"
+    # the runtime takes its venv from the selected stage only
+    runtime = _stage("runtime")[2]
+    venv_copies = [ln for ln in runtime if "/app/.venv" in ln and ln.startswith("COPY")]
+    assert venv_copies == ["COPY --from=venv /app/.venv /app/.venv"], venv_copies
+
+
+def test_only_a_provider_stage_copies_adapters_and_never_its_tests() -> None:
+    text = DOCKERFILE.read_text()
+    for name, _base, lines in dockerfile_stages(text):
+        sources = [_normalise(s) for s in context_copy_sources("\n".join(lines))]
+        mine = [s for s in sources if _under(s, ADAPTERS)]
+        if not name.startswith("lms-provider-") or name == "lms-provider-none":
+            assert mine == [], f"stage {name or '(global)'} copies {mine}"
+            continue
+        assert mine, f"{name} installs no provider"
+        provider = mine[0].split("/")[1]
+        assert set(mine) <= {
+            f"{ADAPTERS}/{provider}/pyproject.toml",
+            f"{ADAPTERS}/{provider}/README.md",
+            f"{ADAPTERS}/{provider}/src",
+        }, mine
+
+
+def test_the_default_resolution_has_no_lms_provider() -> None:
+    """Replays the default install against ``uv.lock``: no ``vektra-lms-*`` distribution."""
+    names = exported_packages(default_install())
+    assert "vektra-assess" in names, sorted(names)
+    assert [n for n in names if n.startswith(LMS_DIST_PREFIX)] == []
+
+
+def test_the_provider_stage_resolution_has_the_provider() -> None:
+    """Positive control: the moodle stage's install, replayed the same way, has the provider,
+    and still no test kit or pytest (the variant is a production image too)."""
+    syncs = _stage_syncs("lms-provider-moodle")
+    assert len(syncs) == 2, syncs  # both branches of INSTALL_UNSTRUCTURED
+    for args in syncs:
+        assert ("--group", "lms-moodle") in list(itertools.pairwise(args)), args
+        names = exported_packages(args)
+        assert "vektra-lms-moodle" in names
+        assert TESTKIT not in names and "pytest" not in names
+
+
+def test_no_shipped_source_imports_an_lms_provider() -> None:
+    """The default image's packages never import a provider (import-linter says the same for
+    the import graph; this reads every shipped source, templates and strings included)."""
+    pattern = re.compile(r"\b(import|from)\s+vektra_lms_\w*")
+    offenders = [
+        p.relative_to(REPO_ROOT).as_posix()
+        for p in sorted(REPO_ROOT.glob("vektra-*/src/**/*.py"))
+        if pattern.search(p.read_text(errors="replace"))
+    ]
+    assert offenders == []

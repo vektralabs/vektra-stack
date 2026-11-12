@@ -4,7 +4,7 @@ The assessment bot must never put into the model's context what the student may 
 
 ## What it checks
 
-`vektra-assess/tests/canary/` builds the cases from the recorded Moodle 4.3 and 5.2 responses (`vektra-assess/tests/fixtures/moodle_ws/`) and plants a unique token (`CNRY-<field>-<type>-<id>`, or a number for a mark) in every forbidden field of every question type and assignment shape. Each case then runs capture, assembly, Part A and a reference model call, and `tests/test_canary_matrix.py` counts the tokens in eight sinks:
+The matrix is the joint guarantee of ADR-0033 D4 (Vektra's sinks over the LMS provider's recorded reviews), so it lives with the Moodle provider: `adapters/vektra-lms-moodle/tests/canary/` builds the cases from the recorded Moodle 4.3 and 5.2 responses (`adapters/vektra-lms-moodle/tests/fixtures/moodle_ws/`) and plants a unique token (`CNRY-<field>-<type>-<id>`, or a number for a mark) in every forbidden field of every question type and assignment shape. Each case then runs capture, assembly, Part A and a reference model call, and `adapters/vektra-lms-moodle/tests/test_canary_matrix.py` counts the tokens in eight sinks:
 
 1. the snapshot plaintext after an encrypt/decrypt round trip
 2. the assembled `ContextBundle`
@@ -23,7 +23,7 @@ A new value can reach the model only through a change to the allowlist models in
 
 1. Decide which BR-011 rule governs it (always visible, review option, release state, toggle, display setting) and add it to `DisclosurePolicy` if it is conditional.
 2. Add the cell: a forbidden field in `canary/matrix.py` (`QUIZ_FIELDS` or `ASSIGN_FIELDS`), with an injection that plants its token where Moodle would put the value, and a permitted-case rule in `finalize_quiz` if a policy can allow it.
-3. Run `pytest vektra-assess/tests/test_canary_matrix.py`. The cell-coverage test fails until the field is exercised for every type or shape it applies to.
+3. Run `make test-lms-moodle` (or, with the provider installed, `UV_NO_SYNC=1 uv run pytest adapters/vektra-lms-moodle/tests/test_canary_matrix.py`). The cell-coverage test fails until the field is exercised for every type or shape it applies to.
 4. If Part A shows it, regenerate the golden renderings with `VEKTRA_UPDATE_GOLDEN=1` and review the diff.
 
 ## Re-recording on a Moodle upgrade
@@ -32,4 +32,4 @@ The extraction of the question text and the student's answer depends on Moodle's
 
 ## Live subset
 
-`pytest vektra-assess -m moodle` with the variables in `tests/integration/test_context_live.py` repeats one capture per shape and type against the real seeded 4.3 and 5.2 environments. Without them the tests skip with `BLOCKED: ...`; they never pass silently.
+`UV_NO_SYNC=1 uv run pytest adapters/vektra-lms-moodle/tests -m moodle` (provider installed: `uv sync --group lms-moodle`) with the variables in `adapters/vektra-lms-moodle/tests/integration_moodle/test_context_live.py` repeats one capture per shape and type against the real seeded 4.3 and 5.2 environments. Without them the tests skip with `BLOCKED: ...`; they never pass silently.

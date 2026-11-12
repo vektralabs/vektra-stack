@@ -207,8 +207,8 @@ def test_the_worker_stream_sits_on_the_root_so_flushing_root_flushes_it(
 
 
 def test_named_factory_keeps_the_logger_name() -> None:
-    logger = NamedPrintLoggerFactory(io.StringIO())("vektra_assess.moodle.client")
-    assert logger.name == "vektra_assess.moodle.client"
+    logger = NamedPrintLoggerFactory(io.StringIO())("vektra_assess.worker.client")
+    assert logger.name == "vektra_assess.worker.client"
     assert NamedPrintLoggerFactory()().name == ""
 
 

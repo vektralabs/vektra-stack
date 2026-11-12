@@ -200,11 +200,12 @@ def _run_worker_once(
         ),
         (
             "the unbound override outside development",
-            # outside development only a real provider loads (the fake is a test double)
+            # outside development only a real provider loads (the fake is a test double; the
+            # platform installs none, so the harness's non-double ``stub`` stands in for one)
             {
                 "VEKTRA_ASSESS_WORKER_ALLOW_UNBOUND": "true",
                 "VEKTRA_ENV": "production",
-                "VEKTRA_ASSESS_LMS_PROVIDER": "moodle",
+                "VEKTRA_ASSESS_LMS_PROVIDER": "stub",
             },
             "only honoured with",
         ),

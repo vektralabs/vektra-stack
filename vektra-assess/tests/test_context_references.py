@@ -105,10 +105,6 @@ def test_picker_with_an_out_of_snapshot_label_is_rejected() -> None:
 
 
 def test_assignment_labels() -> None:
-    from test_context_capture import (
-        _env,  # noqa: F401  (recorded fixtures are not needed here)
-    )
-
     from vektra_assess.context.snapshot import ActivityKind, AssignCriterion
 
     s = make()

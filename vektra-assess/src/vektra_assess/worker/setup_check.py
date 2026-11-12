@@ -1,6 +1,6 @@
 """The REQ-079 setup check on the job loop: the ``setup_check`` handler and the daily tick.
 
-Plan assess-moodle-ws task F4, carried over to plan assess-job-loop and bound on 2026-11-08.
+Task F4 of the LMS web-service plan (20261101-154950), carried over to plan assess-job-loop and bound on 2026-11-08.
 The check itself is ``vektra_assess.setup.run_setup_check`` over the configured ``LmsProvider``
 (ADR-0033 D3); this module adds what the job loop needs around it:
 
@@ -39,7 +39,7 @@ from vektra_shared.lms import LmsProvider
 
 log = structlog.get_logger(__name__)
 
-#: reports kept per site (plan assess-moodle-ws, data lifecycle: "keeps last 30 per site")
+#: reports kept per site (the web-service plan's data lifecycle: "keeps last 30 per site")
 KEEP_REPORTS = 30
 
 _SITES = text("SELECT id FROM assess_sites WHERE disabled_at IS NULL ORDER BY id")

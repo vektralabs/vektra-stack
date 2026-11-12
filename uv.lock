@@ -41,6 +41,7 @@ dev = [
     { name = "testcontainers", extras = ["postgres"], specifier = ">=4.14.2" },
     { name = "vektra-testkit", editable = "testkit" },
 ]
+lms-moodle = [{ name = "vektra-lms-moodle", editable = "adapters/vektra-lms-moodle" }]
 
 [[package]]
 name = "accelerate"
@@ -5668,6 +5669,27 @@ dev = [
     { name = "httpx", specifier = ">=0.27" },
     { name = "pytest", specifier = ">=8.0" },
     { name = "pytest-asyncio", specifier = ">=1.0" },
+]
+
+[[package]]
+name = "vektra-lms-moodle"
+version = "0.8.0"
+source = { editable = "adapters/vektra-lms-moodle" }
+dependencies = [
+    { name = "httpx", marker = "python_full_version < '3.13'" },
+    { name = "pydantic", marker = "python_full_version < '3.13'" },
+    { name = "pydantic-settings", marker = "python_full_version < '3.13'" },
+    { name = "structlog", marker = "python_full_version < '3.13'" },
+    { name = "vektra-shared", marker = "python_full_version < '3.13'" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "httpx", specifier = ">=0.27" },
+    { name = "pydantic", specifier = ">=2,<3" },
+    { name = "pydantic-settings", specifier = ">=2.0" },
+    { name = "structlog", specifier = ">=24.0" },
+    { name = "vektra-shared", editable = "vektra-shared" },
 ]
 
 [[package]]

@@ -7,7 +7,13 @@
 #
 # Build args:
 #   INSTALL_UNSTRUCTURED=true  - add Tesseract OCR + Poppler for PDF OCR
+#   INSTALL_LMS_PROVIDER=moodle - add the Moodle LMS provider (adapters/vektra-lms-moodle,
+#                                 ADR-0033 D6, OD-6); empty (the default): no provider at all
 # ==========================================================================
+
+# Empty by default: the platform image holds no LMS provider. Read by the FROM that picks the
+# provider stage below, so it is declared before the first FROM.
+ARG INSTALL_LMS_PROVIDER=
 
 # --------------------------------------------------------------------------
 # Stage 1: widget builder - compile chatbot JS bundle (Node.js)
@@ -98,6 +104,27 @@ RUN if [ "$INSTALL_UNSTRUCTURED" = "true" ]; then \
     fi
 
 # --------------------------------------------------------------------------
+# Stage 2b: the LMS provider (ADR-0033 D6, OD-6), opt-in. One stage per provider; the FROM
+# below picks one by INSTALL_LMS_PROVIDER, and BuildKit builds only the stage it picks, so the
+# default image never copies a file of adapters/. A provider stage copies the provider's
+# manifest and source only (never its tests or recordings) and installs it into the same venv,
+# non-editable, from the same lock: its version and its dependencies are the ones uv.lock pins.
+# --------------------------------------------------------------------------
+FROM builder AS lms-provider-none
+
+FROM builder AS lms-provider-moodle
+COPY adapters/vektra-lms-moodle/pyproject.toml adapters/vektra-lms-moodle/README.md adapters/vektra-lms-moodle/
+COPY adapters/vektra-lms-moodle/src adapters/vektra-lms-moodle/src
+ARG INSTALL_UNSTRUCTURED=false
+RUN if [ "$INSTALL_UNSTRUCTURED" = "true" ]; then \
+       uv sync --frozen --no-editable --no-dev --no-install-package vektra-testkit --group lms-moodle --extra sparse --extra qdrant --extra ocr; \
+    else \
+       uv sync --frozen --no-editable --no-dev --no-install-package vektra-testkit --group lms-moodle --extra sparse --extra qdrant; \
+    fi
+
+FROM lms-provider-${INSTALL_LMS_PROVIDER:-none} AS venv
+
+# --------------------------------------------------------------------------
 # Stage 3: runtime - minimal production image
 # --------------------------------------------------------------------------
 FROM python:3.12-slim AS runtime
@@ -122,8 +149,8 @@ RUN useradd --uid 1000 --create-home vektra
 
 WORKDIR /app
 
-# Copy installed virtualenv from builder (includes all packages)
-COPY --from=builder /app/.venv /app/.venv
+# Copy installed virtualenv (all packages, plus the LMS provider when one was selected)
+COPY --from=venv /app/.venv /app/.venv
 
 # Alembic migrations (run via entrypoint: CMD_TARGET=migrate)
 COPY alembic.ini /app/alembic.ini

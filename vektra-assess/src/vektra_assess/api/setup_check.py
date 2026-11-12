@@ -1,4 +1,4 @@
-"""REQ-079 setup-check endpoints (plan assess-moodle-ws group F).
+"""REQ-079 setup-check endpoints (the LMS web-service plan (20261101-154950), group F).
 
 POST queues a check (report row + ``setup_check`` job + NOTIFY, one transaction); the worker
 runs it. GET returns the content-free report. Callable by an operator ``admin`` key or by the

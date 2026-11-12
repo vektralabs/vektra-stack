@@ -8,11 +8,14 @@ client. A provider implements ``LmsProvider`` in its own distribution and depend
 
 from vektra_shared.lms.guard import GuardedLmsProvider, guarded, not_probed
 from vektra_shared.lms.protocol import (
+    MAX_CALL_DEADLINE_S,
+    REQUIRED_SECRETS_ATTRIBUTE,
     SETUP_MISSING,
     SETUP_OK,
     SETUP_UNVERIFIABLE,
     CapabilityResult,
     LmsProvider,
+    ProviderConfigurationError,
     SetupItem,
     StartupProblem,
 )
@@ -66,8 +69,10 @@ from vektra_shared.lms.types import (
 
 __all__ = [
     "FILE_NOT_IN_SUBMISSION",
+    "MAX_CALL_DEADLINE_S",
     "NOT_IN_USER_COURSES",
     "PROVIDER_ERROR",
+    "REQUIRED_SECRETS_ATTRIBUTE",
     "SETUP_MISSING",
     "SETUP_OK",
     "SETUP_UNVERIFIABLE",
@@ -94,6 +99,7 @@ __all__ = [
     "LmsSiteInfo",
     "MarkingGuideSummary",
     "OverdueMode",
+    "ProviderConfigurationError",
     "QuestionKind",
     "QuestionState",
     "QuizOverride",

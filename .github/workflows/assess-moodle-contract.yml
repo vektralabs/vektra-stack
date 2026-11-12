@@ -1,5 +1,6 @@
-# Contract test of the assess Moodle web-service readers against real Moodle 4.3 and 5.2
-# (plan assess-moodle-ws, group G). Manual and weekly: it builds two Moodle sites, so it is
+# Contract test of the Moodle LMS provider (adapters/vektra-lms-moodle, ADR-0033) against real
+# Moodle 4.3 and 5.2 (the web-service plan 20261101-154950, group G). The provider is installed by
+# the opt-in group lms-moodle, beside the platform its joint live suites run against. Manual and weekly: it builds two Moodle sites, so it is
 # not part of the PR gate. The dev environments live in the vektra-moodle repository
 # (docker/compose.moodle.yml, make moodle43-up / moodle52-up); this job checks out its
 # `develop` branch (so it works once the environments are merged there).
@@ -44,8 +45,8 @@ jobs:
           # actions/cache-poisoning).
           enable-cache: false
 
-      - name: Install dev dependencies
-        run: uv sync --dev --frozen
+      - name: Install dev dependencies and the Moodle provider
+        run: uv sync --dev --frozen --group lms-moodle
 
       - name: Bring up Moodle ${{ matrix.version }}, provision and seed
         working-directory: vektra-moodle/docker
@@ -67,16 +68,18 @@ jobs:
           VEKTRA_ASSESS_MOODLE52_URL: http://localhost:8082
           VEKTRA_ASSESS_MOODLE_MANIFEST_DIR: ${{ github.workspace }}/vektra-moodle/docker/fixtures/out
           VEKTRA_ASSESS_MOODLE_TOKEN_DIR: ${{ github.workspace }}/vektra-moodle/docker/fixtures/out
+          # the live suites' fixtures run `uv run alembic`: never sync the provider away mid-run
+          UV_NO_SYNC: "1"
         run: |
           # only this job's version is up: the other one's tests skip with BLOCKED
-          uv run pytest vektra-assess -m moodle -v --tb=short -k "${{ matrix.tag }} or ${{ matrix.version }}"
+          uv run pytest adapters/vektra-lms-moodle/tests -m moodle -v --tb=short -k "${{ matrix.tag }} or ${{ matrix.version }}"
 
       - name: Capability matrix (content-free)
         if: always()
         run: |
           mkdir -p matrix
           OUT=vektra-moodle/docker/fixtures/out
-          uv run python -m vektra_assess.moodle.spike \
+          uv run --no-sync python adapters/vektra-lms-moodle/scripts/setup_spike.py \
             --site http://localhost:${{ matrix.port }} \
             --manifest $OUT/manifest-${{ matrix.tag }}.json \
             --token-file $OUT/provision-${{ matrix.tag }}.json \

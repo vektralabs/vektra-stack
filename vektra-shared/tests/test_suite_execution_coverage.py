@@ -151,7 +151,13 @@ def _classify(path: Path) -> Suite:
 
 
 def _suites() -> list[Suite]:
-    roots = [*REPO_ROOT.glob("vektra-*/tests"), REPO_ROOT / "tests"]
+    # the LMS providers staged in adapters/ (ADR-0033 D6) are suites like any other: outside the
+    # platform's perimeter, not outside what CI must run
+    roots = [
+        *REPO_ROOT.glob("vektra-*/tests"),
+        REPO_ROOT / "tests",
+        *REPO_ROOT.glob("adapters/*/tests"),
+    ]
     files = {
         f
         for root in roots
@@ -259,8 +265,19 @@ def _target_recipe(target: str) -> str:
     return "\n".join(recipe)
 
 
+#: the local gates: ``test`` for the platform, and the target of each LMS provider staged in
+#: adapters/, which is installed only by its opt-in group (ADR-0033 D6)
+MAKE_TEST_TARGETS = ("test", "test-lms-moodle")
+
+
 def _makefile_invocations() -> list[Invocation]:
-    return _invocations(_target_recipe("test"), "the `test` target in the Makefile")
+    return [
+        inv
+        for target in MAKE_TEST_TARGETS
+        for inv in _invocations(
+            _target_recipe(target), f"the `{target}` target in the Makefile"
+        )
+    ]
 
 
 def _workflow_invocations() -> list[Invocation]:

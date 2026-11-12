@@ -193,19 +193,7 @@ printed, because some settings carry connection strings.
 | `VEKTRA_ASSESS_API_POOL_SIZE` | int | `15` | Connection pool of the assess API engine. |
 | `VEKTRA_ASSESS_WORKER_POOL_SIZE` | int | `5` | Connection pool of the worker engine. |
 | `VEKTRA_ASSESS_HEARTBEAT_MAX_AGE_S` | int | `60` | A worker heartbeat older than this makes `/health/assess` non-healthy. Range `30`..`600` (at least three beat intervals). |
-| `VEKTRA_ASSESS_LMS_PROVIDER` | str | - | Name of the LMS provider, loaded from the entry-point group `vektra.lms_providers` ([ADR-0033](../../.s2s/decisions/ADR-0033-lms-provider-protocol.md)). Lower case, `[a-z][a-z0-9_-]`, at most 64 characters; empty means unset. **Required with `VEKTRA_ASSESS_ENABLED=true`**: the worker loads it at startup, and refuses to start when it is unset or names no installed provider, listing the installed ones; a provider's own startup problems (a development-only switch outside development) refuse it too. A test double loads only with `VEKTRA_ENV=development` set explicitly. Read by the worker only; `docker-compose.assess.yml` passes it from `.env`. |
-| `VEKTRA_ASSESS_MOODLE_CA_FILE` | path | - | CA bundle for verifying the Moodle TLS certificate (on-prem CA); the system store when unset. |
-| `VEKTRA_ASSESS_WS_TIMEOUT_CONNECT_S` | float | `3` | Connect timeout of one Moodle web-service call. |
-| `VEKTRA_ASSESS_WS_TIMEOUT_READ_S` | float | `10` | Read timeout of one Moodle web-service call. |
-| `VEKTRA_ASSESS_WS_TOTAL_TIMEOUT_S` | float | `30` | Overall deadline of one Moodle call including the body; a server dripping bytes under the byte cap cannot hold it open (`Unreadable(timeout)`). |
-| `VEKTRA_ASSESS_WS_MAX_RESPONSE_BYTES` | int | `8388608` | Byte cap of a JSON response; the stream is aborted on overflow (`Unreadable(size_cap)`). Range `1024`..`67108864`. |
-| `VEKTRA_ASSESS_WS_MAX_FILE_BYTES` | int | `10485760` | Byte cap of one downloaded submission file (REQ-101). Range `1024`..`67108864`. |
-| `VEKTRA_ASSESS_WS_RPS` | float | `10` | Cap on Moodle calls per second, shared by every caller in the worker **process** (one replica, COMP-003: running several worker replicas multiplies it). |
-| `VEKTRA_ASSESS_BREAKER_THRESHOLD` | int | `5` | Consecutive transport/5xx failures that open the per-site circuit breaker (in memory, per worker process). Range `1`..`100`. |
-| `VEKTRA_ASSESS_BREAKER_COOLDOWN_S` | float | `30` | Seconds the breaker stays open before one half-open probe. Range `>0`..`3600`. |
-| `VEKTRA_ASSESS_MOODLE_ALLOW_HTTP` | bool | `false` | Plain http to Moodle. Honoured only with `VEKTRA_ENV=development`; the worker refuses to start with it set in any other environment. |
-| `VEKTRA_ASSESS_MOODLE_ALLOWED_CIDRS` | str | - | Comma-separated CIDRs a Moodle host may resolve into (an on-prem Moodle on a private network, e.g. `10.20.0.0/16`). Empty: private addresses are refused. Metadata, link-local and multicast addresses are always refused. |
-| `VEKTRA_ASSESS_INGEST_ACCOUNT_USERNAME` | str | - | Username of the ingestion web-service account. The setup check refuses an assess token that belongs to it; when unset that item is `UNVERIFIABLE` (not OK). |
+| `VEKTRA_ASSESS_LMS_PROVIDER` | str | - | Name of the LMS provider, loaded from the entry-point group `vektra.lms_providers` ([ADR-0033](../../.s2s/decisions/ADR-0033-lms-provider-protocol.md)). Lower case, `[a-z][a-z0-9_-]`, at most 64 characters; empty means unset. **Required with `VEKTRA_ASSESS_ENABLED=true`**: the worker loads it at startup, and refuses to start when it is unset or names no installed provider, listing the installed ones; a provider's own startup problems (a development-only switch outside development) refuse it too. A test double loads only with `VEKTRA_ENV=development` set explicitly. Read by the worker only; `docker-compose.assess.yml` passes it from `.env`. The platform image installs no provider; the Moodle one is in the `lms-moodle` image variant (see [Moodle LMS provider](#moodle-lms-provider-vektra-lms-moodle)). |
 | `VEKTRA_ASSESS_UI_ORIGIN` | str | - | Origin (`https://host[:port]`) the chat UI is served from. The setup check item `ui_not_same_origin` refuses a UI origin that is the same host or the same site as the Moodle `base_url` or as the API public origin (CONF-004). Same-site is judged without the public-suffix list: the last two host labels are compared, which can refuse a legitimate pair under a multi-label suffix (e.g. two `*.co.uk` hosts) but never accepts a same-site pair. Unset: that item is `UNVERIFIABLE` (not OK). The value must be a bare origin (no path, query, credentials or wildcard; it is normalised: lower case, no default port); malformed, it is refused while assess is enabled and only warned about while it is disabled. With assess enabled the API refuses to start when it is unset outside development, not `https` outside development, or equal to a registered site's Moodle origin (plan 9, ARCH-076: the iframe's `allow-same-origin` sandbox is safe only across distinct origins). The discussion UI page `GET /api/v1/assess/ui` answers on this origin only: unset, or requested through any other scheme and `Host`, it is 503. Behind a TLS-terminating proxy the scheme comes from `X-Forwarded-Proto` only when the proxy's address is in uvicorn's `FORWARDED_ALLOW_IPS` (default `127.0.0.1`; set it to the proxy's address when the proxy runs in another container), and the proxy must forward the client's `Host` (the nginx example does). |
 | `VEKTRA_ASSESS_API_PUBLIC_ORIGIN` | str | - | Public origin of the assess API, compared with the UI origin by `ui_not_same_origin`. Unset while the UI origin is set: the item is `UNVERIFIABLE`. |
 | `VEKTRA_ASSESS_WORKER_HEARTBEAT_FILE` | path | `/tmp/vektra-assess-worker.heartbeat` | File the worker refreshes every `VEKTRA_ASSESS_WORKER_HEARTBEAT_INTERVAL_S` (container healthcheck). |
@@ -332,19 +320,70 @@ and the STARTING reaper, so handlers that hold every job connection never delay 
 `VEKTRA_ASSESS_WORKER_POOL_SIZE=1` the pool cannot be split and the worker opens 1 + 1 + 1. INT-002 assumed about 15 for the API; the main API pool alone is larger by default,
 which is why the margin is tracked here.
 
+### Moodle LMS provider (vektra-lms-moodle)
+
+The Moodle provider (`adapters/vektra-lms-moodle`, ADR-0033) is not part of the platform image. It
+is installed by the image variant built with `--build-arg INSTALL_LMS_PROVIDER=moodle`
+(`docker-compose.assess.yml` builds it as `vektra-stack-lms-moodle`; a release publishes it as
+`ghcr.io/vektralabs/vektra:<version>-lms-moodle`), or in development with
+`uv sync --group lms-moodle`. A deployment selects it with `VEKTRA_ASSESS_LMS_PROVIDER=moodle`.
+
+The provider reads its own settings (`vektra_lms_moodle.config.MoodleSettings`), from the process
+environment, with the prefix `VEKTRA_LMS_MOODLE_` (OD-4). They had the vertical's prefix before
+the provider left the platform, and **the old names are not read** (no alias: nothing had been
+released; the CHANGELOG lists the renames). A variable still set under an old name **refuses the
+worker's start**, and the refusal lists each one with its new name; the live contract suites'
+own variables (the dev sites' URLs, manifest and token directories) are test inputs and are not
+concerned. Only the full names are read, never
+a bare field name such as `WS_RPS`. The provider also reads `VEKTRA_ASSESS_SECRETS_DIR` (where
+its token secret `assess_ws_tokens` is). It does not read `VEKTRA_ENV`: the worker passes it its
+own resolved development flag (an explicit `VEKTRA_ENV=development`). An invalid value fails the
+worker at startup, naming the variable and the rule it broke, never the value.
+
+The `teacher_gate` job budget follows the provider's call deadline (`LmsProvider.call_deadline_s`;
+for the Moodle provider `VEKTRA_LMS_MOODLE_WS_TOTAL_TIMEOUT_S`): three sequential LMS calls plus
+5 s, so 95 s at the default 30 s, and raising the provider's timeout raises the budget.
+`VEKTRA_ASSESS_JOB_TEACHER_GATE_BUDGET_S` still overrides it.
+
+| Variable | Type | Default | Description |
+|----------|------|---------|-------------|
+| `VEKTRA_LMS_MOODLE_CA_FILE` | path | - | CA bundle for verifying the Moodle TLS certificate (on-prem CA); the system store when unset. |
+| `VEKTRA_LMS_MOODLE_WS_TIMEOUT_CONNECT_S` | float | `3` | Connect timeout of one Moodle web-service call. |
+| `VEKTRA_LMS_MOODLE_WS_TIMEOUT_READ_S` | float | `10` | Read timeout of one Moodle web-service call. |
+| `VEKTRA_LMS_MOODLE_WS_TOTAL_TIMEOUT_S` | float | `30` | Overall deadline of one Moodle call including the body; a server dripping bytes under the byte cap cannot hold it open (`Unreadable(timeout)`). |
+| `VEKTRA_LMS_MOODLE_WS_MAX_RESPONSE_BYTES` | int | `8388608` | Byte cap of a JSON response; the stream is aborted on overflow (`Unreadable(size_cap)`). Range `1024`..`67108864`. |
+| `VEKTRA_LMS_MOODLE_WS_MAX_FILE_BYTES` | int | `10485760` | Byte cap of one downloaded submission file (REQ-101). Range `1024`..`67108864`. |
+| `VEKTRA_LMS_MOODLE_WS_RPS` | float | `10` | Cap on Moodle calls per second, shared by every caller in the worker **process** (one replica, COMP-003: running several worker replicas multiplies it). |
+| `VEKTRA_LMS_MOODLE_BREAKER_THRESHOLD` | int | `5` | Consecutive transport/5xx failures that open the per-site circuit breaker (in memory, per worker process). Range `1`..`100`. |
+| `VEKTRA_LMS_MOODLE_BREAKER_COOLDOWN_S` | float | `30` | Seconds the breaker stays open before one half-open probe. Range `>0`..`3600`. |
+| `VEKTRA_LMS_MOODLE_ALLOW_HTTP` | bool | `false` | Plain http to Moodle. Honoured only with `VEKTRA_ENV=development`; the worker refuses to start with it set in any other environment. |
+| `VEKTRA_LMS_MOODLE_ALLOWED_CIDRS` | str | - | Comma-separated CIDRs a Moodle host may resolve into (an on-prem Moodle on a private network, e.g. `10.20.0.0/16`). Empty: private addresses are refused. Metadata, link-local and multicast addresses are always refused. |
+| `VEKTRA_LMS_MOODLE_INGEST_ACCOUNT_USERNAME` | str | - | Username of the ingestion web-service account. The setup check refuses an assess token that belongs to it; when unset that item is `UNVERIFIABLE` (not OK). |
+
 ### Secret files and the key matrix
 
 Each secret is a Docker secret file. Keys are JSON keyrings, `{"active": "<kid>", "keys": {"<kid>":
-"<base64 of 32 bytes>"}}`: rotation adds a kid and flips `active`. `assess_ws_tokens` and `assess_smtp`
-are JSON objects (credentials); the two role passwords are one line of text (at least 24 characters).
+"<base64 of 32 bytes>"}}`: rotation adds a kid and flips `active`. `assess_smtp` and the LMS
+provider's credentials (`assess_ws_tokens` for the Moodle provider) are JSON objects; the two role passwords are one line of text (at least 24 characters).
 Every file must be a regular file (no symlink), owned by the process uid or root, mode at most `0440`.
 `make assess-keys` writes a complete generated set to `./secrets/assess/` (mode `0400`, never
-overwrites; `secrets/` is gitignored).
+overwrites; `secrets/` is gitignored), with an empty `assess_ws_tokens` for the Moodle provider
+(`python -m vektra_assess.keys generate --provider-secret <name>`).
 
 Each process checks the matrix at start, in both directions, and refuses to start naming every key that
 is missing (required) or present (forbidden). A forbidden key counts as present when its file exists OR
 when an environment variable carries its name. The API applies the forbidden column even with assess
 disabled (ARCH-066).
+
+The LMS provider's credentials are not in the matrix: the provider declares their names on its
+entry point (`REQUIRED_SECRETS`, the same names as `LmsProvider.required_secrets`, ADR-0033 D5),
+readable without building it. The worker checks the whole matrix, those names included, before it
+builds the provider, and requires and loads each of them as credentials. The API reads the names
+of every installed provider the same way (no provider is built) and refuses an environment
+variable that carries one, assess enabled or not. A declared name must start with `assess_` and
+not be a matrix name: the API and the parser refuse every `assess_*` file the matrix does not
+grant them, whatever a provider calls its secret, and the parser refuses any `VEKTRA_*` or
+`ASSESS_*` variable whose name contains `TOKEN`, `SECRET`, `PASSWORD`, `DSN` or `DATABASE_URL`.
 
 | Secret | API | Worker | Parser |
 |---|---|---|---|
@@ -355,7 +394,7 @@ disabled (ARCH-066).
 | `assess_teacher_config_public` | required | allowed | forbidden |
 | `assess_teacher_config_private` | forbidden | required | forbidden |
 | `assess_kek` | forbidden | required | forbidden |
-| `assess_ws_tokens` | forbidden | required | forbidden |
+| `assess_ws_tokens` (the Moodle provider's, declared) | forbidden | required | forbidden |
 | `assess_smtp` | forbidden | required | forbidden |
 | `assess_db_api_password` | required | forbidden | forbidden |
 | `assess_db_worker_password` | forbidden | required | forbidden |

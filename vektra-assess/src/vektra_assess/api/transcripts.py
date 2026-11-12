@@ -43,14 +43,14 @@ from vektra_assess.api.common import (
     site_of_key,
     validate_body,
 )
-from vektra_assess.api.deps import (
-    bearer_token,
-    bind_site,
-    set_request_site,
-    settings_of,
-)
+from vektra_assess.api.deps import bearer_token, settings_of
 from vektra_assess.api.download_tokens import DownloadClaims, DownloadTokens, jti_hash
 from vektra_assess.api.graders import GraderCheck, check_fresh_grader
+from vektra_assess.api.site_binding import (
+    SiteBindingConflict,
+    bind_site,
+    set_request_site,
+)
 from vektra_assess.api.state import limiter_of
 from vektra_assess.audit import AssessAuditEvent, write_event
 from vektra_assess.errors import (
@@ -163,8 +163,12 @@ async def verify_assess_token_download(request: Request) -> DownloadClaims:
         claims = download_tokens_of(request).verify(token)
     except TokenError:
         raise fail(download_token_invalid()) from None
-    # ADR-0033 D9.2: the download is bound to the site the signed token names
-    set_request_site(claims.site)
+    # ADR-0033 D9.2: the download is bound to the site the signed token names; a site the
+    # binding refuses is the same 401 as any other bad download token, never a 500
+    try:
+        set_request_site(claims.site)
+    except (ValueError, TypeError, SiteBindingConflict):
+        raise fail(download_token_invalid()) from None
     return claims
 
 

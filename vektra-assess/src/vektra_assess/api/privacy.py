@@ -45,7 +45,8 @@ from vektra_assess.api.common import (
     read_capped_body,
     site_of_key,
 )
-from vektra_assess.api.deps import bind_site, settings_of
+from vektra_assess.api.deps import settings_of
+from vektra_assess.api.site_binding import bind_site
 from vektra_assess.api.state import limiter_of
 from vektra_assess.api.teachers import ascii_id, header_int, path_id
 from vektra_assess.api.transcripts import transcript_key_of

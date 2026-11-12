@@ -20,6 +20,7 @@ from fastapi import FastAPI
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
 from vektra_assess.api.router import router
+from vektra_assess.api.site_binding import install_site_binding
 from vektra_assess.config import VektraAssessSettings
 from vektra_assess.crypto.seal import public_from_private
 from vektra_assess.keys import AssessKeyring
@@ -212,7 +213,8 @@ async def world(
     registry = ProviderRegistry()
     registry.register("key_store", "default", Keys(dict(keys)))
     app.state.registry = registry
-    engine = create_async_engine(pg.url("api"))
+    # bound per request at each transaction's start, as step 12 installs it in production
+    engine = install_site_binding(create_async_engine(pg.url("api")))
     app.state.assess_engine = engine
     # D9.2: a route statement on a site-scoped table without the site bound fails the test
     guard = BindingGuard(engine)

@@ -11,6 +11,7 @@ from fastapi import FastAPI
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from vektra_assess.api.router import router
+from vektra_assess.api.site_binding import install_site_binding
 from vektra_shared.auth import ApiKeyInfo
 from vektra_shared.registry import ProviderRegistry
 
@@ -77,7 +78,7 @@ async def world_ctx(pg):
         "key_store", "default", Keys({name: info for name, info in keys.items()})
     )
     app.state.registry = registry
-    engine = create_async_engine(pg.url("api"))
+    engine = install_site_binding(create_async_engine(pg.url("api")))
     app.state.assess_engine = engine
     app.include_router(router)
     await beat(pg)

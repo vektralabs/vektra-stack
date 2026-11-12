@@ -518,6 +518,15 @@ CREATE FUNCTION public.assess_rollback_starting(p_sid uuid) RETURNS boolean
 
 ALTER FUNCTION public.assess_rollback_starting(p_sid uuid) OWNER TO vektra_assess_definer;
 
+CREATE FUNCTION public.assess_session_exists(p_sid uuid) RETURNS boolean
+    LANGUAGE sql STABLE SECURITY DEFINER
+    SET search_path TO 'pg_catalog', 'pg_temp'
+    AS $$
+        SELECT EXISTS (SELECT 1 FROM public.assess_sessions WHERE id = p_sid)
+    $$;
+
+ALTER FUNCTION public.assess_session_exists(p_sid uuid) OWNER TO vektra_assess_definer;
+
 CREATE FUNCTION public.assess_sessions_drop_handoff_on_close() RETURNS trigger
     LANGUAGE plpgsql SECURITY DEFINER
     SET search_path TO 'pg_catalog', 'pg_temp'
@@ -2215,6 +2224,9 @@ GRANT ALL ON FUNCTION public.assess_pending_replies(p_min_age_s double precision
 
 REVOKE ALL ON FUNCTION public.assess_rollback_starting(p_sid uuid) FROM PUBLIC;
 GRANT ALL ON FUNCTION public.assess_rollback_starting(p_sid uuid) TO vektra_assess_api;
+
+REVOKE ALL ON FUNCTION public.assess_session_exists(p_sid uuid) FROM PUBLIC;
+GRANT ALL ON FUNCTION public.assess_session_exists(p_sid uuid) TO vektra_assess_api;
 
 REVOKE ALL ON FUNCTION public.assess_sessions_drop_handoff_on_close() FROM PUBLIC;
 

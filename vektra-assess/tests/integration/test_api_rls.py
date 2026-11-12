@@ -30,8 +30,13 @@ from support.world import auth, configure_activity, make_key, make_site, world
 
 from vektra_assess.api import start as start_route
 from vektra_assess.api.common import engine_of, site_of_key
-from vektra_assess.api.deps import bind_site
-from vektra_assess.api.site_binding import reset_site_dependency
+from vektra_assess.api.site_binding import (
+    bind_site,
+    install_site_binding,
+    reset_site,
+    reset_site_dependency,
+    set_request_site,
+)
 from vektra_assess.db import grants as g
 from vektra_shared.auth import ApiKeyInfo, require_exact_scope
 
@@ -443,7 +448,195 @@ async def test_binding_a_second_site_in_one_request_is_refused(pg) -> None:
                 await bind_site(conn, b)
             await conn.rollback()
     finally:
-        from vektra_assess.api.deps import reset_site
-
         reset_site()
         await engine.dispose()
+
+
+# --- review of #209 ------------------------------------------------------------------------
+
+
+def _session_token(w: Any, *, site: uuid.UUID, sid: uuid.UUID) -> str:
+    from vektra_assess.tokens import AssessTokens
+
+    tokens = AssessTokens.from_settings(w.signing, w.settings)
+    return tokens.mint_session(
+        sub=1, site=site, cmid=1, sid=sid, seq=1, epoch=1, deadline=None
+    ).token
+
+
+async def _audit(pg: Any, sid: uuid.UUID) -> list[tuple[str, str]]:
+    rows = await pg.run(
+        "super",
+        "SELECT event, reason_code FROM assess_audit_events WHERE session_id = :s",
+        {"s": sid},
+    )
+    return [tuple(r) for r in rows]
+
+
+async def test_a_cross_site_session_probe_is_audited_as_an_ownership_mismatch(
+    pg,
+) -> None:
+    """Review finding 1: before RLS, a site A token naming site B's session read the row and
+    was audited ``not_owner`` (OWNERSHIP_MISMATCH_REJECTED). RLS hides the row; the gate asks
+    the definer whether the id exists anywhere and keeps that classification. The HTTP answer
+    is the not-found answer either way (no oracle)."""
+    async with world(pg) as w:
+        foreign = await make_session(pg)
+        await pg.run(
+            "super",
+            "UPDATE assess_sessions SET site_id = :s WHERE id = :i",
+            {"s": w.other_site, "i": foreign},
+        )
+        missing = uuid.uuid4()
+        probe = await w.client.get(
+            f"/api/v1/assess/sessions/{foreign}",
+            headers=auth(_session_token(w, site=w.site, sid=foreign)),
+        )
+        nothing = await w.client.get(
+            f"/api/v1/assess/sessions/{missing}",
+            headers=auth(_session_token(w, site=w.site, sid=missing)),
+        )
+        assert probe.status_code == nothing.status_code == 404
+
+        def outward(r: Any) -> dict[str, Any]:
+            body = r.json()["error"]
+            body.pop("request_id")  # unique per request
+            return {
+                "body": body,
+                "headers": sorted(set(r.headers) - {"content-length"}),
+            }
+
+        assert outward(probe) == outward(nothing)
+        assert await _audit(pg, foreign) == [
+            ("assess_ownership_mismatch_rejected", "not_owner")
+        ]
+        assert await _audit(pg, missing) == [
+            ("assess_in_session_gate_rejected", "not_found")
+        ]
+
+
+async def test_a_signed_token_with_a_malformed_site_is_the_audited_401(pg) -> None:
+    """Review finding 4: a correctly signed session token whose ``site`` is not a uuid never
+    reaches the binding as a 500: it is the token refusal, audited like any other."""
+    import jwt
+
+    async with world(pg) as w:
+        sid = uuid.uuid4()
+        good = _session_token(w, site=w.site, sid=sid)
+        claims = jwt.decode(good, options={"verify_signature": False})
+        claims["site"] = "not-a-uuid"
+        bad = jwt.encode(
+            claims,
+            w.signing.active_key,
+            algorithm="HS256",
+            headers={"kid": w.signing.active},
+        )
+        r = await w.client.get(f"/api/v1/assess/sessions/{sid}", headers=auth(bad))
+        assert r.status_code == 401, r.text
+        assert await _audit(pg, sid) == [("assess_in_session_gate_rejected", "token")]
+
+
+async def test_the_existence_check_answers_one_boolean(pg) -> None:
+    # unbound, from no site: an id of site B exists, a random one does not; nothing else
+    *_, sid_b = await _two_sites(pg)
+    got = await pg.run("api", "SELECT assess_session_exists(:s)", {"s": sid_b})
+    assert got == [(True,)]
+    got = await pg.run("api", "SELECT assess_session_exists(:s)", {"s": uuid.uuid4()})
+    assert got == [(False,)]
+
+
+async def test_a_request_bound_to_a_learns_the_documented_minimum_of_the_definers(
+    pg,
+) -> None:
+    """Review finding 8: the two lookups that cross the binding answer one value each, and
+    nothing for an id they do not know."""
+    a, b, _sa, sid_b = await _two_sites(pg)
+    key_b = await make_key(pg, ["assess:teacher"], b, "teacher")
+    async with pg.conn("api", site=a) as c:
+        # the key -> site lookup: exactly (site, plugin minimum, disabled) for a known key id,
+        # nothing for any other id
+        res = await c.execute(
+            text("SELECT * FROM assess_site_of_key(:k, 'teacher')"), {"k": key_b.key_id}
+        )
+        assert list(res.keys()) == ["id", "min_plugin_version", "disabled"]
+        assert [r.id for r in res.fetchall()] == [b]
+        unknown = await c.execute(
+            text("SELECT * FROM assess_site_of_key(:k, 'teacher')"), {"k": uuid.uuid4()}
+        )
+        assert unknown.fetchall() == []
+        # the transcript's site: one uuid or NULL, never a row of the transcript
+        tid = uuid.uuid4()
+        await pg.run(
+            "super",
+            "INSERT INTO assess_transcripts (id, session_id, transcript_kid, content_hash, "
+            "shredded_at) VALUES (:t, :s, 'k', 'h', now())",
+            {"t": tid, "s": sid_b},
+        )
+        known = await c.execute(text("SELECT assess_transcript_site(:t)"), {"t": tid})
+        assert list(known.keys()) == ["assess_transcript_site"]
+        assert known.scalar() == b
+        nope = await c.execute(
+            text("SELECT assess_transcript_site(:t)"), {"t": uuid.uuid4()}
+        )
+        assert nope.scalar() is None
+        await c.rollback()
+
+
+async def test_the_gate_binds_once_per_transaction(pg) -> None:
+    """Review finding 5: a transaction already bound at its start (the request's site) is not
+    bound again by ``bind_site``; one bound to another site is refused."""
+    a, b = await make_site(pg), await make_site(pg)
+    engine = install_site_binding(create_async_engine(pg.url("api")))
+    sent: list[str] = []
+
+    def record(conn, cursor, statement, params, context, executemany):  # type: ignore[no-untyped-def]
+        if "set_config" in statement:
+            sent.append(statement)
+
+    from sqlalchemy import event
+
+    event.listen(engine.sync_engine, "before_cursor_execute", record)
+    try:
+        set_request_site(a)
+        async with engine.connect() as conn:
+            await conn.execute(text("SELECT 1"))  # begins, bound by the listener
+            await bind_site(conn, a)  # already bound to a: no second round trip
+            assert len(sent) == 1
+            await conn.rollback()
+        reset_site()
+        async with engine.connect() as conn:
+            await conn.execute(text("SELECT 1"))  # unbound transaction
+            await bind_site(conn, b)
+            assert len(sent) == 2
+            reset_site()
+            with pytest.raises(RuntimeError, match="already bound"):
+                await bind_site(conn, a)  # the transaction is b's
+            await conn.rollback()
+    finally:
+        reset_site()
+        await engine.dispose()
+
+
+async def test_pg_dump_by_a_role_rls_restricts_fails_loudly(pg) -> None:
+    """Review finding 2, the operator doc's claim: pg_dump as a role that neither owns the
+    tables nor has BYPASSRLS stops with an error (it never writes a silently partial dump); the
+    superuser dumps the same table."""
+    import subprocess
+
+    from .conftest import ROLE_PASSWORD
+
+    def dump(user: str, password: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [
+                "docker", "exec", "-e", f"PGPASSWORD={password}", pg.container_id,
+                "pg_dump", "-h", "127.0.0.1", "-U", user, "--data-only",
+                "-t", "assess_sessions", "test",
+            ],
+            capture_output=True,
+            text=True,
+        )  # fmt: skip
+
+    denied = dump("vektra_assess_api", ROLE_PASSWORD)
+    assert denied.returncode != 0
+    assert "query would be affected by row-level security policy" in denied.stderr
+    assert dump("test", "test").returncode == 0

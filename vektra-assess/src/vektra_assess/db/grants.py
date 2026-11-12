@@ -497,6 +497,9 @@ FUNCTIONS: Mapping[str, tuple[str, ...]] = {
     "assess_pending_replies(double precision,integer)": (API,),
     # an operator's (admin key) transcript resend: the site to bind before reading the row
     "assess_transcript_site(uuid)": (API,),
+    # the session gate: whether a sid the bound read cannot see exists in another site (the
+    # ownership-mismatch audit), one boolean
+    "assess_session_exists(uuid)": (API,),
 }
 
 

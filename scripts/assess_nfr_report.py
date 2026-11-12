@@ -2,7 +2,8 @@
 """Assess NFR campaign report from rows and audit timestamps (plan assess-hardening-release).
 
 Numbers typed by hand are not evidence. This script reads a campaign run straight from the
-database, with a read-only role or the superuser, over a time window. It computes:
+database, with the superuser or a read-only role that row-level security does not restrict
+(``BYPASSRLS``; see the last rule below), over a time window. It computes:
 
 - **NFR-018 commit latency**: ``assess_sessions.created_at`` (the Start request writes the
   STARTING row) to ``committed_at``, as p50 / p95 / p99 / max. Pass: p50 <= 10 s, p95 <= 30 s and
@@ -27,8 +28,15 @@ False-pass guards:
 - The verdict is PASS only when every computed criterion passes. A BLOCKED item keeps the overall
   verdict at BLOCKED, never PASS.
 
+- A role that row-level security restricts (ADR-0033 D9.2: the assess revision ``a0002`` puts
+  policies on ``assess_sessions`` and ``assess_start_attempts``) would read an empty or partial
+  campaign without an error. Before reading, the script asks the database whether RLS is active
+  for the connecting role on those tables with no unconditional policy for it, and REFUSES (exit
+  3) naming the tables. A role that sees every row: the superuser, the tables' owner, a role
+  with ``BYPASSRLS``, or the worker role (its policy is unconditional).
+
 Output: a dated markdown and JSON pair, ``tests/nfr/results/assess-nfr-<stamp>.{md,json}``.
-Exit status: 0 PASS, 1 FAIL, 2 BLOCKED.
+Exit status: 0 PASS, 1 FAIL, 2 BLOCKED, 3 REFUSED (a role that cannot see every row).
 
 Usage::
 
@@ -53,7 +61,7 @@ from typing import Any
 ROOT = Path(__file__).resolve().parents[1]
 RESULTS = ROOT / "tests" / "nfr" / "results"
 
-PASS, FAIL, BLOCKED = "PASS", "FAIL", "BLOCKED"
+PASS, FAIL, BLOCKED, REFUSED = "PASS", "FAIL", "BLOCKED", "REFUSED"
 
 #: declared minimum sample sizes (NFR-018 bursts are 20/30/40 Starts; the soak is far larger)
 MIN_COMMITS = 20
@@ -287,6 +295,33 @@ SQL_LIVE = (
 )
 
 
+#: the tables the report reads that the assess revision a0002 puts under row-level security
+RLS_TABLES = ("assess_sessions", "assess_start_attempts")
+#: those of them on which RLS is active for the connecting role (not the owner, no BYPASSRLS,
+#: not a superuser: ``row_security_active``) without an unconditional policy naming it
+SQL_HIDDEN = (
+    "SELECT c.relname FROM pg_class c WHERE c.relnamespace = 'public'::regnamespace "
+    "AND c.relname = ANY(:t) AND row_security_active(c.oid) "
+    "AND NOT EXISTS (SELECT 1 FROM pg_policies p WHERE p.schemaname = 'public' "
+    "AND p.tablename = c.relname AND p.permissive = 'PERMISSIVE' AND p.qual = 'true' "
+    "AND (current_user = ANY(p.roles) OR 'public' = ANY(p.roles))) ORDER BY 1"
+)
+
+
+class RowSecurityRefusal(Exception):
+    """The connecting role would read only the rows RLS lets it see: never a report."""
+
+    def __init__(self, tables: Sequence[str]) -> None:
+        self.tables = list(tables)
+        super().__init__(
+            "row-level security restricts this role on "
+            + ", ".join(self.tables)
+            + ": it would read an empty or partial campaign. Connect as the superuser, the "
+            "tables' owner (the migration user), or a read-only role with BYPASSRLS "
+            "(docs/guides/operators/assess-deployment.md, row-level security)."
+        )
+
+
 async def load(cfg: Config) -> Data:
     from sqlalchemy import text
     from sqlalchemy.ext.asyncio import create_async_engine
@@ -297,6 +332,11 @@ async def load(cfg: Config) -> Data:
     engine = create_async_engine(url)
     try:
         async with engine.connect() as conn:
+            hidden = (
+                await conn.execute(text(SQL_HIDDEN), {"t": list(RLS_TABLES)})
+            ).fetchall()
+            if hidden:
+                raise RowSecurityRefusal([str(h[0]) for h in hidden])
 
             async def rows(sql: str) -> list[Any]:
                 return list((await conn.execute(text(sql), params)).fetchall())
@@ -369,6 +409,10 @@ def run(cfg: Config, out_dir: Path = RESULTS) -> tuple[int, dict[str, Any]]:
     else:
         try:
             data = asyncio.run(asyncio.wait_for(load(cfg), QUERY_TIMEOUT_S))
+        except RowSecurityRefusal as exc:
+            # nothing is judged and nothing is written: a report of the rows one role may see
+            # is not the campaign's
+            return 3, {"verdict": REFUSED, "items": [], "blockers": [str(exc)]}
         except Exception as exc:  # the database is part of the environment
             result = {
                 "verdict": BLOCKED,
@@ -384,4 +428,6 @@ def run(cfg: Config, out_dir: Path = RESULTS) -> tuple[int, dict[str, Any]]:
 if __name__ == "__main__":
     code, res = run(Config.from_env())
     print(f"assess NFR report: {res['verdict']}")
+    if res["verdict"] == REFUSED:
+        print(res["blockers"][0], file=sys.stderr)
     sys.exit(code)

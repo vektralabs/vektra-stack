@@ -8,15 +8,18 @@ outside it.
 
 from __future__ import annotations
 
+import asyncio
 import importlib.util
 import sys
 import uuid
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import ModuleType
+from typing import Any
 
 import pytest
 from sqlalchemy import text
+from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import create_async_engine
 
 pytestmark = pytest.mark.integration
@@ -207,3 +210,45 @@ async def test_advisory_refusals_are_read_from_the_audit_events(pg) -> None:  # 
     assert (
         item["verdict"] == "FAIL"
     )  # 98% < 99%: the worker outage is the service's fault
+
+
+async def test_a_role_that_rls_restricts_is_refused_not_reported(pg, tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """Review of #209 finding 2: under RLS (revision a0002) the API role, or any read-only role
+    without BYPASSRLS, reads 0 rows of the sessions and attempts without an error. The script
+    refuses it by name (exit 3, nothing written) instead of a BLOCKED report on empty data; the
+    worker (unconditional policy) and the superuser still read."""
+
+    def cfg(url: str) -> Any:
+        return r.Config(
+            dsn=url.replace("postgresql+asyncpg://", "postgresql://"),
+            since=T0,
+            until=T0 + timedelta(hours=1),
+            label="db-rls",
+        )
+
+    with pytest.raises(r.RowSecurityRefusal) as exc:
+        await r.load(cfg(pg.url("api")))
+    assert exc.value.tables == ["assess_sessions", "assess_start_attempts"]
+    assert "BYPASSRLS" in str(exc.value)
+    # positive control: a role that sees every row is not refused
+    await r.load(cfg(pg.super_url))
+    # and a role with BYPASSRLS, the recipe of the operator doc, is not either
+    role = f"nfr_reader_{uuid.uuid4().hex[:8]}"
+    await pg.run(
+        "super", f"CREATE ROLE {role} LOGIN PASSWORD 'reader-password-0123' BYPASSRLS"
+    )
+    await pg.run(
+        "super",
+        "GRANT SELECT ON assess_sessions, assess_turns, assess_start_attempts, "
+        f"assess_audit_events TO {role}",
+    )
+    url = (
+        make_url(pg.super_url)
+        .set(username=role, password="reader-password-0123")
+        .render_as_string(hide_password=False)
+    )
+    await r.load(cfg(url))
+    # through the entry point: exit 3, verdict REFUSED, no report file
+    code, res = await asyncio.to_thread(r.run, cfg(pg.url("api")), tmp_path)
+    assert (code, res["verdict"]) == (3, "REFUSED")
+    assert list(tmp_path.iterdir()) == []

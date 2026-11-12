@@ -18,7 +18,8 @@ import jwt
 from fastapi import Request
 
 from vektra_assess.api.common import engine_of, fail
-from vektra_assess.api.deps import bearer_token, set_request_site, tokens_of
+from vektra_assess.api.deps import bearer_token, tokens_of
+from vektra_assess.api.site_binding import SiteBindingConflict, set_request_site
 from vektra_assess.audit import AssessAuditEvent, write_event
 from vektra_assess.errors import loginas_refused, token_invalid
 from vektra_assess.tokens import PreClaims, SessionClaims, TokenError
@@ -58,8 +59,15 @@ async def _refuse_loginas(request: Request, exc: TokenError) -> None:
 
 def _bound[C: (PreClaims, SessionClaims)](claims: C) -> C:
     """ADR-0033 D9.2: the rest of the request is bound to the site the verified token names
-    (each later transaction of the API engine sets ``app.assess_site_id`` at its start)."""
-    set_request_site(claims.site)
+    (each later transaction of the API engine sets ``app.assess_site_id`` at its start).
+
+    A site the binding refuses (not a uuid, or another site already bound to this request) is a
+    token failure like any other: the caller's ``except TokenError`` audits it and answers the
+    401 envelope, never a 500."""
+    try:
+        set_request_site(claims.site)
+    except (ValueError, TypeError, SiteBindingConflict):
+        raise TokenError("claim_site") from None
     return claims
 
 

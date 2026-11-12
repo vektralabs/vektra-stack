@@ -16,7 +16,7 @@ from pydantic import BaseModel, ValidationError
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from vektra_assess.api.site_binding import bind_site, install_site_binding
+from vektra_assess.api.site_binding import bind_site
 from vektra_assess.errors import assess_unavailable, bad_request, key_not_bound
 from vektra_shared.errors import ErrorResponse, http_status_for
 
@@ -81,12 +81,13 @@ def fail(err: ErrorResponse, headers: dict[str, str] | None = None) -> HTTPExcep
 
 
 def engine_of(request: Request) -> AsyncEngine:
-    """The API engine, every transaction of which is bound to the request's site at its start
-    (``site_binding.install_site_binding``, idempotent)."""
+    """The API engine. Every transaction of it is bound to the request's site at its start:
+    ``site_binding.install_site_binding`` is called once where the engine is created
+    (``vektra_app.assess_wiring`` step 12)."""
     engine = getattr(request.app.state, "assess_engine", None)
     if engine is None:
         raise fail(assess_unavailable("assess_database"))
-    return install_site_binding(engine)
+    return engine  # type: ignore[no-any-return]
 
 
 async def read_capped_body(

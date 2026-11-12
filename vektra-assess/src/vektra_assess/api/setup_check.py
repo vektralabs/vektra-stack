@@ -17,39 +17,25 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
+from sqlalchemy.ext.asyncio import AsyncConnection
 
-from vektra_assess.api.common import key_site_row
-from vektra_assess.api.site_binding import bind_site, install_site_binding
+from vektra_assess.api.common import engine_of, fail, key_site_row
+from vektra_assess.api.site_binding import bind_site
 from vektra_assess.errors import (
     assess_unavailable,
     setup_check_not_found,
     setup_check_too_soon,
 )
 from vektra_shared.auth import ApiKeyInfo, require_any_exact_scope
-from vektra_shared.errors import ErrorResponse, http_status_for
 
 MIN_INTERVAL_S = 300
 HEARTBEAT_MAX_AGE_S = 60
 
 router = APIRouter(prefix="/sites/{site_id}/setup-check")
 _guard = require_any_exact_scope("admin", "assess:teacher")
-
-
-def _fail(err: ErrorResponse, headers: dict[str, str] | None = None) -> HTTPException:
-    return HTTPException(
-        status_code=http_status_for(err), detail=err.to_envelope(), headers=headers
-    )
-
-
-def _engine(request: Request) -> AsyncEngine:
-    engine = getattr(request.app.state, "assess_engine", None)
-    if engine is None:
-        raise _fail(assess_unavailable("assess_database"))
-    return install_site_binding(engine)
 
 
 async def _authorize(conn: AsyncConnection, key: ApiKeyInfo, site_id: UUID) -> None:
@@ -61,13 +47,13 @@ async def _authorize(conn: AsyncConnection, key: ApiKeyInfo, site_id: UUID) -> N
         )
     ).first()
     if exists is None:
-        raise _fail(setup_check_not_found())
+        raise fail(setup_check_not_found())
     if "admin" not in key.scopes:
         # the key's own site, through the definer lookup (it precedes the binding); a disabled
         # site's teacher may still read its reports, as before
         own = await key_site_row(conn, key, "teacher")
         if own is None or own.id != site_id:
-            raise _fail(setup_check_not_found())
+            raise fail(setup_check_not_found())
     await bind_site(conn, site_id)
 
 
@@ -75,7 +61,7 @@ async def _authorize(conn: AsyncConnection, key: ApiKeyInfo, site_id: UUID) -> N
 async def request_setup_check(
     site_id: UUID, request: Request, key: ApiKeyInfo = Depends(_guard)
 ) -> JSONResponse:
-    async with _engine(request).begin() as conn:
+    async with engine_of(request).begin() as conn:
         await _authorize(conn, key, site_id)
         await conn.execute(
             text("SELECT pg_advisory_xact_lock(hashtextextended(:k, 0))"),
@@ -90,7 +76,7 @@ async def request_setup_check(
             )
         ).scalar()
         if age is None or float(age) > HEARTBEAT_MAX_AGE_S:
-            raise _fail(assess_unavailable("worker_heartbeat"))
+            raise fail(assess_unavailable("worker_heartbeat"))
         recent = (
             await conn.execute(
                 text(
@@ -103,7 +89,7 @@ async def request_setup_check(
         ).scalar()
         if recent is not None:
             wait = int(MIN_INTERVAL_S - float(recent))
-            raise _fail(setup_check_too_soon(wait), {"Retry-After": str(max(wait, 1))})
+            raise fail(setup_check_too_soon(wait), {"Retry-After": str(max(wait, 1))})
         report_id = (
             await conn.execute(
                 text(
@@ -136,7 +122,7 @@ def _iso(value: datetime | None) -> str | None:
 async def get_setup_check(
     site_id: UUID, report_id: UUID, request: Request, key: ApiKeyInfo = Depends(_guard)
 ) -> dict[str, Any]:
-    async with _engine(request).connect() as conn:
+    async with engine_of(request).connect() as conn:
         await _authorize(conn, key, site_id)
         row = (
             await conn.execute(
@@ -148,7 +134,7 @@ async def get_setup_check(
             )
         ).one_or_none()
     if row is None:
-        raise _fail(setup_check_not_found())
+        raise fail(setup_check_not_found())
     # content-free by construction: the worker stores only {name, result, reason_code}
     items = [
         {k: i.get(k) for k in ("name", "result", "reason_code")}

@@ -36,13 +36,13 @@ Left out, with the reason:
   reaches them through a session row or a SECURITY DEFINER function, never by themselves (the
   column grants, D9 layer 1, still keep turns, snapshots and keys away from the API role).
 
-The reads that legitimately precede the binding or span sites move to five SECURITY DEFINER
+The reads that legitimately precede the binding or span sites move to SECURITY DEFINER
 functions owned by ``vektra_assess_definer`` (search path pinned, never PUBLIC, EXECUTE for the
 API only), each returning ids or counts: :data:`FUNCTIONS`. The grant matrix is carried again
 (:data:`GRANT_STATEMENTS`, rendered by ``vektra_assess.db.grants.render_statements``) with the
 definer's three new column grants.
 
-The downgrade drops the policies, disables RLS, drops the five functions and puts back the grant
+The downgrade drops the policies, disables RLS, drops the six functions and puts back the grant
 matrix of ``a0001``.
 
 Revision ID: a0002
@@ -109,7 +109,13 @@ DEFINER_MEMBERSHIP_MESSAGE = (
 FUNCTIONS: tuple[str, ...] = (
     # the key -> site resolution: it is what names the site, so it runs before any binding.
     # ``disabled`` is returned, not filtered: the setup check refuses a disabled site's key
-    # with its own 404, the other routes with ERR-ASSESS-007
+    # with its own 404, the other routes with ERR-ASSESS-007.
+    # Not an enumeration oracle: its input is ``ApiKeyInfo.key_id``, which the platform's auth
+    # middleware sets only after the bearer key verified against its argon2id hash, and which
+    # the API role cannot list (no privilege on ``api_keys``; its own read of
+    # ``assess_site_keys`` is bound by RLS). The key's secret cannot be passed instead: the
+    # database holds only its argon2id hash, which needs the secret to check. It answers the
+    # site id, the plugin minimum and the disabled flag, nothing else
     r"""
 CREATE FUNCTION public.assess_site_of_key(p_key_id uuid, p_purpose text) RETURNS TABLE(id uuid, min_plugin_version text, disabled boolean)
     LANGUAGE sql STABLE SECURITY DEFINER
@@ -159,7 +165,21 @@ CREATE FUNCTION public.assess_pending_replies(p_min_age_s double precision, p_li
         LIMIT p_limit
     $$
     """,
-    # an operator's resend names a transcript, not a site: the site to bind first
+    # the session gate's audit classification: a token naming a session the bound read cannot
+    # see is an ownership mismatch when the id exists in another site, a plain "not found"
+    # otherwise. One boolean, reached only after a verified session or pre-session token named
+    # this sid; the HTTP answer is the same not-found envelope in both cases
+    r"""
+CREATE FUNCTION public.assess_session_exists(p_sid uuid) RETURNS boolean
+    LANGUAGE sql STABLE SECURITY DEFINER
+    SET search_path TO 'pg_catalog', 'pg_temp'
+    AS $$
+        SELECT EXISTS (SELECT 1 FROM public.assess_sessions WHERE id = p_sid)
+    $$
+    """,
+    # an operator's resend names a transcript, not a site: the site to bind first. Reachable
+    # only from the admin-scoped resend (after the admin key verified); it needs the
+    # transcript's unguessable uuid and answers one uuid, or NULL for an unknown id
     r"""
 CREATE FUNCTION public.assess_transcript_site(p_tid uuid) RETURNS uuid
     LANGUAGE sql STABLE SECURITY DEFINER
@@ -177,6 +197,7 @@ DEFINER_OWNED: tuple[str, ...] = (
     "public.assess_live_session_count()",
     "public.assess_configured_site_count()",
     "public.assess_pending_replies(p_min_age_s double precision, p_limit integer)",
+    "public.assess_session_exists(p_sid uuid)",
     "public.assess_transcript_site(p_tid uuid)",
 )
 
@@ -417,6 +438,8 @@ GRANT_STATEMENTS = (
     "GRANT EXECUTE ON FUNCTION public.assess_pending_replies(double precision,integer) TO vektra_assess_api",
     "REVOKE ALL ON FUNCTION public.assess_rollback_starting(uuid) FROM PUBLIC, vektra_assess_api, vektra_assess_worker",
     "GRANT EXECUTE ON FUNCTION public.assess_rollback_starting(uuid) TO vektra_assess_api",
+    "REVOKE ALL ON FUNCTION public.assess_session_exists(uuid) FROM PUBLIC, vektra_assess_api, vektra_assess_worker",
+    "GRANT EXECUTE ON FUNCTION public.assess_session_exists(uuid) TO vektra_assess_api",
     "REVOKE ALL ON FUNCTION public.assess_site_of_key(uuid,text) FROM PUBLIC, vektra_assess_api, vektra_assess_worker",
     "GRANT EXECUTE ON FUNCTION public.assess_site_of_key(uuid,text) TO vektra_assess_api",
     "REVOKE ALL ON FUNCTION public.assess_transcript_site(uuid) FROM PUBLIC, vektra_assess_api, vektra_assess_worker",

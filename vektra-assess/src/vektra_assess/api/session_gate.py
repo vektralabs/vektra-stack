@@ -56,6 +56,7 @@ _ROW = (
     "pending_reply_since, credited_outage_s, created_at, tokens_used, now() AS server_now "
     "FROM assess_sessions WHERE id = :sid"
 )
+_EXISTS = text("SELECT assess_session_exists(:sid)")
 _ROW_LOCKED = text(_ROW + " FOR UPDATE")
 _ROW_PLAIN = text(_ROW)
 
@@ -182,6 +183,15 @@ async def gate(
         await conn.execute(_ROW_LOCKED if lock else _ROW_PLAIN, {"sid": sid})
     ).first()
     if raw is None:
+        # RLS hid the row or there is none. The answer is the same not-found envelope; only the
+        # audit tells the two apart, as it did before RLS: a session of another site is an
+        # ownership mismatch (assess_session_exists, a definer function, one boolean)
+        if (await conn.execute(_EXISTS, {"sid": sid})).scalar():
+            raise GateRejected(
+                session_not_found(),
+                "not_owner",
+                AssessAuditEvent.OWNERSHIP_MISMATCH_REJECTED,
+            )
         raise GateRejected(session_not_found(), "not_found")
     row = SessionRow(**raw._mapping)
     if (row.site_id, row.student_userid, row.cmid) != (

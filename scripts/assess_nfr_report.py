@@ -297,10 +297,15 @@ SQL_LIVE = (
 
 #: the tables the report reads that the assess revision a0002 puts under row-level security
 RLS_TABLES = ("assess_sessions", "assess_start_attempts")
-#: the policies that apply to the connecting role's reads of a table
+#: the policies that apply to the connecting role's reads of a table. PostgreSQL applies a
+#: policy to a role and to every role that has its privileges, i.e. inherits it
+#: (``has_privs_of_role``, which ``pg_has_role(..., 'USAGE')`` exposes), and a ``PUBLIC``
+#: policy to everyone
 _APPLIES = (
     "p.schemaname = 'public' AND p.tablename = c.relname AND p.cmd IN ('SELECT', 'ALL') "
-    "AND (current_user = ANY(p.roles) OR 'public' = ANY(p.roles))"
+    # CASE, not OR: 'public' is no role, and pg_has_role would raise on it
+    "AND EXISTS (SELECT 1 FROM unnest(p.roles) AS r(name) WHERE CASE WHEN r.name = 'public' "
+    "THEN true ELSE pg_has_role(current_user, r.name, 'USAGE') END)"
 )
 #: those of them on which RLS is active for the connecting role (not the owner, no BYPASSRLS,
 #: not a superuser: ``row_security_active``) and a read could miss rows: no unconditional

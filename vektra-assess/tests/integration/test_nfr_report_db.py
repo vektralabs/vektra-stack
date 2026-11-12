@@ -295,6 +295,59 @@ async def test_a_role_that_rls_restricts_is_refused_not_reported(pg, tmp_path) -
         await pg.run("super", f"DROP POLICY IF EXISTS {restrictive} ON assess_sessions")
         for name, table in policies:
             await pg.run("super", f"DROP POLICY IF EXISTS {name} ON {table}")
+    # CodeRabbit on #209 (second round): PostgreSQL applies a policy to every role that
+    # inherits the policy's role. A login role whose policies all name a group it inherits:
+    group, member = (
+        f"nfr_group_{uuid.uuid4().hex[:8]}",
+        f"nfr_member_{uuid.uuid4().hex[:8]}",
+    )
+    await pg.run("super", f"CREATE ROLE {group} NOLOGIN")
+    await pg.run(
+        "super",
+        f"CREATE ROLE {member} LOGIN INHERIT PASSWORD 'reader-password-0123' IN ROLE {group}",
+    )
+    await pg.run(
+        "super",
+        "GRANT SELECT ON assess_sessions, assess_turns, assess_start_attempts, "
+        f"assess_audit_events TO {group}",
+    )
+    member_url = (
+        make_url(pg.super_url)
+        .set(username=member, password="reader-password-0123")
+        .render_as_string(hide_password=False)
+    )
+    inherited = [
+        (f"nfr_gopen_{t}", t) for t in ("assess_sessions", "assess_start_attempts")
+    ]
+    group_restrictive = "nfr_grestrict_assess_sessions"
+    try:
+        # no policy at all for the member or its group: refused on both tables
+        with pytest.raises(r.RowSecurityRefusal) as exc:
+            await r.load(cfg(member_url))
+        assert exc.value.tables == ["assess_sessions", "assess_start_attempts"]
+        # an inherited-only permissive unconditional policy: accepted
+        for name, table in inherited:
+            await pg.run(
+                "super",
+                f"CREATE POLICY {name} ON {table} AS PERMISSIVE FOR SELECT TO {group} "
+                "USING (true)",
+            )
+        await r.load(cfg(member_url))
+        # an inherited restrictive policy that is not unconditional: refused
+        await pg.run(
+            "super",
+            f"CREATE POLICY {group_restrictive} ON assess_sessions AS RESTRICTIVE "
+            f"FOR SELECT TO {group} USING (cmid > 0)",
+        )
+        with pytest.raises(r.RowSecurityRefusal) as exc:
+            await r.load(cfg(member_url))
+        assert exc.value.tables == ["assess_sessions"]
+    finally:
+        await pg.run(
+            "super", f"DROP POLICY IF EXISTS {group_restrictive} ON assess_sessions"
+        )
+        for name, table in inherited:
+            await pg.run("super", f"DROP POLICY IF EXISTS {name} ON {table}")
     # through the entry point: exit 3, verdict REFUSED, no report file
     code, res = await asyncio.to_thread(r.run, cfg(pg.url("api")), tmp_path)
     assert (code, res["verdict"]) == (3, "REFUSED")

@@ -19,15 +19,18 @@ from typing import Any
 
 import pytest
 import test_moodle_probes as probes_test
-from assess_moodle_support import BRANCHES, LiveEnv, Replay, make_client, use_live
+from assess_moodle_support import (
+    BRANCHES,
+    LiveEnv,
+    Replay,
+    load_script,
+    make_client,
+    use_live,
+)
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from vektra_assess.capabilities import FLAGS, Ready, site_readiness
 from vektra_assess.config import VektraAssessSettings
-from vektra_assess.moodle import spike
-from vektra_assess.moodle.probes import derive_probe_manifest
-from vektra_assess.moodle.provider import MoodleLmsProvider
-from vektra_assess.moodle.setup_check import SERVICE_ACCOUNT_ITEMS
 from vektra_assess.setup import (
     GENERIC_ITEMS,
     PLUGGABLE_ITEMS,
@@ -37,6 +40,10 @@ from vektra_assess.setup import (
     evaluate,
     ok,
 )
+from vektra_lms_moodle.config import MoodleSettings
+from vektra_lms_moodle.probes import derive_probe_manifest
+from vektra_lms_moodle.provider import MoodleLmsProvider
+from vektra_lms_moodle.setup_check import SERVICE_ACCOUNT_ITEMS
 from vektra_shared.lms import LmsSite
 
 #: the provider's service-account items, then Vektra's own (ADR-0033 D3)
@@ -58,10 +65,12 @@ pytestmark = [
 
 CFG = {
     "VEKTRA_ASSESS_ENABLED": "true",
-    "VEKTRA_ASSESS_INGEST_ACCOUNT_USERNAME": "vektra_ingest_acct",
+    "VEKTRA_LMS_MOODLE_INGEST_ACCOUNT_USERNAME": "vektra_ingest_acct",
     "VEKTRA_ASSESS_UI_ORIGIN": "https://chat.vektra-ui.test",
     "VEKTRA_ASSESS_API_PUBLIC_ORIGIN": "https://api.vektra-api.test",
 }
+
+spike = load_script("setup_spike")  # the operator CLI (adapter scripts/)
 
 
 def _paths(branch: str) -> tuple[Path, Path]:
@@ -99,9 +108,10 @@ async def run_check(
     use_live(branch, live)
     client = make_client(Replay(branch))
     cfg_ = VektraAssessSettings(**{**CFG, **env})  # type: ignore[arg-type]
+    mcfg = MoodleSettings(**{**CFG, **env})  # type: ignore[arg-type]
     try:
         out = await evaluate(
-            MoodleLmsProvider(client, cfg_),
+            MoodleLmsProvider(client, mcfg),
             LmsSite(f"live-{branch}", live.url),
             cfg_,
             derive_probe_manifest(live.manifest),
@@ -177,9 +187,10 @@ async def test_the_ingestion_item_is_unverifiable_without_the_setting(
     client = make_client(Replay(branch))
     cfg = {k: v for k, v in CFG.items() if "INGEST" not in k}
     cfg_ = VektraAssessSettings(**cfg)  # type: ignore[arg-type]
+    mcfg = MoodleSettings(**cfg)  # type: ignore[arg-type]
     try:
         out = await evaluate(
-            MoodleLmsProvider(client, cfg_),
+            MoodleLmsProvider(client, mcfg),
             LmsSite(f"live-{branch}", live.url),
             cfg_,
             derive_probe_manifest(live.manifest),

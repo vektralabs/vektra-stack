@@ -25,6 +25,7 @@ from assess_moodle_support import (
     uid,
     use_live,
 )
+from integration.test_session_preflight import _reset
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
 from support.preflight import (
@@ -39,7 +40,6 @@ from support.sessions import seed_session
 from support.world import world
 from test_context_capture import InProcessParser
 
-from integration.test_session_preflight import _reset
 from vektra_assess.context.snapshot import canonical_bytes
 from vektra_assess.worker.preflight import StartTarget, make_preflight_handler
 from vektra_assess.worker.start_source import LmsStartSource

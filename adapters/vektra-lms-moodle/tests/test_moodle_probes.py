@@ -21,7 +21,7 @@ from assess_moodle_support import (
 )
 
 from vektra_assess.capabilities import FLAGS
-from vektra_assess.moodle.probes import (
+from vektra_lms_moodle.probes import (
     PROBES,
     FlagResult,
     derive_probe_manifest,

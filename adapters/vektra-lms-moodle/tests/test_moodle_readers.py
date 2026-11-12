@@ -29,9 +29,9 @@ from assess_moodle_support import (
 )
 from structlog.testing import capture_logs
 
-from vektra_assess.moodle.client import SiteRef
-from vektra_assess.moodle.domain import AttemptState
-from vektra_assess.moodle.readers import (
+from vektra_lms_moodle.client import SiteRef
+from vektra_lms_moodle.domain import AttemptState
+from vektra_lms_moodle.readers import (
     read_assign_close_inputs,
     read_assign_release,
     read_assign_settings,
@@ -57,14 +57,14 @@ from vektra_assess.moodle.readers import (
     read_user_review_options,
     with_release,
 )
-from vektra_assess.moodle.result import Readable, Unreadable, UnreadableReason
+from vektra_lms_moodle.result import Readable, Unreadable, UnreadableReason
 
 pytestmark = pytest.mark.parametrize("branch", BRANCHES)
 
 # the recorder's own file scan (scripts/ is not a package): the test checks what it checks
 _SPEC = importlib.util.spec_from_file_location(
     "assess_record_ws",
-    Path(__file__).resolve().parents[2] / "scripts" / "assess_record_ws.py",
+    Path(__file__).resolve().parents[1] / "scripts" / "record_ws.py",
 )
 assert _SPEC and _SPEC.loader
 _REC = importlib.util.module_from_spec(_SPEC)

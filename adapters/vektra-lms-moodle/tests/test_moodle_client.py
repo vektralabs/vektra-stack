@@ -11,19 +11,19 @@ import httpx
 import pytest
 from structlog.testing import capture_logs
 
-from vektra_assess.config import VektraAssessSettings
-from vektra_assess.moodle.breaker import BreakerRegistry, BreakerState, CircuitBreaker
-from vektra_assess.moodle.client import MoodleWsClient, SiteRef, flatten_params
-from vektra_assess.moodle.ratelimit import AsyncTokenBucket
-from vektra_assess.moodle.result import Readable, Unreadable, UnreadableReason
+from vektra_lms_moodle.breaker import BreakerRegistry, BreakerState, CircuitBreaker
+from vektra_lms_moodle.client import MoodleWsClient, SiteRef, flatten_params
+from vektra_lms_moodle.config import MoodleSettings
+from vektra_lms_moodle.ratelimit import AsyncTokenBucket
+from vektra_lms_moodle.result import Readable, Unreadable, UnreadableReason
 
 TOKEN = "0123456789abcdef0123456789abcdef"
 SITE = SiteRef("site-1", "https://moodle.example.org", release="5.2.4+")
 
 
-def settings(**env) -> VektraAssessSettings:
+def settings(**env) -> MoodleSettings:
     base = {"VEKTRA_ASSESS_ENABLED": "true"}
-    return VektraAssessSettings(**{**base, **env})  # type: ignore[arg-type]
+    return MoodleSettings(**{**base, **env})  # type: ignore[arg-type]
 
 
 def resolver(*ips: str):
@@ -119,7 +119,7 @@ async def test_an_oversize_body_is_aborted_without_being_read_in_full():
         return httpx.Response(200, content=stream())
 
     res = await make(
-        handler, s=settings(VEKTRA_ASSESS_WS_MAX_RESPONSE_BYTES="4096")
+        handler, s=settings(VEKTRA_LMS_MOODLE_WS_MAX_RESPONSE_BYTES="4096")
     ).call(SITE, "f")
     assert res.reason is UnreadableReason.SIZE_CAP  # type: ignore[union-attr]
     assert served["bytes"] < 100 * 1024  # the stream was abandoned early
@@ -183,14 +183,14 @@ async def test_a_private_resolution_is_refused_unless_the_cidr_is_allowed():
         res == Unreadable(UnreadableReason.ACCESS_EXCEPTION, "egress_denied")
         and not called
     )
-    allowed = settings(VEKTRA_ASSESS_MOODLE_ALLOWED_CIDRS="10.20.0.0/16")
+    allowed = settings(VEKTRA_LMS_MOODLE_ALLOWED_CIDRS="10.20.0.0/16")
     assert isinstance(
         await make(handler, ip="10.20.3.4", s=allowed).call(SITE, "f"), Readable
     )
 
 
 async def test_metadata_address_is_refused_even_inside_an_allowed_range():
-    allowed = settings(VEKTRA_ASSESS_MOODLE_ALLOWED_CIDRS="169.254.0.0/16")
+    allowed = settings(VEKTRA_LMS_MOODLE_ALLOWED_CIDRS="169.254.0.0/16")
     res = await make(ok({}), ip="169.254.169.254", s=allowed).call(SITE, "f")
     assert res.detail_code == "egress_denied"  # type: ignore[union-attr]
 
@@ -198,13 +198,11 @@ async def test_metadata_address_is_refused_even_inside_an_allowed_range():
 async def test_plain_http_needs_development_and_the_flag():
     http_site = SiteRef("s", "http://moodle.example.org")
     assert (await make(ok({})).call(http_site, "f")).detail_code == "plain_http_refused"  # type: ignore[union-attr]
-    flag_only = settings(
-        VEKTRA_ASSESS_MOODLE_ALLOW_HTTP="true", VEKTRA_ENV="production"
-    )
+    flag_only = settings(VEKTRA_LMS_MOODLE_ALLOW_HTTP="true", VEKTRA_ENV="production")
     assert (
         await make(ok({}), s=flag_only).call(http_site, "f")
     ).detail_code == "plain_http_refused"  # type: ignore[union-attr]
-    dev = settings(VEKTRA_ASSESS_MOODLE_ALLOW_HTTP="true", VEKTRA_ENV="development")
+    dev = settings(VEKTRA_LMS_MOODLE_ALLOW_HTTP="true", VEKTRA_ENV="development")
     assert isinstance(await make(ok({}), s=dev).call(http_site, "f"), Readable)
 
 
@@ -385,7 +383,7 @@ async def test_an_unexpected_exception_never_escapes_and_releases_the_probe_slot
 
 
 async def test_a_malformed_cidr_setting_is_unreadable_not_an_exception():
-    bad = settings(VEKTRA_ASSESS_MOODLE_ALLOWED_CIDRS="not-a-cidr")
+    bad = settings(VEKTRA_LMS_MOODLE_ALLOWED_CIDRS="not-a-cidr")
     res = await make(ok({}), s=bad).call(SITE, "f")
     assert isinstance(res, Unreadable) and res.detail_code == "client_error"
 
@@ -431,8 +429,8 @@ async def test_a_slow_drip_body_hits_the_total_deadline():
         return httpx.Response(200, content=drip())
 
     s = settings(
-        VEKTRA_ASSESS_WS_TOTAL_TIMEOUT_S="0.3",
-        VEKTRA_ASSESS_WS_MAX_RESPONSE_BYTES="8388608",
+        VEKTRA_LMS_MOODLE_WS_TOTAL_TIMEOUT_S="0.3",
+        VEKTRA_LMS_MOODLE_WS_MAX_RESPONSE_BYTES="8388608",
     )
     res = await make(handler, s=s).call(SITE, "f")
     assert res.reason is UnreadableReason.TIMEOUT  # type: ignore[union-attr]
@@ -492,7 +490,7 @@ async def test_the_file_download_token_never_reaches_the_stdlib_http_logs(caplog
 def test_the_redaction_filter_handles_formatted_args_and_other_spellings():
     import logging
 
-    from vektra_assess.moodle.client import _REDACTOR
+    from vektra_lms_moodle.client import _REDACTOR
 
     rec = logging.LogRecord(
         "httpx", logging.INFO, "", 0,
@@ -507,12 +505,12 @@ def test_the_redaction_filter_handles_formatted_args_and_other_spellings():
 
 async def test_a_loopback_resolution_is_refused_outside_development():
     prod = settings(
-        VEKTRA_ENV="production", VEKTRA_ASSESS_MOODLE_ALLOWED_CIDRS="127.0.0.0/8"
+        VEKTRA_ENV="production", VEKTRA_LMS_MOODLE_ALLOWED_CIDRS="127.0.0.0/8"
     )
     res = await make(ok({}), s=prod, ip="127.0.0.1").call(SITE, "f")
     assert isinstance(res, Unreadable) and res.detail_code == "egress_denied"
     dev = settings(
-        VEKTRA_ENV="development", VEKTRA_ASSESS_MOODLE_ALLOWED_CIDRS="127.0.0.0/8"
+        VEKTRA_ENV="development", VEKTRA_LMS_MOODLE_ALLOWED_CIDRS="127.0.0.0/8"
     )
     assert isinstance(
         await make(ok({"a": 1}), s=dev, ip="127.0.0.1").call(SITE, "f"), Readable
@@ -524,7 +522,7 @@ async def test_a_hostile_deeply_nested_document_never_escapes_call_or_fetch_file
 ):
     # a document that parses (json is under its own recursion limit) and then blows the
     # stack in shape analysis: the contract says call() never raises
-    import vektra_assess.moodle.client as client_mod
+    import vektra_lms_moodle.client as client_mod
 
     def explode(*_a, **_k):
         raise RecursionError("maximum recursion depth exceeded")

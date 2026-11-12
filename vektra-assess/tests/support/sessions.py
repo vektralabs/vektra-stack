@@ -19,7 +19,6 @@ from typing import Any, Literal
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
-from test_context_capture import InProcessParser
 
 from support.fake_lms import (
     SCENARIO_RELEASE,
@@ -27,6 +26,7 @@ from support.fake_lms import (
     scenario_provider,
     scenario_target,
 )
+from support.parser import InProcessParser
 from support.preflight import FakePartB, activate, deps, job_context, kek_ring
 from support.world import World, configure_activity
 from vektra_assess.worker.preflight import make_preflight_handler

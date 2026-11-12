@@ -16,12 +16,12 @@ from typing import Any
 
 import pytest
 
-from vektra_assess.moodle.provider import MOODLE_REVIEW_PROFILE
 from vektra_assess.parser_protocol import ReviewProfile
 from vektra_assess.parser_sidecar.html_review import (
     extract_review_block,
     extract_review_item,
 )
+from vektra_lms_moodle.provider import MOODLE_REVIEW_PROFILE
 
 HERE = Path(__file__).parent
 FIXTURES = HERE / "fixtures" / "moodle_ws"

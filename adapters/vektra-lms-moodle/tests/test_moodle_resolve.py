@@ -7,8 +7,8 @@ from typing import Any
 import pytest
 from assess_moodle_support import BRANCHES, Replay, make_client, manifest, site_for, uid
 
-from vektra_assess.moodle.readers.resolve import ActivityRef, resolve_activity
-from vektra_assess.moodle.result import Readable, Unreadable
+from vektra_lms_moodle.readers.resolve import ActivityRef, resolve_activity
+from vektra_lms_moodle.result import Readable, Unreadable
 
 pytestmark = pytest.mark.parametrize("branch", BRANCHES)
 

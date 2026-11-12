@@ -14,9 +14,9 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.x509.oid import NameOID
 
-from vektra_assess.config import VektraAssessSettings
-from vektra_assess.moodle.client import MoodleWsClient, SiteRef
-from vektra_assess.moodle.result import Readable, UnreadableReason
+from vektra_lms_moodle.client import MoodleWsClient, SiteRef
+from vektra_lms_moodle.config import MoodleSettings
+from vektra_lms_moodle.result import Readable, UnreadableReason
 
 TOKEN = "0123456789abcdef0123456789abcdef"
 
@@ -110,12 +110,12 @@ async def serve(certfile: Path):
 def client_for(ca_file: Path | None, lookups: list[str], answer: list[str]):
     env: dict[str, str] = {
         "VEKTRA_ASSESS_ENABLED": "true",
-        "VEKTRA_ASSESS_MOODLE_ALLOWED_CIDRS": "127.0.0.0/8",
+        "VEKTRA_LMS_MOODLE_ALLOWED_CIDRS": "127.0.0.0/8",
         # the local TLS server is on loopback, allowed only in an EXPLICIT development env
         "VEKTRA_ENV": "development",
     }
     if ca_file is not None:
-        env["VEKTRA_ASSESS_MOODLE_CA_FILE"] = str(ca_file)
+        env["VEKTRA_LMS_MOODLE_CA_FILE"] = str(ca_file)
 
     def resolver(host, port, *_a, **_k):
         lookups.append(host)
@@ -123,7 +123,7 @@ def client_for(ca_file: Path | None, lookups: list[str], answer: list[str]):
         return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (ip, port))]
 
     return MoodleWsClient(
-        VektraAssessSettings(**env), token_provider=lambda _s: TOKEN, resolver=resolver
+        MoodleSettings(**env), token_provider=lambda _s: TOKEN, resolver=resolver
     )  # type: ignore[arg-type]
 
 

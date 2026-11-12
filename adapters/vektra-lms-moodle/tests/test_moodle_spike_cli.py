@@ -13,16 +13,18 @@ from assess_moodle_support import (
     FIXTURES,
     TOKEN,
     Replay,
+    load_script,
     make_client,
     manifest,
 )
 
 from vektra_assess.capabilities import FLAGS
-from vektra_assess.moodle import spike
-from vektra_assess.moodle.setup_check import SERVICE_ACCOUNT_ITEMS
 from vektra_assess.setup import GENERIC_ITEMS, PLUGGABLE_ITEMS
+from vektra_lms_moodle.setup_check import SERVICE_ACCOUNT_ITEMS
 
 BUILTIN_ITEMS = (*SERVICE_ACCOUNT_ITEMS, *GENERIC_ITEMS)
+
+spike = load_script("setup_spike")  # the operator CLI (adapter scripts/)
 
 
 @pytest.fixture
@@ -131,10 +133,10 @@ def test_settings_overrides_and_ipv4_resolver(
             "::1/128",
         ]
     )
-    s = spike.build_settings(ns)
-    assert s.moodle_allow_http is True
-    assert s.moodle_allowed_cidrs == "10.0.0.0/8,::1/128"
-    assert s.ingest_account_username == "vektra_ingest_acct"
+    s, m = spike.build_settings(ns)  # the vertical's settings, the provider's own
+    assert m.moodle_allow_http is True
+    assert m.moodle_allowed_cidrs == "10.0.0.0/8,::1/128"
+    assert m.ingest_account_username == "vektra_ingest_acct"
     assert s.ui_origin == "https://chat.vektra-ui.test"
 
     both: list[Any] = [

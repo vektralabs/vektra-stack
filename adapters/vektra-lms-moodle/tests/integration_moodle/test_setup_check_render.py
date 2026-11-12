@@ -14,18 +14,18 @@ import logging
 
 import pytest
 from assess_moodle_support import Replay, make_provider, manifest, uid
+from integration.test_session_preflight import _reset
 from sqlalchemy.ext.asyncio import create_async_engine
 from support.world import configure_activity, world
 from test_context_capture import InProcessParser
 
-from integration.test_session_preflight import _reset
 from vektra_assess.capabilities import FLAGS
 from vektra_assess.jobs import JobKind
-from vektra_assess.moodle.probes import derive_probe_manifest
 from vektra_assess.worker.render import RenderDeps, make_render_handler
 from vektra_assess.worker.runner import JobContext
 from vektra_assess.worker.setup_check import make_setup_check_handler
 from vektra_assess.worker.start_source import LmsStartSource
+from vektra_lms_moodle.probes import derive_probe_manifest
 
 from .test_setup_check_run import ENV, SETTINGS, full_registry
 

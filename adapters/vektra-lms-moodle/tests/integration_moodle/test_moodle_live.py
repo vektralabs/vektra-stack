@@ -33,7 +33,7 @@ from assess_moodle_support import (
 )
 from structlog.testing import capture_logs
 
-from vektra_assess.moodle.readers import (
+from vektra_lms_moodle.readers import (
     fetch_submission_file,
     read_attempt_review,
     read_enrolment,
@@ -43,7 +43,7 @@ from vektra_assess.moodle.readers import (
     read_submission_status,
     read_user_flags,
 )
-from vektra_assess.moodle.result import Readable, Unreadable, UnreadableReason
+from vektra_lms_moodle.result import Readable, Unreadable, UnreadableReason
 
 # read at import: the autouse hermetic env scrub clears VEKTRA_* before a test body runs
 _ENV = {

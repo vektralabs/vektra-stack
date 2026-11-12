@@ -124,7 +124,7 @@ async def test_the_matrix_detects_a_leak_when_pruning_is_disabled(
     """Negative control: break the sanitizer and the same case must show the planted canaries."""
     from canary.matrix import build_matrix as fresh
 
-    from vektra_assess.moodle import provider
+    from vektra_lms_moodle import provider
 
     # the class list lives in the provider's profile now (ADR-0033 D4): a profile that drops
     # nothing is the broken sanitizer

@@ -28,16 +28,6 @@ from assess_moodle_support import (
 
 from vektra_assess.capabilities import FLAGS
 from vektra_assess.config import VektraAssessSettings
-from vektra_assess.moodle.client import MoodleWsClient, SiteRef
-from vektra_assess.moodle.probes import derive_probe_manifest
-from vektra_assess.moodle.provider import MoodleLmsProvider
-from vektra_assess.moodle.readers import read_own_auth, read_site_info
-from vektra_assess.moodle.result import Readable, Unreadable, UnreadableReason
-from vektra_assess.moodle.setup_check import (
-    GRADE_WRITE_FUNCTIONS,
-    SERVICE_ACCOUNT_ITEMS,
-    is_grade_write_function,
-)
 from vektra_assess.setup import (
     DEFAULT_REGISTRY,
     GENERIC_ITEMS,
@@ -49,6 +39,17 @@ from vektra_assess.setup import (
     ok,
     same_site,
 )
+from vektra_lms_moodle.client import MoodleWsClient, SiteRef
+from vektra_lms_moodle.config import MoodleSettings
+from vektra_lms_moodle.probes import derive_probe_manifest
+from vektra_lms_moodle.provider import MoodleLmsProvider
+from vektra_lms_moodle.readers import read_own_auth, read_site_info
+from vektra_lms_moodle.result import Readable, Unreadable, UnreadableReason
+from vektra_lms_moodle.setup_check import (
+    GRADE_WRITE_FUNCTIONS,
+    SERVICE_ACCOUNT_ITEMS,
+    is_grade_write_function,
+)
 from vektra_shared.lms import LmsSite
 
 pytestmark = pytest.mark.parametrize("branch", BRANCHES)
@@ -59,14 +60,20 @@ BUILTIN_ITEMS = (*SERVICE_ACCOUNT_ITEMS, *GENERIC_ITEMS)
 SITE_INFO = "core_webservice_get_site_info"
 ENV = {
     "VEKTRA_ASSESS_ENABLED": "true",
-    "VEKTRA_ASSESS_INGEST_ACCOUNT_USERNAME": "vektra_ingest_acct",
+    "VEKTRA_LMS_MOODLE_INGEST_ACCOUNT_USERNAME": "vektra_ingest_acct",
     "VEKTRA_ASSESS_UI_ORIGIN": "https://chat.vektra-ui.test",
     "VEKTRA_ASSESS_API_PUBLIC_ORIGIN": "https://api.vektra-api.test",
 }
 
 
 def settings(**env: str) -> VektraAssessSettings:
+    """The vertical's settings (the generic items: UI and API origins)."""
     return VektraAssessSettings(**{**ENV, **env})  # type: ignore[arg-type]
+
+
+def msettings(**env: str) -> MoodleSettings:
+    """The provider's settings (its items: the ingestion account)."""
+    return MoodleSettings(**{**ENV, **env})  # type: ignore[arg-type]
 
 
 def serve_files(replay: Replay, branch: str) -> None:
@@ -107,9 +114,10 @@ async def good(
     serve_files(replay, branch)
     replay.mutate = kw.pop("mutate", None)
     cfg = kw.pop("cfg", None) or settings()
+    mcfg = kw.pop("mcfg", None) or msettings()
     client = kw.pop("client", None) or make_client(replay)
     out = await evaluate(
-        MoodleLmsProvider(client, cfg, clock=lambda: now(branch)),
+        MoodleLmsProvider(client, mcfg, clock=lambda: now(branch)),
         lms(branch),
         cfg,
         kw.pop("pm", None) or derive_probe_manifest(manifest(branch)),
@@ -203,8 +211,8 @@ async def test_the_ingestion_account_fails_by_name_and_unset_is_unverifiable(
     )
     assert items["not_ingestion_account"][0] == "MISSING"
     # setting unset: not verifiable, and that is not OK
-    unset = VektraAssessSettings(**{k: v for k, v in ENV.items() if "INGEST" not in k})  # type: ignore[arg-type]
-    _r, items, _o = await good(branch, cfg=unset)
+    unset = MoodleSettings(**{k: v for k, v in ENV.items() if "INGEST" not in k})  # type: ignore[arg-type]
+    _r, items, _o = await good(branch, mcfg=unset)
     assert items["not_ingestion_account"] == ("UNVERIFIABLE", "ingest_username_unset")
 
 
@@ -302,7 +310,7 @@ async def test_a_revoked_token_fails_token_works_and_stops_the_calls(
 async def test_no_token_is_not_a_rejection(branch: str) -> None:
     replay = Replay(branch)
     client = MoodleWsClient(
-        VektraAssessSettings(VEKTRA_ASSESS_ENABLED="true"),  # type: ignore[arg-type]
+        MoodleSettings(),
         token_provider=lambda _s: None,
         transport=httpx.MockTransport(replay.handler),
         resolver=resolver(),
@@ -323,7 +331,7 @@ async def test_no_token_is_not_a_rejection(branch: str) -> None:
 
 async def test_a_slow_or_broken_site_is_unverifiable_not_revoked(branch: str) -> None:
     client = MoodleWsClient(
-        VektraAssessSettings(VEKTRA_ASSESS_ENABLED="true"),  # type: ignore[arg-type]
+        MoodleSettings(),
         token_provider=lambda _s: TOKEN,
         transport=httpx.MockTransport(lambda _r: httpx.Response(503)),
         resolver=resolver(),

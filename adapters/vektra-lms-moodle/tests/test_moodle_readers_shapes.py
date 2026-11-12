@@ -22,9 +22,9 @@ from assess_moodle_support import (
 )
 from structlog.testing import capture_logs
 
-from vektra_assess.moodle.client import MoodleWsClient, SiteRef
-from vektra_assess.moodle.domain import SubmissionFileRef
-from vektra_assess.moodle.readers import (
+from vektra_lms_moodle.client import MoodleWsClient, SiteRef
+from vektra_lms_moodle.domain import SubmissionFileRef
+from vektra_lms_moodle.readers import (
     fetch_submission_file,
     read_assign_close_inputs,
     read_assign_release,
@@ -46,7 +46,7 @@ from vektra_assess.moodle.readers import (
     read_user_flags,
     read_user_review_options,
 )
-from vektra_assess.moodle.result import Readable, Unreadable, UnreadableReason
+from vektra_lms_moodle.result import Readable, Unreadable, UnreadableReason
 
 Call = Callable[[MoodleWsClient, SiteRef, dict[str, Any], str], Awaitable[Any]]
 
@@ -531,7 +531,9 @@ async def test_fetch_enforces_the_file_size_cap_and_integrity(branch: str) -> No
     client, status, assignid, owner = await _listed(branch, replay)
     site = site_for(branch)
     biggest = max(status.files, key=lambda f: f.size)
-    capped = make_client(replay, VEKTRA_ASSESS_WS_MAX_FILE_BYTES=str(biggest.size - 1))
+    capped = make_client(
+        replay, VEKTRA_LMS_MOODLE_WS_MAX_FILE_BYTES=str(biggest.size - 1)
+    )
     res = await fetch_submission_file(
         capped, site, assignid, biggest, owner, status.submission_id
     )

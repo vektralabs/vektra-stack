@@ -11,7 +11,7 @@ import pytest
 
 _SPEC = importlib.util.spec_from_file_location(
     "assess_record_ws",
-    Path(__file__).resolve().parents[2] / "scripts" / "assess_record_ws.py",
+    Path(__file__).resolve().parents[1] / "scripts" / "record_ws.py",
 )
 assert _SPEC and _SPEC.loader
 rec = importlib.util.module_from_spec(_SPEC)

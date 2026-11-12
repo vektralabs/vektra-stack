@@ -18,10 +18,10 @@ import html5lib
 import pytest
 
 from vektra_assess.context.qtypes import EXTRACTION_KINDS
-from vektra_assess.moodle.provider import MOODLE_REVIEW_PROFILE, QUESTION_KINDS
 from vektra_assess.parser_protocol import Extracted, FileStatus, ReviewProfile
 from vektra_assess.parser_sidecar.child import run
 from vektra_assess.parser_sidecar.html_review import extract_review_block
+from vektra_lms_moodle.provider import MOODLE_REVIEW_PROFILE, QUESTION_KINDS
 
 #: the Moodle provider's profile, in the wire form the sidecar receives (ADR-0033 D4): the
 #: oracle below proves THIS profile, passed explicitly, removes what Moodle hides

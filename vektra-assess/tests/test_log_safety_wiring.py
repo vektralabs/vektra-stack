@@ -167,11 +167,9 @@ def test_the_guard_catches_a_root_or_lookalike_stdlib_logger(
 
 
 def test_real_module_loggers_are_filtered(canary_log_capture) -> None:  # type: ignore[no-untyped-def]
-    from vektra_assess.moodle import client  # a module that logs through structlog
+    from vektra_assess.setup import runner  # a module that logs through structlog
 
-    client.log.warning(
-        "assess_probe", wsfunction="core_webservice_get_site_info", body=CANARY
-    )
+    structlog.get_logger(runner.__name__).warning("assess_probe", body=CANARY)
     logging.getLogger("vektra_assess.worker").info(
         "assess_tick", extra={"payload": CANARY}
     )

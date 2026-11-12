@@ -10,8 +10,8 @@ from __future__ import annotations
 
 import pytest
 from assess_moodle_support import BRANCHES, use_live
-from test_idor import idor_matrix_on_moodle as run_matrix
 
+from .test_idor_moodle import idor_matrix_on_moodle as run_matrix
 from .test_moodle_live import _load
 
 pytestmark = [

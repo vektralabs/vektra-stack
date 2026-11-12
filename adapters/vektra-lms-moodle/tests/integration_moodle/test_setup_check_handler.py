@@ -18,9 +18,9 @@ from assess_moodle_support import Replay, make_provider, now
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from vektra_assess.jobs import JobKind
-from vektra_assess.moodle.setup_check import SERVICE_ACCOUNT_ITEMS
 from vektra_assess.worker import setup_check as handler_mod
 from vektra_assess.worker.runner import JobContext
+from vektra_lms_moodle.setup_check import SERVICE_ACCOUNT_ITEMS
 
 from .test_setup_check_run import (
     ENV,

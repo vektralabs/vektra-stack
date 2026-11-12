@@ -1,7 +1,7 @@
 """Hermetic Moodle test support: replay the recorded WS responses through httpx.MockTransport.
 
 The recordings (``tests/fixtures/moodle_ws/<branch>/``) come from the seeded dev envs
-(``scripts/assess_record_ws.py``). A request with no recording is a test failure
+(``scripts/record_ws.py``). A request with no recording is a test failure
 (``Replay.unmatched``), never a silent pass.
 """
 
@@ -20,13 +20,14 @@ from urllib.parse import parse_qsl
 
 import httpx
 
-from vektra_assess.config import VektraAssessSettings
 from vektra_assess.context.capture.bound import SiteReaders
-from vektra_assess.moodle.client import MoodleWsClient, SiteRef, flatten_params
-from vektra_assess.moodle.provider import MoodleLmsProvider
+from vektra_lms_moodle.client import MoodleWsClient, SiteRef, flatten_params
+from vektra_lms_moodle.config import MoodleSettings
+from vektra_lms_moodle.provider import MoodleLmsProvider
 from vektra_shared.lms import LmsSite
 
 FIXTURES = Path(__file__).parent / "fixtures" / "moodle_ws"
+SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
 BRANCHES = ("4.3", "5.2")
 TOKEN = "0123456789abcdef0123456789abcdef"
 BASE_URL = "https://moodle.example.org"
@@ -176,13 +177,12 @@ class RecordingClient(MoodleWsClient):
 def make_client(replay: Replay, **env: str) -> MoodleWsClient:
     if replay.live:
         live = _LIVE[replay.branch]
-        settings = VektraAssessSettings(  # type: ignore[arg-type]
+        settings = MoodleSettings(  # type: ignore[arg-type]
             **{
-                "VEKTRA_ASSESS_ENABLED": "true",
                 "VEKTRA_ENV": "development",
-                "VEKTRA_ASSESS_MOODLE_ALLOW_HTTP": "true",
-                "VEKTRA_ASSESS_MOODLE_ALLOWED_CIDRS": "127.0.0.0/8,::1/128",
-                "VEKTRA_ASSESS_WS_RPS": "1000",
+                "VEKTRA_LMS_MOODLE_ALLOW_HTTP": "true",
+                "VEKTRA_LMS_MOODLE_ALLOWED_CIDRS": "127.0.0.0/8,::1/128",
+                "VEKTRA_LMS_MOODLE_WS_RPS": "1000",
                 **env,
             }
         )
@@ -194,8 +194,8 @@ def make_client(replay: Replay, **env: str) -> MoodleWsClient:
             calls=replay.calls,
             resolver=resolver("127.0.0.1"),
         )
-    settings = VektraAssessSettings(  # type: ignore[arg-type]
-        **{"VEKTRA_ASSESS_ENABLED": "true", "VEKTRA_ASSESS_WS_RPS": "1000", **env}
+    settings = MoodleSettings(  # type: ignore[arg-type]
+        **{"VEKTRA_LMS_MOODLE_WS_RPS": "1000", **env}
     )
     return MoodleWsClient(
         settings,
@@ -222,3 +222,19 @@ def lms_site(branch: str) -> LmsSite:
 def site_readers(replay: Replay, **env: str) -> SiteReaders:
     """``CaptureReaders`` over the recordings: the Moodle provider bound to the branch's site."""
     return SiteReaders(make_provider(replay, **env), lms_site(replay.branch))
+
+
+def load_script(name: str) -> Any:
+    """A module of the adapter's ``scripts/`` (not a package: the operator tools run with the
+    platform installed beside the provider), loaded once per process under its own name."""
+    import importlib.util
+    import sys
+
+    if name in sys.modules:
+        return sys.modules[name]
+    spec = importlib.util.spec_from_file_location(name, SCRIPTS / f"{name}.py")
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    return module

@@ -2,12 +2,12 @@ from __future__ import annotations
 
 import pytest
 
-from vektra_assess.moodle.errors import (
+from vektra_lms_moodle.errors import (
     error_code,
     is_error_envelope,
     unreadable_from_envelope,
 )
-from vektra_assess.moodle.result import (
+from vektra_lms_moodle.result import (
     Readable,
     Reading,
     Unreadable,
@@ -75,3 +75,14 @@ def test_unknown_or_hostile_errorcodes_fail_closed_and_are_sanitised():
         unreadable_from_envelope({"exception": "e", "errorcode": "invalidtoken"}).reason
         is UnreadableReason.ACCESS_EXCEPTION
     )
+
+
+def test_the_provider_re_export_is_the_same_object() -> None:
+    """The readers' ``result`` module re-exports the shared outcome types: one class, not two,
+    or an isinstance check across the boundary would silently fail (moved from the vertical's
+    ``test_fake_lms.py``)."""
+    from vektra_lms_moodle import result
+    from vektra_shared import lms
+
+    assert result.Readable is lms.Readable and result.Unreadable is lms.Unreadable
+    assert result.UnreadableReason is lms.UnreadableReason

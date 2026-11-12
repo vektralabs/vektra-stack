@@ -29,12 +29,12 @@ from assess_moodle_support import (
 )
 
 from vektra_assess.capabilities import FLAGS
-from vektra_assess.config import VektraAssessSettings
-from vektra_assess.moodle import domain as m
-from vektra_assess.moodle.breaker import BreakerRegistry
-from vektra_assess.moodle.client import MoodleWsClient
-from vektra_assess.moodle.probes import derive_probe_manifest
-from vektra_assess.moodle.provider import (
+from vektra_lms_moodle import domain as m
+from vektra_lms_moodle.breaker import BreakerRegistry
+from vektra_lms_moodle.client import MoodleWsClient
+from vektra_lms_moodle.config import MoodleSettings
+from vektra_lms_moodle.probes import derive_probe_manifest
+from vektra_lms_moodle.provider import (
     FINAL_STATES,
     MOODLE_REVIEW_PROFILE,
     NO_MARK_FINAL_STATES,
@@ -61,7 +61,7 @@ from vektra_shared.lms import (
 from vektra_testkit.lms_conformance import kit
 from vektra_testkit.lms_conformance.suite import LmsConformanceSuite
 
-ENV = {"VEKTRA_ASSESS_ENABLED": "true", "VEKTRA_ASSESS_WS_RPS": "1000"}
+ENV = {"VEKTRA_ASSESS_ENABLED": "true", "VEKTRA_LMS_MOODLE_WS_RPS": "1000"}
 #: LMS-side content with no slot in any neutral type: general feedback, overall feedback,
 #: marker notes, unreleased comments, the grader's essay comment (only inside the review HTML).
 #: Rubric texts are left out on purpose: ``RubricDefinition`` carries them by design, and the
@@ -117,7 +117,7 @@ _REPLAY_OF: dict[int, int] = {}
 
 
 def _client(replay: Replay, mode: kit.TransportMode) -> MoodleWsClient:
-    settings = VektraAssessSettings(**ENV)  # type: ignore[arg-type]
+    settings = MoodleSettings(**ENV)  # type: ignore[arg-type]
     # only the breaker mode trips it: in the other modes every call must reach the transport
     breakers = BreakerRegistry(
         1 if mode is kit.TransportMode.BREAKER_OPEN else 1_000_000, 3600.0
@@ -361,16 +361,15 @@ async def test_reviews_carry_the_moodle_profile(branch: str) -> None:
 
 
 def test_startup_refuses_plain_http_outside_development() -> None:
-    allow = VektraAssessSettings(  # type: ignore[arg-type]
-        VEKTRA_ASSESS_ENABLED="true",
+    allow = MoodleSettings(  # type: ignore[arg-type]
         VEKTRA_ENV="development",
-        VEKTRA_ASSESS_MOODLE_ALLOW_HTTP="true",
+        VEKTRA_LMS_MOODLE_ALLOW_HTTP="true",
     )
     p = make_provider(Replay("4.3"))
     p_http = MoodleLmsProvider(p.client, allow)
     assert p_http.startup_problems(True) == ()
     (problem,) = p_http.startup_problems(False)
-    assert problem.setting == "VEKTRA_ASSESS_MOODLE_ALLOW_HTTP"
+    assert problem.setting == "VEKTRA_LMS_MOODLE_ALLOW_HTTP"
     assert "VEKTRA_ENV=development" in problem.detail
     assert p.startup_problems(False) == ()
 

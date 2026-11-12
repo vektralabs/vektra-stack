@@ -148,9 +148,9 @@ def _imports(path: Path) -> set[str]:
     return names
 
 
-def test_db_only_modules_do_not_import_httpx_or_the_moodle_package():
+def test_db_only_modules_do_not_import_httpx_or_an_lms_provider():
     """capabilities and the API never talk to the LMS (plan group D); import-linter contract
-    (c) covers vektra_assess.moodle, this covers the external httpx package."""
+    (c) forbids every LMS provider package, this covers the external httpx package too."""
     files = [
         SRC / "capabilities.py",
         *sorted((SRC / "api").rglob("*.py")),
@@ -159,7 +159,7 @@ def test_db_only_modules_do_not_import_httpx_or_the_moodle_package():
         bad = {
             m
             for m in _imports(f)
-            if m.split(".")[0] == "httpx" or m.startswith("vektra_assess.moodle")
+            if m.split(".")[0] == "httpx" or m.startswith("vektra_lms_")
         }
         assert not bad, f"{f.name} imports {sorted(bad)}"
 

@@ -27,9 +27,9 @@ from structlog.testing import capture_logs
 from vektra_assess import setup as sc
 from vektra_assess.capabilities import FLAGS, NotReady, Ready, site_readiness
 from vektra_assess.config import VektraAssessSettings
-from vektra_assess.moodle.probes import derive_probe_manifest
-from vektra_assess.moodle.setup_check import SERVICE_ACCOUNT_ITEMS
 from vektra_assess.setup import persist_matrix, runner
+from vektra_lms_moodle.probes import derive_probe_manifest
+from vektra_lms_moodle.setup_check import SERVICE_ACCOUNT_ITEMS
 from vektra_shared.lms import CapabilityResult as FlagResult
 
 from .conftest import Pg
@@ -39,7 +39,7 @@ pytestmark = pytest.mark.integration
 BRANCH = "5.2"
 ENV = {
     "VEKTRA_ASSESS_ENABLED": "true",
-    "VEKTRA_ASSESS_INGEST_ACCOUNT_USERNAME": "vektra_ingest_acct",
+    "VEKTRA_LMS_MOODLE_INGEST_ACCOUNT_USERNAME": "vektra_ingest_acct",
     "VEKTRA_ASSESS_UI_ORIGIN": "https://chat.vektra-ui.test",
     "VEKTRA_ASSESS_API_PUBLIC_ORIGIN": "https://api.vektra-api.test",
 }

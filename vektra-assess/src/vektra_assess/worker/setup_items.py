@@ -1,7 +1,7 @@
 """Worker-side REQ-079 setup-check items that read the database (coordinator decisions,
-2026-11-08, plan assess-moodle-ws Notes).
+2026-11-08, Notes of the LMS web-service plan (20261101-154950)).
 
-- ``smtp_probe`` (plan 10 registers it, moodle-ws plan Integration Notes): judged from the row
+- ``smtp_probe`` (plan 10 registers it, Integration Notes of the web-service plan): judged from the row
   the ``smtp_probe`` tick upserts into ``assess_heartbeat`` (component ``smtp``, details
   ``{state, ok, error_class, smtp_code}``, ``beat_at`` = check time). OK when the row is there,
   ``ok`` is true and ``beat_at`` is at most ``SMTP_PROBE_MAX_AGE_S`` old (3 tick intervals: one

@@ -13,7 +13,9 @@ failure, applied when the provider raises:
 - ``aclose``: the error is logged and dropped (shutdown goes on);
 - ``setup_items`` / ``required_secrets``: a declaration that cannot be read is an invalid one,
   which the setup check and the composition both refuse; an unreadable ``name`` is
-  ``<unnamed>``, which matches no configured provider.
+  ``<unnamed>``, which matches no configured provider;
+- ``call_deadline_s``: an unreadable or non-numeric deadline is ``nan``, which the composition
+  refuses at startup (a budget cannot be derived from it).
 
 Only the Protocol is reachable through the wrapper: there is no forwarding of other attributes.
 
@@ -52,6 +54,8 @@ log = structlog.get_logger(__name__)
 INVALID_DECLARATION = "!unreadable"
 #: what an unreadable provider name becomes (it never matches a configured name)
 UNNAMED = "<unnamed>"
+#: what an unreadable call deadline becomes (the composition refuses a non-finite one)
+INVALID_DEADLINE = float("nan")
 
 #: the members that return a ``Reading``
 READ_MEMBERS: tuple[str, ...] = (
@@ -78,6 +82,7 @@ OTHER_MEMBERS: tuple[str, ...] = (
     "name",
     "setup_items",
     "required_secrets",
+    "call_deadline_s",
     "startup_problems",
     "aclose",
     "service_account_check",
@@ -150,6 +155,14 @@ class GuardedLmsProvider:
     @property
     def required_secrets(self) -> tuple[str, ...]:
         return self._declared("required_secrets")
+
+    @property
+    def call_deadline_s(self) -> float:
+        try:
+            return float(self.inner.call_deadline_s)
+        except Exception as exc:
+            _failed("call_deadline_s", exc)
+            return INVALID_DEADLINE
 
     def startup_problems(self, development: bool) -> tuple[StartupProblem, ...]:
         try:

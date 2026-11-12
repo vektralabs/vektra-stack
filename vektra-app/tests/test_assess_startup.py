@@ -806,3 +806,36 @@ async def test_the_metrics_refresher_feeds_the_process_collector() -> None:
         await assess_wiring.stop_metrics_refresher(app)
         # review #10: awaited, not only cancelled, before the engine is disposed
         assert app.state.assess_metrics_task.done()
+
+
+@pytest.mark.parametrize("enabled", [False, True])
+@pytest.mark.parametrize(
+    "carrier", ["ASSESS_STUB_LMS_TOKENS", "VEKTRA_ASSESS_STUB_LMS_TOKENS_FILE"]
+)
+async def test_the_api_refuses_an_env_var_carrying_a_providers_secret(
+    secrets_dir: Path, monkeypatch: pytest.MonkeyPatch, enabled: bool, carrier: str
+) -> None:
+    """Review of #207, finding 1 (ARCH-066): the names come from the installed providers'
+    entry points (``REQUIRED_SECRETS``), read without building any provider; assess enabled
+    or not, the API refuses a variable that carries one."""
+    import sys
+
+    tests = str(Path(__file__).resolve().parent)
+    if tests not in sys.path:
+        sys.path.insert(0, tests)
+    import lms_stub
+
+    lms_stub.install(monkeypatch.setattr)
+    lms_stub.StubLmsProvider.built = []
+    if enabled:
+        _api_keys(secrets_dir)
+        monkeypatch.setenv("VEKTRA_ASSESS_ENABLED", "true")
+    monkeypatch.setenv(carrier, "a-token")
+    with pytest.raises(StartupValidationError) as exc:
+        await assess_wiring.step_12_assess_check(_state_app(), MAIN_DSN)  # type: ignore[arg-type]
+    assert (
+        f"{lms_stub.STUB_SECRET}: forbidden for api but carried by env var(s) ['{carrier}']"
+        in exc.value.detail
+    )
+    assert "a-token" not in exc.value.detail
+    assert lms_stub.StubLmsProvider.built == []

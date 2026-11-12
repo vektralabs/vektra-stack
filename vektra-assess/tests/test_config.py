@@ -217,15 +217,15 @@ def test_a_value_out_of_bounds_names_the_variable_in_the_remediation(
 ) -> None:
     from vektra_assess.config import explain_settings_error
 
-    monkeypatch.setenv("VEKTRA_ASSESS_BREAKER_THRESHOLD", "100000")
+    monkeypatch.setenv("VEKTRA_ASSESS_WORKER_POOL_SIZE", "100000")
     monkeypatch.setenv("VEKTRA_ASSESS_API_POOL_SIZE", "0")
     with pytest.raises(ValidationError) as exc:
         VektraAssessSettings()
     detail, remediation = explain_settings_error(exc.value)
-    assert "VEKTRA_ASSESS_BREAKER_THRESHOLD" in detail
+    assert "VEKTRA_ASSESS_WORKER_POOL_SIZE" in detail
     assert "VEKTRA_ASSESS_API_POOL_SIZE" in detail
     assert "100000" not in detail  # the bound is named, the value is not echoed
-    assert "VEKTRA_ASSESS_BREAKER_THRESHOLD" in remediation
+    assert "VEKTRA_ASSESS_WORKER_POOL_SIZE" in remediation
     assert "docs/reference/configuration.md" in remediation
 
 

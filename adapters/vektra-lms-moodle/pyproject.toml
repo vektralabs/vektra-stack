@@ -1,0 +1,33 @@
+# The Moodle LMS provider (ADR-0033). Staged here, outside the platform, until phase 2b moves it to
+# its home repository: NOT a uv workspace member, not in the default image, and no platform package
+# imports it (the guard and import-linter say so). It depends on vektra-shared only; the platform
+# loads it by name through the entry point below (VEKTRA_ASSESS_LMS_PROVIDER=moodle).
+#
+# Development: `uv sync --group lms-moodle` at the repository root installs it (root pyproject);
+# `make test-lms-moodle` runs its tests and the conformance kit on its recordings.
+[project]
+name = "vektra-lms-moodle"
+version = "0.8.0"
+description = "Moodle LMS provider for the Vektra assessment vertical (LmsProvider, ADR-0033)"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "vektra-shared",
+    "httpx>=0.27",
+    "pydantic>=2,<3",
+    "pydantic-settings>=2.0",
+    "structlog>=24.0",
+]
+
+[project.entry-points."vektra.lms_providers"]
+moodle = "vektra_lms_moodle.provider:build_provider"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/vektra_lms_moodle"]
+
+[tool.uv.sources]
+vektra-shared = { path = "../../vektra-shared", editable = true }

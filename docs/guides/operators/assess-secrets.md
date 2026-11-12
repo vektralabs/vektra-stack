@@ -26,7 +26,7 @@ both accepted.
 | `assess_teacher_config_public` | X25519 public | required | allowed | forbidden | the API seals the solution, the pasted rubric and the recipients; it can write them, never read them |
 | `assess_teacher_config_private` | X25519 private | forbidden | required | forbidden | only the worker opens the sealed teacher configuration |
 | `assess_kek` | 32-byte symmetric | forbidden | required | forbidden | wraps every session DEK (snapshot and turns); the API has no path to it |
-| `assess_ws_tokens` | credentials (JSON object) | forbidden | required | forbidden | the LMS web-service tokens: only the worker reads the LMS |
+| `assess_ws_tokens` | credentials (JSON object) | forbidden | required | forbidden | the Moodle provider's web-service tokens: only the worker reads the LMS. Not in `KEY_MATRIX`: the provider declares it (`required_secrets`, ADR-0033 D5) and the worker requires and loads it |
 | `assess_smtp` | credentials (JSON object) | forbidden | required | forbidden | the relay account: only the worker sends mail |
 | `assess_db_api_password` | password (one line) | required | forbidden | forbidden | the API's database role |
 | `assess_db_worker_password` | password (one line) | forbidden | required | forbidden | the worker's database role |
@@ -36,10 +36,12 @@ Additional rules applied by `enforce_key_matrix`:
 - The parser holds nothing: its secrets directory must be absent or empty, and no `VEKTRA_*`
   variable whose name contains `DATABASE_URL`, `DSN`, `PASSWORD`, `SECRET` or `TOKEN` may be set
   (`VEKTRA_ASSESS_SECRETS_DIR` is exempt: it is a path).
-- Any file named `assess_ws_token*` other than `assess_ws_tokens` (a per-site token file) is
-  forbidden for the API and the parser.
+- Any `assess_*` file the matrix does not grant the role (the LMS provider's credentials, a
+  per-site token file, whatever their name) is forbidden for the API and the parser: they load
+  no provider, so they cannot know the names it declares, and a provider's secret names must
+  therefore start with `assess_`.
 - The API applies the forbidden column even with `VEKTRA_ASSESS_ENABLED=false`: an API container
-  that holds the KEK or the WS tokens is refused whether or not the feature is on.
+  that holds the KEK or the LMS credentials is refused whether or not the feature is on.
 - An environment variable "carries" a secret when its name, upper-cased, is exactly the secret
   name, `VEKTRA_` plus it, or either of those with `_FILE` appended (for example
   `ASSESS_KEK`, `VEKTRA_ASSESS_KEK`, `ASSESS_KEK_FILE`). Substrings do not count.
@@ -75,7 +77,7 @@ recreate the service that holds it
 
 ```bash
 make assess-keys
-# = uv run python -m vektra_assess.keys generate --out ./secrets/assess
+# = uv run python -m vektra_assess.keys generate --out ./secrets/assess --provider-secret assess_ws_tokens
 ```
 
 It writes all eleven files with mode `0400`: random symmetric keys, matching X25519 pairs for the

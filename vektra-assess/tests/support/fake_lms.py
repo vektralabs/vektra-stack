@@ -142,8 +142,13 @@ class FakeLmsProvider:
         secret: str = "fake-transport-credential",
         problems: Sequence[StartupProblem] = (),
         required_secrets: Sequence[str] = (),
+        call_deadline_s: float = 30.0,
+        development: bool = False,
     ) -> None:
         self.world = world if world is not None else default_world()
+        self._call_deadline_s = call_deadline_s
+        #: the composition root's resolved flag, as an entry-point factory receives it
+        self.development = development
         self._name = name
         self._setup_items = tuple(setup_items)
         self.secret = secret
@@ -247,6 +252,10 @@ class FakeLmsProvider:
     @property
     def required_secrets(self) -> tuple[str, ...]:
         return self._required_secrets
+
+    @property
+    def call_deadline_s(self) -> float:
+        return self._call_deadline_s
 
     def startup_problems(self, development: bool) -> tuple[StartupProblem, ...]:
         self.calls.append(FakeCall("startup_problems", {"development": development}))

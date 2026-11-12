@@ -15,9 +15,10 @@ import structlog
 
 from vektra_shared.testing import hermetic_env  # noqa: F401  (autouse fixture)
 
-# Test modules import helper modules that sit beside them (assess_moodle_support, the reader
-# tests reused by the live tests). Under `pytest vektra-*/tests` with --import-mode=importlib
-# this directory is not on sys.path, so put it there once, for every invocation style.
+# Test modules import helper modules that sit beside them (support/, and test modules reused by
+# others; the Moodle provider's joint suites in adapters/ import them too). Under
+# `pytest vektra-*/tests` with --import-mode=importlib this directory is not on sys.path, so put
+# it there once, for every invocation style.
 _HERE = str(Path(__file__).resolve().parent)
 if _HERE not in sys.path:
     sys.path.insert(0, _HERE)
@@ -28,16 +29,6 @@ from vektra_assess import LOGGER_PREFIX  # noqa: E402
 from vektra_shared.log_safety import register_strict_logger_prefix  # noqa: E402
 
 register_strict_logger_prefix(LOGGER_PREFIX)
-
-
-@pytest.fixture(scope="session", autouse=True)
-def _preload_recorded_manifests() -> None:
-    """Read both recorded manifests once, synchronously, before any test runs: the first
-    ``manifest()``/``site_for()`` call may come from an async path, which must not do file
-    I/O on the event loop (CodeRabbit 4500701652)."""
-    from assess_moodle_support import preload_manifests
-
-    preload_manifests()
 
 
 @pytest.fixture(autouse=True)

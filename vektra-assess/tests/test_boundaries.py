@@ -1,10 +1,11 @@
 """Module boundaries of vektra_assess (plan assess-foundations 9.1, ARCH-073).
 
-- the contract (c) source lists cover every assess sub-package/module (ADR-0033 D2: no
-  assess module imports the Moodle provider; only the worker imports parser_client and the
-  setup runner), so a new one cannot slip outside them;
-- only the worker, capture, the setup runner and the provider itself name ``LmsProvider``
-  (AST scan, plan 2a-2a.9);
+- the contract (c) covers every platform package (ADR-0033 D2, D6: none imports an LMS
+  provider), and the (c-parser) and (c-setup) source lists cover every assess
+  sub-package/module (only the worker imports parser_client and the setup runner), so a new
+  one cannot slip outside them;
+- only the worker, capture and the setup runner name ``LmsProvider`` (AST scan, plan
+  2a-2a.9);
 - (d) ``ContextBundle`` is constructed only in ``vektra_assess.context`` (AST scan;
   import-linter cannot express it);
 - canaries: a forbidden import planted in a temporary copy of the sources makes
@@ -25,7 +26,7 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
 PKG = ROOT / "vektra-assess" / "src" / "vektra_assess"
-CONTRACT_C = "no vektra_assess module imports the Moodle provider"
+CONTRACT_C = "no platform package imports an LMS provider"
 CONTRACT_PARSER_CLIENT = "only vektra_assess.worker imports parser_client"
 CONTRACT_SETUP = "only vektra_assess.worker imports vektra_assess.setup"
 
@@ -50,9 +51,8 @@ def _children() -> set[str]:
 @pytest.mark.parametrize(
     ("contract", "exempt", "forbidden"),
     [
-        (CONTRACT_C, {"moodle"}, {"moodle"}),
-        (CONTRACT_PARSER_CLIENT, {"worker", "moodle"}, {"worker.parser_client"}),
-        (CONTRACT_SETUP, {"worker", "moodle", "setup"}, {"setup"}),
+        (CONTRACT_PARSER_CLIENT, {"worker"}, {"worker.parser_client"}),
+        (CONTRACT_SETUP, {"worker", "setup"}, {"setup"}),
     ],
 )
 def test_contract_c_covers_every_child(
@@ -73,14 +73,31 @@ def test_contract_c_covers_every_child(
     } == forbidden
 
 
+def test_contract_c_covers_every_platform_package() -> None:
+    """ADR-0033 D6, plan 2a-4b.11: every root package of the import graph is a source of (c)
+    (a new component cannot slip outside it), and its forbidden list is exactly the provider
+    packages staged in ``adapters/`` (one per adapter: import-linter has no root wildcard)."""
+    cfg = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    roots = set(cfg["tool"]["importlinter"]["root_packages"])
+    contract = _contracts()[CONTRACT_C]
+    assert set(contract["source_modules"]) == roots
+    adapters = {
+        p.name
+        for p in (ROOT / "adapters").glob("*/src/*")
+        if (p / "__init__.py").is_file()
+    }
+    assert adapters, "no adapter package found: the predicate is dead"
+    assert all(a.startswith("vektra_lms_") for a in adapters), adapters
+    assert set(contract["forbidden_modules"]) == adapters
+
+
 # --- who holds an LmsProvider (plan 2a-2a.9) ---------------------------------
 #
 # Only the worker (the composition, the start source, the setup-check handler), capture (the
-# site-bound readers) and the setup runner reach the provider, besides the Moodle provider
-# itself. ``setup/`` is a deviation from the plan's "worker and context.capture": the generic
+# site-bound readers) and the setup runner reach the provider. ``setup/`` is a deviation from the plan's "worker and context.capture": the generic
 # runner (ADR-0033 D3) calls the provider's site_info, service_account_check and
 # probe_capabilities, and contract (c-setup) keeps it out of the API.
-LMS_PROVIDER_HOLDERS = ("worker/", "context/capture/", "setup/", "moodle/")
+LMS_PROVIDER_HOLDERS = ("worker/", "context/capture/", "setup/")
 
 
 def _lms_provider_refs(root: Path) -> list[str]:
@@ -247,12 +264,11 @@ def _lint_imports(dst: Path, srcs: list[Path]) -> subprocess.CompletedProcess[st
             "import vektra_core\n",
             "vektra_assess must not import from other vektra components",
         ),
-        ("api/_canary.py", "import vektra_assess.moodle\n", CONTRACT_C),
-        # ADR-0033 D2: no assess module imports the Moodle provider, the worker included (it
+        ("api/_canary.py", "import vektra_lms_moodle\n", CONTRACT_C),
+        # ADR-0033 D2, D6: no platform module imports an LMS provider, the worker included (it
         # loads the provider by entry point); nothing but the worker may import capture
-        ("context/_canary.py", "import vektra_assess.moodle\n", CONTRACT_C),
-        ("context/capture/_canary.py", "import vektra_assess.moodle\n", CONTRACT_C),
-        ("worker/_canary.py", "import vektra_assess.moodle.provider\n", CONTRACT_C),
+        ("context/capture/_canary.py", "import vektra_lms_moodle.client\n", CONTRACT_C),
+        ("worker/_canary.py", "import vektra_lms_moodle.provider\n", CONTRACT_C),
         ("api/_canary.py", "import vektra_assess.setup\n", CONTRACT_SETUP),
         (
             "context/_canary.py",

@@ -17,7 +17,6 @@ EXPECTED_SUBPACKAGES = {
     "api",
     "privacy",  # plan assess-privacy-retention: config, purge, erasure
     "worker",
-    "moodle",
     "parser_sidecar",
     "context",
     "llm",
@@ -81,7 +80,7 @@ def test_subpackage_init_imports_no_sibling() -> None:
 
 def test_sibling_detector_is_not_vacuous(tmp_path: Path) -> None:
     probe = tmp_path / "probe.py"
-    probe.write_text("from vektra_assess.moodle import x\nfrom ..crypto import y\n")
+    probe.write_text("from vektra_assess.worker import x\nfrom ..crypto import y\n")
     imported = _imported_modules(probe)
-    assert "vektra_assess.moodle" in imported
+    assert "vektra_assess.worker" in imported
     assert "..crypto" in imported

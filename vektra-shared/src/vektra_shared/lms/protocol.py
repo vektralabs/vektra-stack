@@ -91,9 +91,32 @@ class StartupProblem:
     remediation: str
 
 
+class ProviderConfigurationError(Exception):
+    """Raised by a provider's entry-point factory when its own settings are invalid. The loader
+    surfaces ``detail`` and ``remediation`` as they are, so they name the variables and the rule
+    they broke, never a value (``vektra_shared.settings_errors``)."""
+
+    def __init__(self, detail: str, remediation: str) -> None:
+        super().__init__(detail)
+        self.detail = detail
+        self.remediation = remediation
+
+
+#: the attribute of a provider's entry-point object that lists the secrets the provider will
+#: declare (``LmsProvider.required_secrets``), readable without building it: the API and the
+#: parser refuse an environment variable carrying one of them (ARCH-066)
+REQUIRED_SECRETS_ATTRIBUTE = "REQUIRED_SECRETS"
+#: the bound of ``LmsProvider.call_deadline_s``
+MAX_CALL_DEADLINE_S = 600.0
+
+
 @runtime_checkable
 class LmsProvider(Protocol):
-    """Read access to one LMS product, for every site of a deployment (24 members)."""
+    """Read access to one LMS product, for every site of a deployment (25 members).
+
+    The entry point is a factory called with one keyword argument, ``development`` (the
+    composition root's resolved flag), and carrying ``REQUIRED_SECRETS`` (the value
+    ``required_secrets`` returns), so the secret names are known before anything is built."""
 
     @property
     def name(self) -> str:
@@ -109,6 +132,12 @@ class LmsProvider(Protocol):
     def required_secrets(self) -> tuple[str, ...]:
         """The worker secrets (key-matrix names) the provider reads, its LMS credentials among
         them: the composition binds the provider's jobs only when every one was loaded."""
+        ...
+
+    @property
+    def call_deadline_s(self) -> float:
+        """The longest one LMS call may take, transport included (``0 < x <= 600``): the
+        vertical budgets its jobs that make sequential calls from it."""
         ...
 
     # --- lifecycle --------------------------------------------------------------------------

@@ -17,12 +17,19 @@ import pytest
 from vektra_app import assess_parser, assess_worker
 from vektra_shared.startup import StartupValidationError
 
+_TESTS = str(Path(__file__).resolve().parent)
+if _TESTS not in sys.path:
+    sys.path.insert(0, _TESTS)
+import lms_stub  # noqa: E402
+
 
 @pytest.fixture(autouse=True)
 def _lms_provider(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The worker loads its LMS provider at startup (ADR-0033 D2): name the installed one, so
-    every check below reaches the step it is about. Tests of the provider step unset it."""
-    monkeypatch.setenv("VEKTRA_ASSESS_LMS_PROVIDER", "moodle")
+    """The worker loads its LMS provider at startup (ADR-0033 D2). The platform installs none
+    (ADR-0033 D6), so the stub of ``lms_stub`` is offered as the installed group and named here,
+    and every check below reaches the step it is about. Tests of the provider step unset it."""
+    lms_stub.install(monkeypatch.setattr)
+    monkeypatch.setenv("VEKTRA_ASSESS_LMS_PROVIDER", lms_stub.NAME)
 
 
 def _run_module(module: str, env: dict[str, str]) -> subprocess.CompletedProcess[str]:
@@ -46,6 +53,7 @@ def _worker_keys(d: Path, extra: set[str] = frozenset()) -> Path:  # type: ignor
         if spec.worker is Need.REQUIRED or name in extra:
             (d / name).write_bytes((full / name).read_bytes())
             os.chmod(d / name, 0o400)
+    lms_stub.write_secret(d)  # the secret the worker's provider declares (2a-4b.13)
     return d
 
 
@@ -248,7 +256,7 @@ def test_parser_ceiling_refuses_forbidden_and_stray_modules() -> None:
             assess_parser.assert_import_ceiling(["vektra_assess.parser_protocol", bad])
     for stray in (
         "vektra_assess.worker",
-        "vektra_assess.moodle.client",
+        "vektra_lms_moodle.client",
         "vektra_assess.crypto",
     ):
         with pytest.raises(StartupValidationError, match="forbidden modules"):
@@ -355,7 +363,10 @@ async def test_worker_checks_against_postgres(
         # In a fresh process: the import ceiling is process-wide, and this pytest
         # session has long since imported vektra_index through other tests.
         code = (
-            "import asyncio\n"
+            "import asyncio, sys\n"
+            f"sys.path.insert(0, {_TESTS!r})\n"
+            "import lms_stub\n"
+            "lms_stub.install()\n"
             "from sqlalchemy import text\n"
             "import vektra_app.assess_worker as w\n"
             "async def m():\n"
@@ -368,7 +379,7 @@ async def test_worker_checks_against_postgres(
         env = {
             **{k: v for k, v in os.environ.items() if not k.startswith("VEKTRA_")},
             "VEKTRA_ASSESS_ENABLED": "true",
-            "VEKTRA_ASSESS_LMS_PROVIDER": "moodle",  # loaded at startup (ADR-0033 D2)
+            "VEKTRA_ASSESS_LMS_PROVIDER": lms_stub.NAME,  # loaded at startup (ADR-0033 D2)
             "VEKTRA_ASSESS_SECRETS_DIR": str(d),
             "VEKTRA_DATABASE_URL": admin,
             "VEKTRA_ASSESS_WORKER_DATABASE_URL": worker_url.render_as_string(
@@ -495,18 +506,6 @@ def test_no_generic_worker_target(tmp_path: Path) -> None:
     code, out = _entry(tmp_path, "worker")
     assert code == 1
     assert "assess-worker, assess-parser" in out
-
-
-async def test_worker_refuses_plain_http_outside_development(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    d = _worker_keys(tmp_path / "w")
-    monkeypatch.setenv("VEKTRA_ASSESS_ENABLED", "true")
-    monkeypatch.setenv("VEKTRA_ASSESS_SECRETS_DIR", str(d))
-    monkeypatch.setenv("VEKTRA_ASSESS_MOODLE_ALLOW_HTTP", "true")
-    monkeypatch.setenv("VEKTRA_ENV", "production")
-    with pytest.raises(StartupValidationError, match="only honoured with"):
-        await assess_worker.run_checks()
 
 
 # --- job loop composition (plan assess-job-loop, group C) ---------------------
@@ -724,7 +723,7 @@ async def test_startup_that_never_finishes_is_refused_with_a_structured_error(
         )
 
 
-def test_the_ws_token_keyring_binds_the_setup_check_handler_and_tick(
+def test_the_provider_secret_binds_the_setup_check_handler_and_tick(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The web-service plan, task F4 (carried over to assess-job-loop): kind ``setup_check`` in
@@ -743,7 +742,7 @@ def test_the_ws_token_keyring_binds_the_setup_check_handler_and_tick(
         checked.engine,
         checked.settings,
         checked.worker_url,
-        {"assess_ws_tokens": Credentials("assess_ws_tokens", {})},
+        {lms_stub.STUB_SECRET: Credentials(lms_stub.STUB_SECRET, {})},
         lms=checked.lms,
     )
     runtime, scheduler, *_ = assess_worker._compose(keyed)
@@ -798,7 +797,7 @@ def test_one_lms_provider_serves_every_lms_handler(
     monkeypatch.setattr(assess_worker, "_load_lms", lambda *a, **k: loads.append(a))
     ring = AssessKeyring("k", "k1", {"k1": os.urandom(32)})
     keys: dict[str, object] = {name: ring for name in assess_worker.SESSION_KEYS}
-    keys["assess_ws_tokens"] = Credentials("assess_ws_tokens", {})
+    keys[lms_stub.STUB_SECRET] = Credentials(lms_stub.STUB_SECRET, {})
     full = assess_worker.Checked(
         checked.engine, checked.settings, checked.worker_url, keys, lms=checked.lms
     )
@@ -837,7 +836,7 @@ def test_the_smtp_item_gets_the_probe_tick_body(
         "assess_transcript_kek": ring,
         "assess_teacher_config_private": ring,
         "assess_smtp": Credentials("assess_smtp", {}),
-        "assess_ws_tokens": Credentials("assess_ws_tokens", {}),
+        lms_stub.STUB_SECRET: Credentials(lms_stub.STUB_SECRET, {}),
     }
     full = assess_worker.Checked(
         checked.engine, checked.settings, checked.worker_url, keys, lms=checked.lms
@@ -882,7 +881,7 @@ def _fully_keyed(monkeypatch: pytest.MonkeyPatch, **env: str) -> assess_worker.C
     keys: dict[str, object] = {name: ring for name in assess_worker.SESSION_KEYS}
     keys |= {
         "assess_smtp": Credentials("assess_smtp", {}),
-        "assess_ws_tokens": Credentials("assess_ws_tokens", {}),
+        lms_stub.STUB_SECRET: Credentials(lms_stub.STUB_SECRET, {}),
     }
     return assess_worker.Checked(
         checked.engine, checked.settings, checked.worker_url, keys, lms=checked.lms
@@ -1165,7 +1164,6 @@ async def test_the_worker_entrypoint_reports_a_bad_setting_without_its_value(
 _WORKER_DEV_SWITCHES = (
     "VEKTRA_ASSESS_WORKER_ALLOW_UNBOUND",
     "VEKTRA_ASSESS_PRIVACY_ALLOW_UNSET",
-    "VEKTRA_ASSESS_MOODLE_ALLOW_HTTP",
 )
 
 
@@ -1210,3 +1208,103 @@ async def test_a_worker_dev_switch_with_explicit_production_is_refused(
 ) -> None:
     err = await _worker_checks_with(tmp_path, monkeypatch, switch, "production")
     assert switch in err.detail and "VEKTRA_ENV=production" in err.detail
+
+
+# --- review of #207 ----------------------------------------------------------------------------
+
+
+async def test_the_key_matrix_runs_before_the_provider_is_built(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Finding 7: a forbidden secret mounted for the worker refuses the start before any
+    provider is built, and the report names it."""
+    d = _worker_keys(tmp_path / "w")
+    (d / "assess_token_signing").write_text("{}")  # the API's alone
+    monkeypatch.setenv("VEKTRA_ASSESS_ENABLED", "true")
+    monkeypatch.setenv("VEKTRA_ASSESS_SECRETS_DIR", str(d))
+    lms_stub.StubLmsProvider.built = []
+    with pytest.raises(StartupValidationError, match="assess_token_signing: forbidden"):
+        await assess_worker.run_checks()
+    assert lms_stub.StubLmsProvider.built == []
+
+
+async def test_a_missing_provider_secret_is_refused_before_the_provider_is_built(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Finding 7: the provider's declared secret is checked from its entry point's static
+    REQUIRED_SECRETS, before the factory runs."""
+    d = _worker_keys(tmp_path / "w")
+    (d / lms_stub.STUB_SECRET).chmod(0o600)
+    (d / lms_stub.STUB_SECRET).unlink()
+    monkeypatch.setenv("VEKTRA_ASSESS_ENABLED", "true")
+    monkeypatch.setenv("VEKTRA_ASSESS_SECRETS_DIR", str(d))
+    lms_stub.StubLmsProvider.built = []
+    with pytest.raises(StartupValidationError) as e:
+        await assess_worker.run_checks()
+    assert (
+        f"{lms_stub.STUB_SECRET}: required for worker by the LMS provider"
+        in e.value.detail
+    )
+    assert lms_stub.StubLmsProvider.built == []
+
+
+async def test_a_missing_provider_and_a_key_violation_are_reported_together(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    d = _worker_keys(tmp_path / "w")
+    (d / "assess_kek").chmod(0o600)
+    (d / "assess_kek").unlink()
+    monkeypatch.setenv("VEKTRA_ASSESS_ENABLED", "true")
+    monkeypatch.setenv("VEKTRA_ASSESS_SECRETS_DIR", str(d))
+    monkeypatch.delenv("VEKTRA_ASSESS_LMS_PROVIDER")
+    with pytest.raises(StartupValidationError) as e:
+        await assess_worker.run_checks()
+    assert "assess_kek: required for worker" in e.value.detail
+    assert "VEKTRA_ASSESS_LMS_PROVIDER is unset" in e.value.detail
+
+
+@pytest.mark.parametrize(
+    ("env", "development"),
+    [("development", True), ("production", False), (None, False)],
+)
+def test_the_provider_is_built_with_the_resolved_development_flag(
+    monkeypatch: pytest.MonkeyPatch, env: str | None, development: bool
+) -> None:
+    """Finding 8: the factory receives the vertical's resolved flag (an explicit
+    VEKTRA_ENV=development only); the provider never re-derives it."""
+    from vektra_assess.config import VektraAssessSettings
+
+    monkeypatch.setenv("VEKTRA_ASSESS_ENABLED", "true")
+    if env is None:
+        monkeypatch.delenv("VEKTRA_ENV", raising=False)
+    else:
+        monkeypatch.setenv("VEKTRA_ENV", env)
+    lms_stub.StubLmsProvider.built = []
+    asyncio.run(assess_worker._load_lms(VektraAssessSettings()))
+    assert lms_stub.StubLmsProvider.built == [development]
+
+
+def test_the_teacher_gate_budget_follows_the_providers_call_deadline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Finding 3: the worker budgets the sequential-LMS-call job from
+    ``LmsProvider.call_deadline_s``, as it did from the client's own deadline."""
+    from vektra_assess.jobs import JobKind
+
+    monkeypatch.setattr(lms_stub.StubLmsProvider, "call_deadline_s", 90.0)
+    checked = _checked(monkeypatch, VEKTRA_ASSESS_WORKER_ALLOW_UNBOUND="true")
+    runtime, *_ = assess_worker._compose(checked)
+    spec = runtime._handlers[JobKind.TEACHER_GATE]
+    assert spec.budget_s >= 3 * 90 + 5 and spec.lease_s >= 2 * spec.budget_s
+
+
+@pytest.mark.parametrize("deadline", [0.0, -1.0, float("nan"), 601.0])
+def test_an_unusable_call_deadline_refuses_the_worker(
+    monkeypatch: pytest.MonkeyPatch, deadline: float
+) -> None:
+    from vektra_assess.config import VektraAssessSettings
+
+    monkeypatch.setenv("VEKTRA_ASSESS_ENABLED", "true")
+    monkeypatch.setattr(lms_stub.StubLmsProvider, "call_deadline_s", deadline)
+    with pytest.raises(StartupValidationError, match="call_deadline_s"):
+        asyncio.run(assess_worker._load_lms(VektraAssessSettings()))

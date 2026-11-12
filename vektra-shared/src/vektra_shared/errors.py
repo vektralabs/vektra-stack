@@ -172,7 +172,7 @@ ERR_ASSESS_004 = (
 ERR_ASSESS_005 = (
     "ERR-ASSESS-005"  # Discussion token missing, invalid, expired or revoked
 )
-ERR_ASSESS_006 = "ERR-ASSESS-006"  # Refused: Moodle 'login as' session (REQ-084)
+ERR_ASSESS_006 = "ERR-ASSESS-006"  # Refused: an LMS 'login as' session (REQ-084)
 ERR_ASSESS_007 = "ERR-ASSESS-007"  # Key not bound to a site for this purpose
 ERR_ASSESS_008 = "ERR-ASSESS-008"  # Session not found (unknown, or not the caller's)
 ERR_ASSESS_009 = "ERR-ASSESS-009"  # Session closed: no action, no re-mint

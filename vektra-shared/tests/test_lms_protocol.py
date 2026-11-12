@@ -31,6 +31,7 @@ PROTOCOL_MEMBERS = frozenset(
         "name",
         "setup_items",
         "required_secrets",
+        "call_deadline_s",
         "startup_problems",
         "aclose",
         "site_info",
@@ -56,8 +57,8 @@ PROTOCOL_MEMBERS = frozenset(
 )
 
 
-def test_the_protocol_has_the_24_members() -> None:
-    assert len(PROTOCOL_MEMBERS) == 24
+def test_the_protocol_has_the_25_members() -> None:
+    assert len(PROTOCOL_MEMBERS) == 25
     assert set(LmsProvider.__protocol_attrs__) == PROTOCOL_MEMBERS  # type: ignore[attr-defined]
 
 
@@ -158,3 +159,23 @@ def test_importing_the_lms_package_pulls_no_component_and_no_http_client() -> No
 def test_readable_carries_its_evidence() -> None:
     ev = ShapeEvidence("get_x", "1.0", "0" * 64)
     assert Readable(3, ev).evidence is ev
+
+
+def test_a_provider_configuration_error_carries_detail_and_remediation() -> None:
+    from vektra_shared.lms import ProviderConfigurationError
+
+    err = ProviderConfigurationError("X: bad", "Fix X.")
+    assert (str(err), err.detail, err.remediation) == ("X: bad", "X: bad", "Fix X.")
+
+
+def test_an_unreadable_call_deadline_is_not_a_number() -> None:
+    import math
+
+    from vektra_shared.lms import guarded
+
+    class Raising:
+        @property
+        def call_deadline_s(self) -> float:
+            raise RuntimeError("boom")
+
+    assert math.isnan(guarded(Raising()).call_deadline_s)  # type: ignore[arg-type]

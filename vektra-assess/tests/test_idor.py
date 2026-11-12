@@ -1,4 +1,4 @@
-"""M2.6 / NFR-014: IDOR negative matrix, on the recorded 4.3 and 5.2 fixtures.
+"""M2.6 / NFR-014: IDOR negative matrix.
 
 Student B has a live session whose opening turn carries a canary. Student A, with valid tokens of
 A's own, tries every way to reach B's session; each attempt is rejected, audited, and the response
@@ -9,8 +9,9 @@ forged Moodle attempt id in a body (refused or ignored, never read).
 
 B's snapshot is a real capture (``LmsStartSource``) over ``FakeLmsProvider``: the matrix tests the
 vertical's authority (re-resolution, ownership, gates), which no LMS provider takes part in
-(ADR-0033 D1). ``idor_matrix_on_moodle`` runs the same matrix with the Moodle provider for the
-provider's live suite (``integration/test_idor_live.py``). Integration (testcontainers Postgres).
+(ADR-0033 D1). The Moodle provider's suites run the same ``_matrix`` with B's snapshot captured
+through it, on its recordings and live (``adapters/vektra-lms-moodle/tests``). Integration
+(testcontainers Postgres).
 """
 
 from __future__ import annotations
@@ -22,16 +23,10 @@ from typing import Any
 
 import jwt
 import pytest
-from assess_moodle_support import (
-    Replay,
-    make_provider,
-    manifest,
-    site_for,
-    uid,
-)
 from integration.conftest import pg  # noqa: F401  (the real-Postgres fixture)
 from sqlalchemy.ext.asyncio import create_async_engine
 from support.fake_lms import ASSIGN_ACTIVITY, USER, FakeLmsProvider
+from support.parser import InProcessParser
 from support.preflight import (
     PASSING_FACTS,
     FakePartB,
@@ -42,7 +37,6 @@ from support.preflight import (
     job_context,
 )
 from support.world import configure_activity, err, world
-from test_context_capture import InProcessParser
 
 from vektra_assess.context.capture.capture import Built
 from vektra_assess.worker.preflight import StartTarget, make_preflight_handler
@@ -108,20 +102,6 @@ async def test_idor_matrix(pg) -> None:  # noqa: F811
         base_url="https://lms.example.org",
         a_cmid=ASSIGN_ACTIVITY,
         captured_user=USER,
-    )
-
-
-async def idor_matrix_on_moodle(pg, branch: str) -> None:  # noqa: F811
-    """The same matrix with B's snapshot captured through the Moodle provider (the live suite
-    points ``Replay`` at a seeded dev site with ``use_live``)."""
-    m = manifest(branch)
-    await _matrix(
-        pg,
-        make_provider(Replay(branch)),
-        release=m["release"],
-        base_url=site_for(branch).base_url,
-        a_cmid=int(m["assigns"]["rubric_vis"]["cmid"]),
-        captured_user=uid(branch, "stu1"),
     )
 
 

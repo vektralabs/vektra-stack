@@ -28,16 +28,24 @@ def _provider_class(name: str, *, double: bool = False) -> type:
     async def aclose(self: Any) -> None:
         self.closed = True
 
-    def init(self: Any) -> None:
+    def init(self: Any, *, development: bool = False) -> None:
         self.closed = False
+        self.development = development
         BUILT.append(self)
 
     attrs: dict[str, Any] = {
         m: method
         for m in LmsProvider.__protocol_attrs__  # type: ignore[attr-defined]
-        if m not in ("name", "setup_items")
+        if m not in ("name", "setup_items", "required_secrets", "call_deadline_s")
     }
-    attrs.update(name=name, setup_items=(), aclose=aclose, __init__=init)
+    attrs.update(
+        name=name,
+        setup_items=(),
+        required_secrets=(),
+        call_deadline_s=30.0,
+        aclose=aclose,
+        __init__=init,
+    )
     if double:
         attrs[TEST_DOUBLE_MARKER] = True
     return type(f"Provider_{name}", (), attrs)
@@ -54,6 +62,11 @@ class _EP:
 
 def _eps(*eps: _EP) -> Callable[[], list[_EP]]:
     return lambda: list(eps)
+
+
+async def _load(name: str | None, **kw: Any) -> Any:
+    kw.setdefault("development", False)
+    return await load_lms_provider(name, **kw)
 
 
 @pytest.fixture(autouse=True)
@@ -73,7 +86,7 @@ def test_the_test_double_marker_is_the_registry_constant() -> None:
 
 async def test_a_named_provider_is_built_and_checked() -> None:
     cls = _provider_class("alpha")
-    provider = await load_lms_provider("alpha", entry_points=_eps(_EP("alpha", cls)))
+    provider = await _load("alpha", entry_points=_eps(_EP("alpha", cls)))
     assert isinstance(provider, cls) and isinstance(provider, LmsProvider)
 
 
@@ -82,7 +95,7 @@ async def test_an_unknown_name_is_refused_with_the_available_ones() -> None:
         _EP("beta", _provider_class("beta")), _EP("alpha", _provider_class("alpha"))
     )
     with pytest.raises(StartupValidationError) as e:
-        await load_lms_provider("gamma", entry_points=eps)
+        await _load("gamma", entry_points=eps)
     assert e.value.step == "lms_provider"
     assert "VEKTRA_ASSESS_LMS_PROVIDER=gamma" in e.value.detail
     assert "available providers: alpha, beta" in e.value.detail
@@ -93,30 +106,28 @@ async def test_an_unset_name_is_refused(name: str | None) -> None:
     with pytest.raises(
         StartupValidationError, match="is unset; available providers: none installed"
     ):
-        await load_lms_provider(name, entry_points=_eps())
+        await _load(name, entry_points=_eps())
 
 
 async def test_two_distributions_with_one_name_are_refused() -> None:
     cls = _provider_class("alpha")
     with pytest.raises(StartupValidationError, match="declared by 2"):
-        await load_lms_provider(
-            "alpha", entry_points=_eps(_EP("alpha", cls), _EP("alpha", cls))
-        )
+        await _load("alpha", entry_points=_eps(_EP("alpha", cls), _EP("alpha", cls)))
 
 
 async def test_a_factory_error_is_refused_without_its_text() -> None:
-    def boom() -> Any:
+    def boom(**_: Any) -> Any:
         raise RuntimeError("password=hunter2")
 
     with pytest.raises(StartupValidationError) as e:
-        await load_lms_provider("alpha", entry_points=_eps(_EP("alpha", boom)))
+        await _load("alpha", entry_points=_eps(_EP("alpha", boom)))
     assert "RuntimeError" in e.value.detail and "hunter2" not in str(e.value.detail)
     assert e.value.__cause__ is None
 
 
 async def test_something_that_is_not_a_provider_is_refused() -> None:
     with pytest.raises(StartupValidationError, match="does not implement LmsProvider"):
-        await load_lms_provider("alpha", entry_points=_eps(_EP("alpha", object)))
+        await _load("alpha", entry_points=_eps(_EP("alpha", lambda **_: object())))
 
 
 async def test_a_marked_test_double_is_refused_before_it_is_built() -> None:
@@ -124,23 +135,21 @@ async def test_a_marked_test_double_is_refused_before_it_is_built() -> None:
     the marker on the entry point's object is checked before the factory runs."""
     eps = _eps(_EP("fake", _provider_class("fake", double=True)))
     with pytest.raises(StartupValidationError, match="test double"):
-        await load_lms_provider("fake", entry_points=eps)
+        await _load("fake", entry_points=eps)
     assert BUILT == []
-    assert await load_lms_provider("fake", entry_points=eps, allow_test_doubles=True)
+    assert await _load("fake", entry_points=eps, allow_test_doubles=True)
 
 
 async def test_a_double_returned_by_a_plain_factory_is_refused_and_closed() -> None:
     cls = _provider_class("fake", double=True)
     with pytest.raises(StartupValidationError, match="test double"):
-        await load_lms_provider("fake", entry_points=_eps(_EP("fake", lambda: cls())))
+        await _load("fake", entry_points=_eps(_EP("fake", lambda **_: cls())))
     assert len(BUILT) == 1 and BUILT[0].closed
 
 
 async def test_a_name_mismatch_is_refused_and_the_built_provider_closed() -> None:
     with pytest.raises(StartupValidationError, match="calls itself beta"):
-        await load_lms_provider(
-            "alpha", entry_points=_eps(_EP("alpha", _provider_class("beta")))
-        )
+        await _load("alpha", entry_points=_eps(_EP("alpha", _provider_class("beta"))))
     assert len(BUILT) == 1 and BUILT[0].closed
 
 
@@ -153,19 +162,25 @@ async def test_a_non_provider_with_an_aclose_is_closed_too() -> None:
 
     made: list[Half] = []
 
-    def factory() -> Half:
+    def factory(**_: Any) -> Half:
         made.append(Half())
         return made[-1]
 
     with pytest.raises(StartupValidationError, match="does not implement"):
-        await load_lms_provider("alpha", entry_points=_eps(_EP("alpha", factory)))
+        await _load("alpha", entry_points=_eps(_EP("alpha", factory)))
     assert made[0].closed
 
 
-def test_the_real_group_is_read_and_lists_the_staged_provider() -> None:
-    """The Moodle provider is staged in vektra-assess until plan 2a-4 moves it to its adapter
-    distribution: the installed group names exactly it."""
-    assert available_lms_providers() == ("moodle",)
+def test_no_platform_distribution_declares_a_provider() -> None:
+    """ADR-0033 D6: providers are separate distributions (``vektra-lms-*``, staged in
+    ``adapters/``). The real group is read, and whatever it lists comes from one of them, never
+    from a platform package: without ``--group lms-moodle`` it lists nothing."""
+    from importlib.metadata import entry_points
+
+    eps = list(entry_points(group=GROUP))
+    assert available_lms_providers() == tuple(sorted({ep.name for ep in eps}))
+    for ep in eps:
+        assert ep.dist is not None and ep.dist.name.startswith("vektra-lms-"), ep
 
 
 async def test_an_aclose_property_that_raises_does_not_replace_the_refusal() -> None:
@@ -177,7 +192,7 @@ async def test_an_aclose_property_that_raises_does_not_replace_the_refusal() -> 
             raise RuntimeError("boom")
 
     with pytest.raises(StartupValidationError, match="does not implement"):
-        await load_lms_provider("alpha", entry_points=_eps(_EP("alpha", BadClose)))
+        await _load("alpha", entry_points=_eps(_EP("alpha", lambda **_: BadClose())))
 
 
 async def test_a_name_property_that_raises_is_refused_and_the_provider_closed() -> None:
@@ -189,7 +204,7 @@ async def test_a_name_property_that_raises_is_refused_and_the_provider_closed() 
 
     broken = type("Broken", (cls,), {"name": property(bad_name)})
     with pytest.raises(StartupValidationError) as e:
-        await load_lms_provider("alpha", entry_points=_eps(_EP("alpha", broken)))
+        await _load("alpha", entry_points=_eps(_EP("alpha", broken)))
     assert "name" in e.value.detail and "RuntimeError" in e.value.detail
     assert "hunter2" not in e.value.detail and e.value.__cause__ is None
     assert len(BUILT) == 1 and BUILT[0].closed
@@ -223,8 +238,11 @@ def test_only_the_worker_composition_loads_a_provider() -> None:
     import vektra_app.assess_worker as worker
     import vektra_app.main as main
 
-    assert "load_lms_provider" in inspect.getsource(worker)
-    assert "load_lms_provider" not in inspect.getsource(main)
+    # the worker finds, checks the declared secrets, then builds (review of #207, finding 7)
+    assert "find_lms_provider" in inspect.getsource(worker)
+    assert "build_lms_provider" in inspect.getsource(worker)
+    for name in ("find_lms_provider", "build_lms_provider", "load_lms_provider"):
+        assert name not in inspect.getsource(main)
     assert lms_providers.SETTING == "VEKTRA_ASSESS_LMS_PROVIDER"
 
 
@@ -243,9 +261,14 @@ class _Startup:
 
     name = "fake"
     setup_items: tuple[str, ...] = ()
+    required_secrets: tuple[str, ...] = ()
+    call_deadline_s = 30.0
     __vektra_test_double__ = True
     problems: tuple[Any, ...] = ()
     seen: list[bool] = []
+
+    def __init__(self, *, development: bool = False) -> None:
+        self.development = development
 
     def startup_problems(self, development: bool) -> tuple[Any, ...]:
         type(self).seen.append(development)
@@ -283,7 +306,8 @@ def test_the_worker_refuses_to_start_without_a_provider(
     with pytest.raises(StartupValidationError) as e:
         _run_load(assess_worker, settings)
     assert "VEKTRA_ASSESS_LMS_PROVIDER is unset" in e.value.detail
-    assert "moodle" in e.value.detail
+    listed = ", ".join(available_lms_providers()) or "none installed"
+    assert f"available providers: {listed}" in e.value.detail
 
 
 @pytest.mark.parametrize("env", ["production", None])
@@ -349,21 +373,75 @@ def test_a_provider_startup_problem_refuses_the_worker(
     assert e.value.detail == "X_SETTING is wrong" and e.value.remediation == "Unset it."
 
 
-@pytest.mark.parametrize("env", ["production", None])
-def test_the_moodle_plain_http_switch_is_refused_by_the_provider(
-    monkeypatch: pytest.MonkeyPatch, env: str | None
-) -> None:
-    """The plain-http switch of the staged Moodle provider still stops the worker outside
-    development, now through ``LmsProvider.startup_problems``."""
-    from vektra_app import assess_worker
+# --- review of #207: static secrets, the development flag, the provider's own explanation ---------
 
-    settings = _settings(
-        monkeypatch,
-        VEKTRA_ASSESS_LMS_PROVIDER="moodle",
-        VEKTRA_ASSESS_MOODLE_ALLOW_HTTP="true",
-        VEKTRA_ENV=env,
+
+def _declaring(
+    name: str, secrets: tuple[str, ...], built: tuple[str, ...] | None = None
+) -> type:
+    cls = _provider_class(name)
+    cls.REQUIRED_SECRETS = secrets  # type: ignore[attr-defined]
+    cls.required_secrets = secrets if built is None else built  # type: ignore[attr-defined]
+    return cls
+
+
+def test_the_declared_secrets_are_read_without_calling_the_factory() -> None:
+    """Finding 1: the API learns what to refuse from the entry points alone."""
+    from vektra_app.lms_providers import installed_provider_secrets
+
+    eps = _eps(
+        _EP("alpha", _declaring("alpha", ("assess_a_tokens",))),
+        _EP("beta", _declaring("beta", ("assess_b_tokens", "assess_a_tokens"))),
+        _EP("gamma", _provider_class("gamma")),  # declares nothing
     )
-    with pytest.raises(StartupValidationError, match="ALLOW_HTTP"):
-        _run_load(assess_worker, settings)
-    monkeypatch.setenv("VEKTRA_ENV", "development")
-    assert _run_load(assess_worker, _settings(monkeypatch)).name == "moodle"
+    assert installed_provider_secrets(eps) == ("assess_a_tokens", "assess_b_tokens")
+    assert BUILT == []
+
+
+@pytest.mark.parametrize("bad", [["assess_x"], "assess_x", (1,)])
+def test_a_declaration_that_is_not_a_tuple_of_names_is_refused(bad: object) -> None:
+    from vektra_app.lms_providers import installed_provider_secrets
+
+    cls = _provider_class("alpha")
+    cls.REQUIRED_SECRETS = bad  # type: ignore[attr-defined]
+    with pytest.raises(StartupValidationError, match="REQUIRED_SECRETS"):
+        installed_provider_secrets(_eps(_EP("alpha", cls)))
+
+
+async def test_the_factory_receives_the_resolved_development_flag() -> None:
+    """Finding 8: the provider is told, it never re-derives it."""
+    cls = _provider_class("alpha")
+    for development in (True, False):
+        provider = await load_lms_provider(
+            "alpha", development=development, entry_points=_eps(_EP("alpha", cls))
+        )
+        assert provider.development is development  # type: ignore[attr-defined]
+
+
+async def test_a_provider_configuration_error_is_surfaced_as_the_provider_explains_it() -> (
+    None
+):
+    """Finding 5: an invalid provider setting names the variable and its rule, not
+    "failed to load (ValidationError)"."""
+    from vektra_shared.lms import ProviderConfigurationError
+
+    def factory(**_: Any) -> Any:
+        raise ProviderConfigurationError(
+            "X_RPS: Input should be greater than 0", "Fix X_RPS."
+        )
+
+    with pytest.raises(StartupValidationError) as e:
+        await _load("alpha", entry_points=_eps(_EP("alpha", factory)))
+    assert e.value.detail == "X_RPS: Input should be greater than 0"
+    assert e.value.remediation == "Fix X_RPS."
+
+
+async def test_a_built_declaration_other_than_the_static_one_is_refused_and_closed() -> (
+    None
+):
+    """The key matrix checks the static REQUIRED_SECRETS before the build: a provider that then
+    declares other secrets would be bound on names nobody checked."""
+    cls = _declaring("alpha", ("assess_a_tokens",), built=("assess_other",))
+    with pytest.raises(StartupValidationError, match="declares REQUIRED_SECRETS"):
+        await _load("alpha", entry_points=_eps(_EP("alpha", cls)))
+    assert len(BUILT) == 1 and BUILT[0].closed

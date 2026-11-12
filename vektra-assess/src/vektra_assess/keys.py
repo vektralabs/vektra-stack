@@ -2,8 +2,8 @@
 
 Each assess secret is a Docker secret file under ``/run/secrets/`` holding a JSON
 keyring, ``{"active": "<kid>", "keys": {"<kid>": "<base64>"}}``, so rotation is a file
-change (add a kid, flip ``active``) and not a schema change. Credential secrets (WS
-tokens, SMTP) hold a JSON object instead.
+change (add a kid, flip ``active``) and not a schema change. Credential secrets (SMTP, and
+the LMS provider's own, whose names it declares) hold a JSON object instead.
 
 ``KEY_MATRIX`` says, for every secret and every process role, whether the process MUST
 hold it, MUST NOT hold it, or may. ``enforce_key_matrix(role)`` applies it in both
@@ -11,7 +11,7 @@ directions at process start: a missing required key and a present forbidden key 
 both refusals, and a forbidden key counts as present when its file exists OR when any
 environment variable carries its name (defence against a leaked ``.env``). The API
 applies the forbidden half even when assess is disabled: an API container that happens
-to hold the WS tokens is the dormant capability ARCH-066 forbids.
+to hold the LMS provider's credentials is the dormant capability ARCH-066 forbids.
 
 Key bytes are never logged and never appear in a ``repr``.
 
@@ -26,15 +26,20 @@ import base64
 import binascii
 import json
 import os
+import re
 import secrets
-import stat
 import sys
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
 from typing import Any, Literal
 
+from vektra_shared.secret_files import (
+    SecretFileError,
+    check_secret_file,
+    load_json_object,
+)
 from vektra_shared.startup import StartupValidationError
 
 Role = Literal["api", "worker", "parser"]
@@ -51,7 +56,9 @@ class Kind(StrEnum):
     SYMMETRIC = "symmetric"  # 32 random bytes (AES-256 KEK / HMAC signing key)
     X25519_PRIVATE = "x25519_private"  # 32-byte raw private key
     X25519_PUBLIC = "x25519_public"  # 32-byte raw public key
-    CREDENTIALS = "credentials"  # JSON object (WS tokens per site, SMTP account)
+    CREDENTIALS = (
+        "credentials"  # JSON object (SMTP account; an LMS provider's credentials)
+    )
     PASSWORD = "password"  # one line of text: a Postgres role password
 
 
@@ -82,7 +89,9 @@ KEY_MATRIX: Mapping[str, KeySpec] = {
         Kind.X25519_PRIVATE, api=F, worker=R, parser=F
     ),
     "assess_kek": KeySpec(Kind.SYMMETRIC, api=F, worker=R, parser=F),
-    "assess_ws_tokens": KeySpec(Kind.CREDENTIALS, api=F, worker=R, parser=F),
+    # the LMS provider's credentials are not listed: the provider declares their names
+    # (``LmsProvider.required_secrets``) and ``enforce_key_matrix`` treats each as
+    # worker-required and forbidden elsewhere (PROVIDER_SECRET_PREFIX)
     "assess_smtp": KeySpec(Kind.CREDENTIALS, api=F, worker=R, parser=F),
     # Role passwords: never in a DSN, never in .env. Each process holds only its own;
     # the one-shot vektra-assess-db-init holds both (DB_INIT_SECRETS).
@@ -97,7 +106,16 @@ DB_INIT_SECRETS: frozenset[str] = frozenset(
 MIN_PASSWORD_CHARS = 24
 
 KEY_BYTES = 32
-MAX_MODE = 0o440  # owner and group read, nothing else
+#: every secret a provider declares carries it, so a role that loads no provider can refuse it
+PROVIDER_SECRET_PREFIX = "assess_"
+_PROVIDER_SECRET = re.compile(r"assess_[a-z0-9_]{1,57}")
+
+
+def is_provider_secret_name(name: str) -> bool:
+    """A name an LMS provider may declare: ``assess_<name>``, lower case, not an assess key."""
+    return bool(_PROVIDER_SECRET.fullmatch(name)) and name not in KEY_MATRIX
+
+
 # Env var fragments that make a parser environment unsafe (DSNs, key material).
 _PARSER_FORBIDDEN_ENV_FRAGMENTS = ("DATABASE_URL", "DSN", "PASSWORD", "SECRET", "TOKEN")
 
@@ -158,20 +176,19 @@ Loaded = AssessKeyring | Credentials | Password
 
 def _check_file(path: Path) -> None:
     try:
-        st = path.lstat()
-    except FileNotFoundError:
-        raise KeyringError(f"{path.name}: file not found") from None
-    if not stat.S_ISREG(st.st_mode):
-        raise KeyringError(f"{path.name}: not a regular file (symlinks are refused)")
-    if st.st_uid not in (os.getuid(), 0):
-        raise KeyringError(
-            f"{path.name}: owned by uid {st.st_uid}, not by this process or root"
-        )
-    mode = stat.S_IMODE(st.st_mode)
-    if mode & ~MAX_MODE:
-        raise KeyringError(
-            f"{path.name}: mode {mode:04o} is too open (at most {MAX_MODE:04o})"
-        )
+        check_secret_file(path)
+    except SecretFileError as exc:
+        raise KeyringError(str(exc)) from None
+
+
+def load_provider_secret(name: str, secrets_dir: Path) -> Credentials:
+    """A secret the worker's LMS provider declares (``LmsProvider.required_secrets``): always a
+    credentials object, checked like every assess secret (ADR-0033 D5: the name is the
+    provider's, the matrix only knows that the worker alone holds it)."""
+    try:
+        return Credentials(name=name, data=load_json_object(secrets_dir / name))
+    except SecretFileError as exc:
+        raise KeyringError(str(exc)) from None
 
 
 def load_keyring(name: str, secrets_dir: Path) -> Loaded:
@@ -247,8 +264,17 @@ def enforce_key_matrix(
     environ: Mapping[str, str] | None = None,
     forbidden_only: bool = False,
     step: str = "assess_check",
+    provider_secrets: Sequence[str] = (),
 ) -> dict[str, Loaded]:
     """Apply ``KEY_MATRIX`` for ``role``; return the loaded required/allowed secrets.
+
+    ``provider_secrets`` are the names an LMS provider declares statically (its entry point's
+    ``REQUIRED_SECRETS``, which ``LmsProvider.required_secrets`` repeats; plan task 2a-4b.13).
+    For the worker each is required and loaded as credentials. For the API and the parser each
+    is forbidden: an environment variable carrying it is refused like one carrying a forbidden
+    assess key (the names are read from the installed entry points, no provider is built).
+    Those roles also refuse every ``assess_*`` file the matrix does not grant them, whatever
+    a provider calls its secret, which is why a provider's secret must carry that prefix.
 
     Raises ``StartupValidationError(step=step)`` naming every violated key. With
     ``forbidden_only`` only the "must not hold" half runs (the API when assess is off).
@@ -256,6 +282,26 @@ def enforce_key_matrix(
     env = os.environ if environ is None else environ
     problems: list[str] = []
     loaded: dict[str, Loaded] = {}
+
+    for name in provider_secrets:
+        if not is_provider_secret_name(name):
+            problems.append(
+                f"{name!r}: not a valid LMS provider secret name (assess_<name>, lower "
+                "case, and not an assess key)"
+            )
+            continue
+        if role != "worker":
+            # the file is refused below with every other assess_* file the role holds
+            carriers = _env_names_carrying(name, env)
+            if carriers:
+                problems.append(
+                    f"{name}: forbidden for {role} but carried by env var(s) {carriers}"
+                )
+            continue
+        try:
+            loaded[name] = load_provider_secret(name, secrets_dir)
+        except KeyringError as exc:
+            problems.append(f"{name}: required for {role} by the LMS provider: {exc}")
 
     for name, spec in KEY_MATRIX.items():
         need = spec.need(role)
@@ -285,14 +331,16 @@ def enforce_key_matrix(
             problems.append(str(exc))
 
     if role != "worker":
-        # per-site WS token files (assess_ws_token_<site_id>) are the worker's alone: the
-        # exact-name matrix cannot list them, so refuse the whole family by glob
+        # an LMS provider's credentials (whatever it names them) and any other assess secret
+        # the matrix does not list are the worker's alone: the API and the parser load no
+        # provider, so they refuse every assess_* file they were not granted
+        # (a matrix key is judged by the matrix above, granted or forbidden)
         if secrets_dir.is_dir():
             problems.extend(
-                f"{p.name}: forbidden for {role} (WS tokens belong to the worker) "
-                f"but mounted at {p}"
-                for p in sorted(secrets_dir.glob("assess_ws_token*"))
-                if p.name != "assess_ws_tokens"  # already reported by the matrix above
+                f"{p.name}: forbidden for {role} (not an assess key of this role; an LMS "
+                f"provider's credentials belong to the worker) but mounted at {p}"
+                for p in sorted(secrets_dir.glob(PROVIDER_SECRET_PREFIX + "*"))
+                if p.name not in KEY_MATRIX
             )
 
     if role == "parser":
@@ -322,8 +370,10 @@ def _parser_environment_problems(
         problems.append(f"parser: secrets dir {secrets_dir} must be absent or empty")
     for k in sorted(env):
         up = k.upper()
+        # VEKTRA_* and the bare ASSESS_* names: a secret is carried as ASSESS_<NAME> too
+        # (``_env_names_carrying``), and an LMS provider's secret names start with assess_
         if (
-            up.startswith("VEKTRA_")
+            up.startswith(("VEKTRA_", "ASSESS_"))
             and up not in _PARSER_ENV_ALLOWED
             and any(f in up for f in _PARSER_FORBIDDEN_ENV_FRAGMENTS)
         ):
@@ -340,8 +390,11 @@ def _keyring_doc(kid: str, key: bytes) -> dict[str, Any]:
     return {"active": kid, "keys": {kid: base64.b64encode(key).decode("ascii")}}
 
 
-def generate(out: Path, *, kid: str = "k1") -> list[Path]:
-    """Write every secret of ``KEY_MATRIX`` into ``out`` with mode 0400.
+def generate(
+    out: Path, *, kid: str = "k1", provider_secrets: Sequence[str] = ()
+) -> list[Path]:
+    """Write every secret of ``KEY_MATRIX`` into ``out`` with mode 0400, plus an empty
+    credentials file for each secret the LMS provider declares (``provider_secrets``).
 
     X25519 secrets are generated as matching pairs. Credentials are written as empty
     JSON objects for the operator to fill. Existing files are never overwritten.
@@ -374,14 +427,19 @@ def generate(out: Path, *, kid: str = "k1") -> list[Path]:
     }
     missing = set(KEY_MATRIX) - set(docs) - set(passwords)
     assert not missing, missing
+    for name in provider_secrets:
+        if not is_provider_secret_name(name):
+            raise ValueError(f"{name!r}: not a valid LMS provider secret name")
+        docs[name] = {}
+    names = [*KEY_MATRIX, *dict.fromkeys(provider_secrets)]
 
-    existing = [str(out / n) for n in KEY_MATRIX if (out / n).exists()]
+    existing = [str(out / n) for n in names if (out / n).exists()]
     if existing:  # all-or-nothing: never leave a half-regenerated, mismatched set
         raise FileExistsError(
             f"refusing to overwrite secrets, nothing written: {', '.join(existing)}"
         )
     written: list[Path] = []
-    for name in KEY_MATRIX:
+    for name in names:
         path = out / name
         fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o400)
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
@@ -410,6 +468,13 @@ def main(argv: list[str] | None = None) -> int:
     sub = parser.add_subparsers(dest="cmd", required=True)
     gen = sub.add_parser("generate", help="write a complete set of assess keyrings")
     gen.add_argument("--out", type=Path, required=True)
+    gen.add_argument(
+        "--provider-secret",
+        action="append",
+        default=[],
+        metavar="NAME",
+        help="also write an empty credentials file for this LMS provider secret",
+    )
     sub.add_parser(
         "verify", help="check the loaded keys against the database (exit 1 on mismatch)"
     )
@@ -419,7 +484,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
     if args.cmd == "generate":
-        for path in generate(args.out):
+        for path in generate(args.out, provider_secrets=args.provider_secret):
             print(path)  # names only, never contents
     return 0
 

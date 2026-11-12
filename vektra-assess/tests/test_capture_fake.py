@@ -34,7 +34,7 @@ from support.fake_lms import (
     FakeLmsProvider,
     default_world,
 )
-from test_context_capture import OFF, InProcessParser
+from support.parser import OFF, InProcessParser
 
 from vektra_assess.context.capture.bound import SiteReaders
 from vektra_assess.context.capture.capture import (

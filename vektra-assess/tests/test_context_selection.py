@@ -1,9 +1,7 @@
-"""BR-012 attempt selection and BR-014 "fully graded".
-
-The pure cases run on the neutral values of ``vektra_shared.lms`` (what any LMS provider hands
-the vertical). The recorded cases run the same selection on the 4.3 / 5.2 responses through the
-Moodle provider, so its state mapping is checked end to end; expected attempts come from the SEED
-MANIFEST (what the seeder created), never from the LMS.
+"""BR-012 attempt selection and BR-014 "fully graded", on the neutral values of
+``vektra_shared.lms`` (what any LMS provider hands the vertical). The same selection on the
+recorded Moodle responses, through the Moodle provider, is the provider's suite
+(``adapters/vektra-lms-moodle/tests/test_context_selection_recorded.py``).
 """
 
 from __future__ import annotations
@@ -11,7 +9,6 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
-from assess_moodle_support import BRANCHES, Replay, manifest, site_readers, uid
 
 from vektra_assess.context.capture.selection import (
     NotEligible,
@@ -33,83 +30,6 @@ from vektra_shared.lms import (
     Unreadable,
     UnreadableReason,
 )
-
-
-@pytest.fixture(params=BRANCHES)
-def branch(request: pytest.FixtureRequest) -> str:
-    return str(request.param)
-
-
-async def _select(branch: str, quiz: str, user: str, *, released: bool = True) -> Any:
-    replay = Replay(branch)
-    lms, m = site_readers(replay), manifest(branch)
-    q = m["quizzes"][quiz]
-    attempts = await lms.attempts(q["id"], uid(branch, user))
-    assert isinstance(attempts, Readable), attempts
-    graded: dict[int, bool | None] = {}
-    for a in attempts.value:
-        if a.state is AttemptState.FINISHED:
-            review = await lms.attempt_review(a.attempt_id)
-            graded[a.attempt_id] = (
-                is_fully_graded(review.value) if isinstance(review, Readable) else None
-            )
-    out = select_attempt(
-        attempts, q["expected"]["grademethod"], graded, released=released
-    )
-    assert not replay.unmatched
-    return out, q
-
-
-async def test_highest_tie_goes_to_the_earliest_attempt(branch: str) -> None:
-    out, q = await _select(branch, "gm_highest", "stu1")
-    assert isinstance(out, Selected)
-    ties = q["expected"]["highest_ties_attempt_numbers"]["stu1"]
-    assert len(ties) > 1 and out.attempt_number == min(ties)
-    assert out.attempt_count == len(q["attempts"])
-
-
-@pytest.mark.parametrize(
-    ("quiz", "expected"), [("gm_first", 1), ("gm_last", 4), ("gm_average", 4)]
-)
-async def test_first_last_and_average(branch: str, quiz: str, expected: int) -> None:
-    out, _ = await _select(branch, quiz, "stu1")
-    assert isinstance(out, Selected) and out.attempt_number == expected
-
-
-async def test_an_essay_awaiting_grading_is_not_eligible(branch: str) -> None:
-    graded, _ = await _select(branch, "essay", "stu1")
-    pending, _ = await _select(branch, "essay", "stu2")
-    assert isinstance(graded, Selected)  # manually graded (mangrpartial)
-    assert pending == NotEligible(NotEligibleReason.NOT_GRADED)
-
-
-@pytest.mark.parametrize(
-    ("quiz", "reason"),
-    [
-        ("inprogress", NotEligibleReason.IN_PROGRESS),
-        ("overdue", NotEligibleReason.IN_PROGRESS),
-        ("abandoned", NotEligibleReason.NO_SUBMISSION),
-    ],
-)
-async def test_open_or_abandoned_attempts(
-    branch: str, quiz: str, reason: NotEligibleReason
-) -> None:
-    out, _ = await _select(branch, quiz, "stu1")
-    assert out == NotEligible(reason)
-
-
-async def test_a_description_item_does_not_block_and_unreleased_blocks(
-    branch: str,
-) -> None:
-    out, _ = await _select(branch, "types", "stu1")
-    assert isinstance(
-        out, Selected
-    )  # the attempt holds a description and a zero-mark item
-    hidden, _ = await _select(branch, "gm_highest", "stu1", released=False)
-    assert hidden == NotEligible(NotEligibleReason.NOT_RELEASED)
-
-
-# --- pure edge cases ----------------------------------------------------------------------------
 
 
 def _a(
@@ -240,3 +160,48 @@ def test_assign_fully_graded(
     method: str, grade: float | None, crit: Any, filled: Any, out: Any
 ) -> None:
     assert assign_fully_graded(method, grade, crit, filled) == out
+
+
+# --- the refusals, one by one (they ran only on the recordings before 2a-4) -----------------------
+
+
+def test_an_open_attempt_blocks_the_selection() -> None:
+    attempts = Readable((_a(1), _a(2, AttemptState.IN_PROGRESS)))
+    assert select_attempt(attempts, "highest", {101: True}, released=True) == (
+        NotEligible(NotEligibleReason.IN_PROGRESS)
+    )
+
+
+def test_no_finished_attempt_is_no_submission() -> None:
+    attempts = Readable((_a(1, AttemptState.ABANDONED),))
+    assert select_attempt(attempts, "highest", {}, released=True) == (
+        NotEligible(NotEligibleReason.NO_SUBMISSION)
+    )
+
+
+def test_a_finished_attempt_not_fully_graded_blocks_the_selection() -> None:
+    attempts = Readable((_a(1), _a(2)))
+    assert select_attempt(
+        attempts, "highest", {101: True, 102: False}, released=True
+    ) == (NotEligible(NotEligibleReason.NOT_GRADED))
+    # graded, but without a total: not graded either (never guess a mark)
+    attempts = Readable((_a(1, s=None),))
+    assert select_attempt(attempts, "highest", {101: True}, released=True) == (
+        NotEligible(NotEligibleReason.NOT_GRADED)
+    )
+
+
+def test_an_unreleased_grade_blocks_the_selection() -> None:
+    assert select_attempt(
+        Readable((_a(1),)), "highest", {101: True}, released=False
+    ) == (NotEligible(NotEligibleReason.NOT_RELEASED))
+
+
+@pytest.mark.parametrize(
+    ("method", "chosen"), [("first", 1), ("last", 3), ("average", 3)]
+)
+def test_first_last_and_average_choose_by_number(method: str, chosen: int) -> None:
+    attempts = Readable((_a(3, s=1.0), _a(1, s=5.0), _a(2, s=9.0)))
+    graded = {101: True, 102: True, 103: True}
+    out = select_attempt(attempts, method, graded, released=True)
+    assert isinstance(out, Selected) and out.attempt_number == chosen

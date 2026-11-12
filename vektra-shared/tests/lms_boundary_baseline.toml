@@ -4,38 +4,7 @@
 #
 # `directory` entries exempt a package being separated, with no count.
 # `file` entries record how many mentions the file had when recorded.
-
-[[entry]]
-directory = "vektra-assess"
-since = "2026-11-08"
-reason = "The assessment vertical was written against Moodle directly (a moodle/ subpackage, Moodle 4.3 and 5.2 models). Exempt as a whole while it is separated into an LMS-agnostic core and a Moodle adapter; delete this entry when the guard reports it names no LMS any more."
-
-[[entry]]
-file = "vektra-shared/src/vektra_shared/auth.py"
-mentions = 1
-since = "2026-11-08"
-reason = "Scopes of the assessment's Moodle plugin, defined in the shared auth module (assessment work)."
-
-[[entry]]
-file = "vektra-shared/src/vektra_shared/errors.py"
-mentions = 1
-since = "2026-11-08"
-reason = "ERR_ASSESS_006 describes a Moodle 'login as' session (assessment work)."
-
-[[entry]]
-file = "vektra-shared/src/vektra_shared/netguard.py"
-mentions = 5
-since = "2026-11-08"
-reason = "Network guard written for the assessment's Moodle web-service client (assessment work)."
-
-[[entry]]
-file = "vektra-app/src/vektra_app/main.py"
-mentions = 1
-since = "2026-11-08"
-reason = "One reference introduced with the assessment wiring (assessment work)."
-
-[[entry]]
-file = "vektra-admin/src/vektra_admin/templates/keys.html"
-mentions = 1
-since = "2026-11-08"
-reason = "Help text of the API key scope for the assessment's Moodle plugin (assessment work)."
+#
+# Empty since 2026-11-12 (ADR-0033, PR 2a-4): the Moodle provider left the platform for
+# adapters/vektra-lms-moodle, outside the perimeter. Do not add an entry: a step that seems to
+# need one is an ADR question.

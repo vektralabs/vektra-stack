@@ -27,7 +27,6 @@ from vektra_assess.worker.runner import Handler, HandlerSpec, TickBody, TickSpec
 SESSION = "20261101-154950-assess-session-lifecycle"
 TRANSCRIPT = "20261101-154950-assess-transcript-delivery"
 PRIVACY = "20261101-154950-assess-privacy-retention"
-MOODLE_WS = "20261101-154950-assess-moodle-ws"
 JOB_LOOP = "20261101-154950-assess-job-loop"
 TEACHER = "20261101-154950-assess-teacher-ops"
 
@@ -44,7 +43,8 @@ HANDLER_OWNERS: dict[JobKind, str] = {
     JobKind.OPERATOR_NOTIFY: TRANSCRIPT,
     JobKind.PURGE: PRIVACY,
     JobKind.ERASURE: PRIVACY,
-    JobKind.SETUP_CHECK: MOODLE_WS,
+    # carried over from the web-service plan and bound by the job loop on 2026-11-08
+    JobKind.SETUP_CHECK: JOB_LOOP,
     JobKind.TEACHER_GATE: TEACHER,
     JobKind.SMTP_TEST_SEND: PRIVACY,
 }
@@ -63,7 +63,7 @@ TICK_OWNERS: dict[str, str] = {
     "smtp_probe": TRANSCRIPT,
     "purge": PRIVACY,
     "parser_ping": PRIVACY,  # plan 12b: the parser status /health/assess reports
-    "setup_check": MOODLE_WS,
+    "setup_check": JOB_LOOP,
 }
 
 # --- the documented allowlist of unbound slots ---------------------------------------------------

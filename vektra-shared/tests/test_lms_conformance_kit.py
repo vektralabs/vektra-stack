@@ -15,10 +15,10 @@ from vektra_testkit.lms_conformance import kit
 
 
 def test_the_member_table_is_exactly_the_protocol() -> None:
-    """The kit calls every one of the 24 members, and nothing that is not one."""
+    """The kit calls every one of the 25 members, and nothing that is not one."""
     covered = set(kit.READING_MEMBERS) | kit.OTHER_MEMBERS
     assert covered == kit.protocol_members()
-    assert len(covered) == 24
+    assert len(covered) == 25
     assert not set(kit.READING_MEMBERS) & kit.OTHER_MEMBERS
 
 

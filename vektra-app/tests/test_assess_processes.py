@@ -185,6 +185,55 @@ def test_parser_import_ceiling_in_a_fresh_process() -> None:
     assert out.stdout.strip() == "ceiling ok", out.stderr
 
 
+def test_a_parsing_child_holds_no_shared_kernel_and_no_structlog() -> None:
+    """Review of #203: the forkserver preloads ``vektra_assess.parser_sidecar.child`` and every
+    parsing child inherits what that import loaded, package ``__init__`` included. A child
+    holds the parser and the stdlib, never ``vektra_shared`` or ``structlog``."""
+    code = (
+        "import sys; import vektra_assess.parser_sidecar.child; "
+        "loaded = list(sys.modules); "  # what the forkserver preload leaves to a child
+        "from vektra_app import assess_parser; "
+        "assess_parser.assert_child_import_ceiling(loaded); print('child ok')"
+    )
+    out = subprocess.run(
+        [sys.executable, "-c", code], capture_output=True, text=True, timeout=120
+    )
+    assert out.stdout.strip() == "child ok", out.stderr[-2000:]
+
+
+def test_the_api_logging_setup_registers_the_assess_prefix() -> None:
+    """The registration moved out of ``vektra_assess/__init__`` (review of #203) into the
+    composition roots that configure logging: the API's ``configure_structlog``..."""
+    code = (
+        "import vektra_app.main as m; from vektra_shared import log_safety as s; "
+        "before = s.strict_logger_prefixes(); m.configure_structlog(); "
+        "print(before, s.strict_logger_prefixes())"
+    )
+    out = subprocess.run(
+        [sys.executable, "-c", code], capture_output=True, text=True, timeout=120
+    )
+    assert out.stdout.strip() == "() ('vektra_assess',)", out.stderr[-2000:]
+
+
+def test_the_worker_registers_the_assess_prefix_before_configuring_logging() -> None:
+    """... and the worker's ``main`` (checked on the source: running it starts the job loop)."""
+    import inspect
+
+    src = inspect.getsource(assess_worker.main)
+    assert src.index("register_strict_logger_prefix(LOGGER_PREFIX)") < src.index(
+        "configure_assess_worker_logging()"
+    )
+
+
+def test_the_child_ceiling_refuses_the_shared_kernel_and_structlog() -> None:
+    for bad in ("vektra_shared", "vektra_shared.log_safety", "structlog", "httpx"):
+        with pytest.raises(StartupValidationError, match="parsing child"):
+            assess_parser.assert_child_import_ceiling(["vektra_assess", bad])
+    assess_parser.assert_child_import_ceiling(
+        ["vektra_assess", "vektra_assess.parser_sidecar.child", "json"]
+    )
+
+
 def test_parser_ceiling_refuses_forbidden_and_stray_modules() -> None:
     for bad in ("sqlalchemy", "httpx", "torch", "vektra_shared.db", "vektra_index.x"):
         with pytest.raises(StartupValidationError, match="forbidden modules"):
@@ -1016,3 +1065,57 @@ async def test_the_worker_entrypoint_reports_a_bad_setting_without_its_value(
     err = capsys.readouterr().err
     assert "VEKTRA_ASSESS_HEARTBEAT_MAX_AGE_S" in err and "60123" not in err
     assert not hb.exists()  # the stale heartbeat is still removed
+
+
+# --- development-only switches need VEKTRA_ENV=development set EXPLICITLY ------------------
+# The platform default of VEKTRA_ENV is "development" (vektra_shared, out of scope here), so a
+# production .env that forgets it would otherwise honour every dev switch. The worker's ones:
+
+_WORKER_DEV_SWITCHES = (
+    "VEKTRA_ASSESS_WORKER_ALLOW_UNBOUND",
+    "VEKTRA_ASSESS_PRIVACY_ALLOW_UNSET",
+    "VEKTRA_ASSESS_MOODLE_ALLOW_HTTP",
+)
+
+
+async def _worker_checks_with(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, switch: str, env: str | None
+) -> StartupValidationError:
+    d = _worker_keys(tmp_path / "w")
+    monkeypatch.setenv("VEKTRA_ASSESS_ENABLED", "true")
+    monkeypatch.setenv("VEKTRA_ASSESS_SECRETS_DIR", str(d))
+    monkeypatch.delenv("VEKTRA_ASSESS_WORKER_DATABASE_URL", raising=False)
+    monkeypatch.setenv(switch, "true")
+    if env is None:
+        monkeypatch.delenv("VEKTRA_ENV", raising=False)
+    else:
+        monkeypatch.setenv("VEKTRA_ENV", env)
+    with pytest.raises(StartupValidationError) as e:
+        await assess_worker.run_checks()
+    return e.value
+
+
+@pytest.mark.parametrize("switch", _WORKER_DEV_SWITCHES)
+async def test_a_worker_dev_switch_with_vektra_env_unset_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, switch: str
+) -> None:
+    err = await _worker_checks_with(tmp_path, monkeypatch, switch, None)
+    assert switch in err.detail and "VEKTRA_ENV unset" in err.detail
+    assert "set VEKTRA_ENV=development explicitly" in err.detail
+
+
+@pytest.mark.parametrize("switch", _WORKER_DEV_SWITCHES)
+async def test_a_worker_dev_switch_with_explicit_development_is_accepted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, switch: str
+) -> None:
+    err = await _worker_checks_with(tmp_path, monkeypatch, switch, "development")
+    # past every dev-switch check: the next refusal is the missing worker DSN
+    assert "VEKTRA_ASSESS_WORKER_DATABASE_URL is unset" in err.detail, err.detail
+
+
+@pytest.mark.parametrize("switch", _WORKER_DEV_SWITCHES)
+async def test_a_worker_dev_switch_with_explicit_production_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, switch: str
+) -> None:
+    err = await _worker_checks_with(tmp_path, monkeypatch, switch, "production")
+    assert switch in err.detail and "VEKTRA_ENV=production" in err.detail

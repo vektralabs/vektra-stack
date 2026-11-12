@@ -133,7 +133,7 @@ async def evaluate_render(
     async with acquire() as conn:
         act = (await conn.execute(_DB, {"s": site_id, "u": userid, "c": cmid})).first()
         privacy = await deps.privacy(conn, site_id) or (
-            settings.privacy_allow_unset and settings.env == "development"
+            settings.privacy_allow_unset and settings.is_development
         )
     if act is None:
         return GateDecision(Code.NOT_ENABLED, ButtonState.NOT_ENABLED), None

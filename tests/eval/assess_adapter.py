@@ -159,7 +159,8 @@ def build_runner(
     return build_assess_runner(
         settings,
         safeguard=overrides.pop("safeguard", None)
-        or build_assess_safeguard(settings.safeguard_mode),
+        # the settings, not the mode: the safeguard/locality rule holds here too
+        or build_assess_safeguard(settings),
         trace_writer=overrides.pop("trace_writer", sink),
         audit=overrides.pop("audit", sink),
         **overrides,

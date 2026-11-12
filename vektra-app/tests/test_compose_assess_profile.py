@@ -296,6 +296,50 @@ def test_the_dev_file_only_opts_the_worker_in_and_pins_the_environment() -> None
         assert svc == base["services"][name], f"the dev file must not change {name}"
 
 
+def test_every_assess_vektra_process_receives_vektra_env() -> None:
+    """Review of #203: the worker and the parser have no env_file, so without an explicit
+    entry they never see the operator's VEKTRA_ENV, and the API and the worker would judge
+    "development" differently. Every assess service that runs the vektra image gets it, by
+    interpolation like the other shared settings."""
+    import yaml
+
+    raw = yaml.safe_load((ROOT / "docker-compose.assess.yml").read_text())
+    missing = [
+        name
+        for name, svc in raw["services"].items()
+        if svc.get("image") == "vektra-stack"
+        and "VEKTRA_ENV" not in (svc.get("environment") or {})
+    ]
+    assert missing == []
+    assert raw["services"]["vektra-assess-worker"]["environment"]["VEKTRA_ENV"] == (
+        "${VEKTRA_ENV:-}"
+    )
+
+
+def test_the_dev_file_passes_the_safeguard_locality_rule() -> None:
+    """Plan 2a-1.11: the dev overlay sets SAFEGUARD_MODE=none, which the API accepts only because
+    the same file pins VEKTRA_ENV=development. The rendered API environment must pass the rule."""
+    from vektra_app.assess_llm import check_safeguard_locality
+    from vektra_assess.config import VektraAssessSettings
+
+    dev = _render(
+        "docker-compose.yml",
+        "docker-compose.assess.yml",
+        "docker-compose.assess.dev.yml",
+    )
+    api_env = dev["services"]["vektra"]["environment"]
+    keys = (
+        "VEKTRA_ENV",
+        "VEKTRA_ASSESS_SAFEGUARD_MODE",
+        "VEKTRA_ASSESS_PROVIDER_LOCALITY",
+    )
+    settings = VektraAssessSettings.model_validate(
+        {k: api_env[k] for k in keys if api_env.get(k)}
+    )
+    assert settings.safeguard_mode == "none" and settings.env == "development"
+    check_safeguard_locality(settings)  # accepted: no StartupValidationError
+
+
 def _without_permitted_overrides(
     dev_env: dict[str, str], base_env: dict[str, str], permitted: set[str]
 ) -> dict[str, str]:

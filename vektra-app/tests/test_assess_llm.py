@@ -32,17 +32,39 @@ def _settings(**kw: Any) -> VektraAssessSettings:
 
 def test_presidio_falling_open_is_a_startup_error() -> None:
     with pytest.raises(StartupValidationError, match="fell back to passthrough"):
-        build_assess_safeguard("presidio", factory=lambda _m: PassthroughSafeguard())
+        build_assess_safeguard(_settings(), factory=lambda _m: PassthroughSafeguard())
 
 
 def test_a_loaded_presidio_is_returned() -> None:
     real = _Real()
-    assert build_assess_safeguard("presidio", factory=lambda _m: real) is real
+    assert build_assess_safeguard(_settings(), factory=lambda _m: real) is real
 
 
 def test_none_only_when_explicit() -> None:
-    assert isinstance(build_assess_safeguard("none"), PassthroughSafeguard)
+    none_dev = _settings(VEKTRA_ASSESS_SAFEGUARD_MODE="none", VEKTRA_ENV="development")
+    assert isinstance(build_assess_safeguard(none_dev), PassthroughSafeguard)
     assert _settings().safeguard_mode == "presidio"  # the default is the safe one
+
+
+@pytest.mark.parametrize(
+    "env",
+    [{}, {"VEKTRA_ENV": "production"}, {"VEKTRA_ENV": "staging"}],
+    ids=["unset", "production", "staging"],
+)
+def test_the_builder_itself_refuses_none_with_a_cloud_model(
+    env: dict[str, str],
+) -> None:
+    """Review of #203: the rule holds wherever the safeguard is built, not only at step 13."""
+    settings = _settings(VEKTRA_ASSESS_SAFEGUARD_MODE="none", **env)
+    with pytest.raises(StartupValidationError, match="LOCALITY=cloud") as e:
+        build_assess_safeguard(settings)
+    assert "with a cloud model the safeguard is required" in e.value.remediation
+    onprem = _settings(
+        VEKTRA_ASSESS_SAFEGUARD_MODE="none",
+        VEKTRA_ASSESS_PROVIDER_LOCALITY="onprem",
+        **env,
+    )
+    assert isinstance(build_assess_safeguard(onprem), PassthroughSafeguard)
 
 
 def test_the_assess_llm_has_its_own_model_and_no_fallback(
@@ -281,7 +303,7 @@ def test_a_real_presidio_load_failure_refuses_startup(
     monkeypatch.delitem(sys.modules, "vektra_core.safeguards.presidio", raising=False)
     monkeypatch.setattr(builtins, "__import__", failing)
     with pytest.raises(StartupValidationError, match="fell back to passthrough"):
-        build_assess_safeguard("presidio")
+        build_assess_safeguard(_settings())
 
 
 # --- NFR-023 activation at startup ---------------------------------------------------------------
@@ -421,6 +443,151 @@ async def test_the_dev_bypass_is_refused_outside_development(
     assert app.state.assess_llm_activated is True
 
 
+# --- the safeguard and the model's locality (plan 2a-1.11, product owner 2026-11-11) -------------
+#
+# | VEKTRA_ENV      | VEKTRA_ASSESS_PROVIDER_LOCALITY | VEKTRA_ASSESS_SAFEGUARD_MODE=none |
+# | development     | any                             | accepted                          |
+# | not development | onprem                          | accepted                          |
+# | not development | cloud (the default)             | refused at startup                |
+
+_CLOUD_REFUSAL = (
+    "VEKTRA_ASSESS_SAFEGUARD_MODE=none with VEKTRA_ASSESS_PROVIDER_LOCALITY=cloud is only "
+    "honoured with VEKTRA_ENV=development"
+)
+
+
+@pytest.mark.parametrize("locality", ["cloud", "onprem"])
+async def test_none_is_accepted_in_development_with_any_locality(
+    monkeypatch: pytest.MonkeyPatch, locality: str
+) -> None:
+    from vektra_app.assess_llm import step_13_assess_llm_check
+
+    _enabled(
+        monkeypatch,
+        VEKTRA_ENV="development",
+        VEKTRA_ASSESS_SAFEGUARD_MODE="none",
+        VEKTRA_ASSESS_PROVIDER_LOCALITY=locality,
+    )
+    app = _App()
+    app.state.assess_engine = _Engine(active=True)
+    await step_13_assess_llm_check(app)
+    assert isinstance(app.state.assess_safeguard, PassthroughSafeguard)
+
+
+@pytest.mark.parametrize("env", ["production", "staging"])
+async def test_none_is_accepted_outside_development_with_an_onprem_model(
+    monkeypatch: pytest.MonkeyPatch, env: str
+) -> None:
+    from vektra_app.assess_llm import step_13_assess_llm_check
+
+    _enabled(
+        monkeypatch,
+        VEKTRA_ENV=env,
+        VEKTRA_ASSESS_SAFEGUARD_MODE="none",
+        VEKTRA_ASSESS_PROVIDER_LOCALITY="onprem",
+    )
+    app = _App()
+    app.state.assess_engine = _Engine(active=True)
+    await step_13_assess_llm_check(app)
+    assert isinstance(app.state.assess_safeguard, PassthroughSafeguard)
+
+
+@pytest.mark.parametrize("locality", [None, "cloud"])  # None: the default, cloud
+@pytest.mark.parametrize("env", ["production", "staging"])
+async def test_none_is_refused_outside_development_with_a_cloud_model(
+    monkeypatch: pytest.MonkeyPatch, env: str, locality: str | None
+) -> None:
+    from vektra_app.assess_llm import step_13_assess_llm_check
+
+    extra = {"VEKTRA_ASSESS_PROVIDER_LOCALITY": locality} if locality else {}
+    monkeypatch.delenv("VEKTRA_ASSESS_PROVIDER_LOCALITY", raising=False)
+    _enabled(monkeypatch, VEKTRA_ENV=env, VEKTRA_ASSESS_SAFEGUARD_MODE="none", **extra)
+    app = _App()
+    app.state.assess_engine = _Engine(active=True)
+    with pytest.raises(StartupValidationError) as e:
+        await step_13_assess_llm_check(app)
+    err = e.value
+    assert err.step == "assess_llm_check"
+    assert _CLOUD_REFUSAL in err.detail and f"VEKTRA_ENV={env}" in err.detail
+    assert "with a cloud model the safeguard is required" in err.remediation
+    assert "VEKTRA_ASSESS_SAFEGUARD_MODE=presidio" in err.remediation
+    assert "VEKTRA_ASSESS_PROVIDER_LOCALITY=onprem" in err.remediation
+    assert not hasattr(
+        app.state, "assess_safeguard"
+    )  # refused before anything is built
+
+
+async def test_presidio_is_still_the_default_and_starts_with_a_cloud_model_in_production(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from vektra_app.assess_llm import step_13_assess_llm_check
+
+    monkeypatch.delenv("VEKTRA_ASSESS_SAFEGUARD_MODE", raising=False)
+    monkeypatch.delenv("VEKTRA_ASSESS_PROVIDER_LOCALITY", raising=False)
+    _enabled(monkeypatch, VEKTRA_ENV="production")
+    assert _settings().safeguard_mode == "presidio"
+    assert _settings().provider_locality == "cloud"
+    app = _App()
+    app.state.assess_engine = _Engine(active=True)
+    real = _Real()
+    seen: list[str] = []
+    await step_13_assess_llm_check(
+        app, safeguard_factory=lambda m: seen.append(m) or real
+    )
+    assert seen == ["presidio"] and app.state.assess_safeguard is real
+
+
+# --- the API's dev switches need VEKTRA_ENV=development set EXPLICITLY ------------------------
+
+_API_DEV_SWITCHES = (
+    {"VEKTRA_ASSESS_LLM_ALLOW_UNACTIVATED": "true"},
+    {"VEKTRA_ASSESS_SAFEGUARD_MODE": "none"},  # with the default cloud locality
+)
+
+
+async def _step_13_with(
+    monkeypatch: pytest.MonkeyPatch, switch: dict[str, str], env: str | None
+) -> Any:
+    from vektra_app.assess_llm import step_13_assess_llm_check
+
+    monkeypatch.delenv("VEKTRA_ASSESS_PROVIDER_LOCALITY", raising=False)
+    _enabled(monkeypatch, **switch)
+    if env is None:
+        monkeypatch.delenv("VEKTRA_ENV", raising=False)
+    else:
+        monkeypatch.setenv("VEKTRA_ENV", env)
+    app = _App()
+    app.state.assess_engine = _Engine(active=False)
+    await step_13_assess_llm_check(app, safeguard_factory=lambda _m: _Real())
+    return app
+
+
+@pytest.mark.parametrize("switch", _API_DEV_SWITCHES, ids=lambda s: next(iter(s)))
+async def test_an_api_dev_switch_with_vektra_env_unset_is_refused(
+    monkeypatch: pytest.MonkeyPatch, switch: dict[str, str]
+) -> None:
+    with pytest.raises(StartupValidationError) as e:
+        await _step_13_with(monkeypatch, switch, None)
+    assert "VEKTRA_ENV unset" in e.value.detail
+    assert "set VEKTRA_ENV=development explicitly" in e.value.detail
+
+
+@pytest.mark.parametrize("switch", _API_DEV_SWITCHES, ids=lambda s: next(iter(s)))
+async def test_an_api_dev_switch_with_explicit_development_is_accepted(
+    monkeypatch: pytest.MonkeyPatch, switch: dict[str, str]
+) -> None:
+    app = await _step_13_with(monkeypatch, switch, "development")
+    assert app.state.assess_runner is not None
+
+
+@pytest.mark.parametrize("switch", _API_DEV_SWITCHES, ids=lambda s: next(iter(s)))
+async def test_an_api_dev_switch_with_explicit_production_is_refused(
+    monkeypatch: pytest.MonkeyPatch, switch: dict[str, str]
+) -> None:
+    with pytest.raises(StartupValidationError, match="VEKTRA_ENV=production"):
+        await _step_13_with(monkeypatch, switch, "production")
+
+
 def test_prometheus_metrics_count_with_code_labels() -> None:
     from prometheus_client import REGISTRY
 
@@ -454,13 +621,13 @@ def test_a_lazily_failing_presidio_is_caught_at_startup() -> None:
             return False  # no spaCy model installed
 
     with pytest.raises(StartupValidationError, match="engines failed to load"):
-        build_assess_safeguard("presidio", factory=lambda _m: LazyPresidio())
+        build_assess_safeguard(_settings(), factory=lambda _m: LazyPresidio())
 
     class LoadedPresidio(_Real):
         def _ensure_engines(self) -> bool:
             return True
 
     assert isinstance(
-        build_assess_safeguard("presidio", factory=lambda _m: LoadedPresidio()),
+        build_assess_safeguard(_settings(), factory=lambda _m: LoadedPresidio()),
         LoadedPresidio,
     )

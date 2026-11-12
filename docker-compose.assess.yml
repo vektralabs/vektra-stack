@@ -77,6 +77,9 @@ services:
     environment:
       CMD_TARGET: assess-worker
       VEKTRA_ASSESS_ENABLED: "true"
+      # the operator's environment, as the API reads it from .env: the worker has no env_file,
+      # and its development-only switches need an explicit VEKTRA_ENV=development. Empty: unset
+      VEKTRA_ENV: ${VEKTRA_ENV:-}
       VEKTRA_ASSESS_WORKER_DATABASE_URL: postgresql+asyncpg://vektra_assess_worker@postgres:5432/vektra
       VEKTRA_ASSESS_PARSER_SOCKET: /run/vektra-assess-parser/parser.sock
       VEKTRA_ASSESS_WORKER_HEARTBEAT_FILE: /run/assess-worker/heartbeat
@@ -170,6 +173,7 @@ services:
     environment:
       CMD_TARGET: assess-parser
       VEKTRA_ASSESS_ENABLED: "true"
+      VEKTRA_ENV: ${VEKTRA_ENV:-}  # the same environment as the API and the worker
       VEKTRA_ASSESS_PARSER_SOCKET: /run/vektra-assess-parser/parser.sock
       # Non-secret limits only (the parser refuses to start with a DSN or a key in env).
       VEKTRA_ASSESS_PARSER_POOL: ${VEKTRA_ASSESS_PARSER_POOL:-3}

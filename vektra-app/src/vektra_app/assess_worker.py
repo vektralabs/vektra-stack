@@ -226,33 +226,33 @@ async def _checks() -> Checked:
             "deployment where assess is disabled."
         )
     loaded = enforce_key_matrix("worker", secrets_dir=settings.secrets_dir, step=STEP)
-    if settings.moodle_allow_http and settings.env != "development":
+    if settings.moodle_allow_http and not settings.is_development:
         raise StartupValidationError(
             step=STEP,
             detail=(
                 "VEKTRA_ASSESS_MOODLE_ALLOW_HTTP=true is only honoured with "
-                f"VEKTRA_ENV=development (this process runs with VEKTRA_ENV={settings.env})"
+                f"VEKTRA_ENV=development (this process runs with {settings.env_described})"
             ),
             remediation="Unset VEKTRA_ASSESS_MOODLE_ALLOW_HTTP; use https to Moodle.",
         )
-    if settings.worker_allow_unbound and settings.env != "development":
+    if settings.worker_allow_unbound and not settings.is_development:
         raise StartupValidationError(
             step=STEP,
             detail=(
                 "VEKTRA_ASSESS_WORKER_ALLOW_UNBOUND=true is only honoured with "
-                f"VEKTRA_ENV=development (this process runs with VEKTRA_ENV={settings.env})"
+                f"VEKTRA_ENV=development (this process runs with {settings.env_described})"
             ),
             remediation=(
                 "Unset VEKTRA_ASSESS_WORKER_ALLOW_UNBOUND: a production worker must have "
                 "every handler bound."
             ),
         )
-    if settings.privacy_allow_unset and settings.env != "development":
+    if settings.privacy_allow_unset and not settings.is_development:
         raise StartupValidationError(
             step=STEP,
             detail=(
                 "VEKTRA_ASSESS_PRIVACY_ALLOW_UNSET=true is only honoured with "
-                f"VEKTRA_ENV=development (this process runs with VEKTRA_ENV={settings.env})"
+                f"VEKTRA_ENV=development (this process runs with {settings.env_described})"
             ),
             remediation=(
                 "Unset it: a deployment configures the REQ-089 privacy settings (plan "
@@ -1087,8 +1087,13 @@ def main(bindings: Any | None = None) -> None:
         raise SystemExit(0)
     # JSON on stderr with the assess allowlist on structlog AND stdlib records (plan
     # assess-context A): before this the worker's stdlib INFO lines went nowhere.
-    from vektra_shared.log_safety import configure_assess_worker_logging
+    from vektra_assess import LOGGER_PREFIX
+    from vektra_shared.log_safety import (
+        configure_assess_worker_logging,
+        register_strict_logger_prefix,
+    )
 
+    register_strict_logger_prefix(LOGGER_PREFIX)
     configure_assess_worker_logging()
     raise SystemExit(asyncio.run(_amain(bindings)))
 

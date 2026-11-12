@@ -27,6 +27,7 @@ from dataclasses import dataclass, field
 from typing import Any
 from uuid import UUID
 
+from vektra_shared.registry import TEST_DOUBLE_MARKER as _REGISTRY_MARKER
 from vektra_shared.types import (
     ChunkEmbedding,
     CompletionChunk,
@@ -44,8 +45,9 @@ from vektra_shared.types import (
 
 RECORDER_CLASS_PREFIX = "Recording"
 #: class attribute every test double carries; ``ProviderRegistry`` refuses any instance whose class
-#: has it, subclasses included (one predicate for both checks: ``is_recorder``)
-TEST_DOUBLE_MARKER = "__vektra_test_double__"
+#: has it, subclasses included (one predicate for both checks: ``is_recorder``). Defined once, in
+#: the registry (product code), and re-exported here.
+TEST_DOUBLE_MARKER = _REGISTRY_MARKER
 
 
 class _TestDouble:

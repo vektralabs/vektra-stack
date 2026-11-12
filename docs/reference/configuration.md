@@ -172,6 +172,10 @@ Dormant by default. With `VEKTRA_ASSESS_ENABLED=false` no `/api/v1/assess` route
 A production worker refuses to start while any job handler is unbound; in the current tree none is. Development and CI
 also use `-f docker-compose.assess.dev.yml`, which sets `VEKTRA_ASSESS_WORKER_ALLOW_UNBOUND` and `VEKTRA_ENV=development`
 (see the [deployment guide](../guides/operators/assess-deployment.md#worker-start-check)).
+Every assess development-only switch (the `*_ALLOW_*` settings, `VEKTRA_ASSESS_SAFEGUARD_MODE=none`
+with a cloud model, an unset `VEKTRA_ASSESS_ERASURE_MODE` or `VEKTRA_ASSESS_UI_ORIGIN`) needs
+`VEKTRA_ENV=development` set explicitly: the platform default of `VEKTRA_ENV` is `development`, and
+assess does not count the default, so a production `.env` should set `VEKTRA_ENV=production`.
 These variables are read only by the assess code (`vektra_assess.config.VektraAssessSettings`), from the
 process environment, never from an env file. Every numeric setting has a lower and an upper
 bound; a value outside its range (or any invalid value) stops the API at startup step
@@ -188,6 +192,7 @@ printed, because some settings carry connection strings.
 | `VEKTRA_ASSESS_API_POOL_SIZE` | int | `15` | Connection pool of the assess API engine. |
 | `VEKTRA_ASSESS_WORKER_POOL_SIZE` | int | `5` | Connection pool of the worker engine. |
 | `VEKTRA_ASSESS_HEARTBEAT_MAX_AGE_S` | int | `60` | A worker heartbeat older than this makes `/health/assess` non-healthy. Range `30`..`600` (at least three beat intervals). |
+| `VEKTRA_ASSESS_LMS_PROVIDER` | str | - | Name of the LMS provider, loaded from the entry-point group `vektra.lms_providers` ([ADR-0033](../../.s2s/decisions/ADR-0033-lms-provider-protocol.md)). Lower case, `[a-z][a-z0-9_-]`, at most 64 characters; empty means unset. **Not read yet**: the worker still composes its LMS client directly. When the composition moves to the entry point, unset with `VEKTRA_ASSESS_ENABLED=true` will refuse the worker's startup and list the installed providers. |
 | `VEKTRA_ASSESS_MOODLE_CA_FILE` | path | - | CA bundle for verifying the Moodle TLS certificate (on-prem CA); the system store when unset. |
 | `VEKTRA_ASSESS_WS_TIMEOUT_CONNECT_S` | float | `3` | Connect timeout of one Moodle web-service call. |
 | `VEKTRA_ASSESS_WS_TIMEOUT_READ_S` | float | `10` | Read timeout of one Moodle web-service call. |
@@ -240,9 +245,9 @@ printed, because some settings carry connection strings.
 | `VEKTRA_ASSESS_START_BREAKER_WINDOW_S` | int | `300` | The breaker's counting window. |
 | `VEKTRA_ASSESS_START_BREAKER_COOLDOWN_S` | int | `120` | Seconds the breaker stays fully open; then half-open (one Start at a time goes through). A commit closes it (`assess_start_breaker_close`); another system rollback re-opens it. |
 | `VEKTRA_ASSESS_LLM_PRICE_PER_1K_IN` / `VEKTRA_ASSESS_LLM_PRICE_PER_1K_OUT` | float | - | Optional price table for the per-turn cost estimate; unset (on-prem) leaves the cost empty, not 0. Range `0`..`1000`. |
-| `VEKTRA_ASSESS_SAFEGUARD_MODE` | `presidio` \| `none` | `presidio` | Safeguard of the discussion runner in the API. With `presidio`, startup fails if Presidio cannot load (no silent passthrough); `none` must be set explicitly. The worker's Part B runner always uses an explicit passthrough (its import ceiling excludes Presidio; Part B has no student input). |
+| `VEKTRA_ASSESS_SAFEGUARD_MODE` | `presidio` \| `none` | `presidio` | Read by the API (startup step `assess_llm_check`). Safeguard of the discussion runner. With `presidio`, startup fails if Presidio cannot load (no silent passthrough); `none` must be set explicitly, and is accepted only as [the safeguard and locality rule](#safeguard-and-model-locality-assess) says. The worker's Part B runner always uses an explicit passthrough (its import ceiling excludes Presidio; Part B has no student input). |
 | `VEKTRA_ASSESS_STORE_TRACES` | bool | `true` | Store the runner's content-free QueryTrace (pipeline and namespace `assess-discussion`). |
-| `VEKTRA_ASSESS_PROVIDER_LOCALITY` | `onprem` \| `cloud` | `cloud` | Where the model runs. With `cloud` (the safe default) the eval suite refuses any dataset that is not synthetic before a single request. |
+| `VEKTRA_ASSESS_PROVIDER_LOCALITY` | `onprem` \| `cloud` | `cloud` | Read by the API (startup step `assess_llm_check`) and by the eval suite. Where the model runs. With `cloud` (the safe default) the eval suite refuses any dataset that is not synthetic before a single request, and the API refuses `VEKTRA_ASSESS_SAFEGUARD_MODE=none` outside development. Declare `onprem` only for a model on the institution's own hardware. See [the rule linking it to the safeguard](#safeguard-and-model-locality-assess). |
 | `VEKTRA_ASSESS_LLM_ALLOW_UNACTIVATED` | bool | `false` | Development and CI only: serve discussions while the (model, prompt_version) has no passing NFR-023 activation (without it the API starts degraded and refuses discussions). Honoured only with `VEKTRA_ENV=development`; refused at startup otherwise. |
 | `VEKTRA_ASSESS_TOKEN_ISSUER` | str | `vektra-assess` | `iss` claim of every discussion token; `aud` is always `discussion` (ARCH-067). |
 | `VEKTRA_ASSESS_PRESESSION_TTL_S` | int | `120` | Lifetime of a pre-session token minted by `POST /tokens`, 10-120 s; a value above 120 refuses startup. |
@@ -285,6 +290,24 @@ printed, because some settings carry connection strings.
 | `VEKTRA_ASSESS_JUDGE_LOCALITY` | str | `cloud` | `make eval-assess` only: where the judge runs. A non-synthetic dataset is refused before any request unless it is `onprem`. |
 | `VEKTRA_ASSESS_PARSER_MAX_PAGES` | int | `50` | PDF page cap (REQ-101: 50); a caller cannot ask for more. |
 | `VEKTRA_ASSESS_PARSER_RLIMIT_AS_MB` | int | `256` | Address-space limit (RLIMIT_AS) of each parsing child, in MiB. A file that needs more dies in its own process, not in the sidecar. |
+
+#### Safeguard and model locality (assess)
+
+`VEKTRA_ASSESS_SAFEGUARD_MODE` (`presidio` | `none`, default `presidio`) and
+`VEKTRA_ASSESS_PROVIDER_LOCALITY` (`onprem` | `cloud`, default `cloud`) are both read by the API,
+at startup step `assess_llm_check`. The API refuses `none` with a cloud model outside
+development (decided by the product owner on 2026-11-11):
+
+| `VEKTRA_ENV` | `VEKTRA_ASSESS_PROVIDER_LOCALITY` | `VEKTRA_ASSESS_SAFEGUARD_MODE=none` |
+|---|---|---|
+| `development`, set explicitly | any | accepted |
+| anything else, or unset | `onprem` | accepted |
+| anything else, or unset | `cloud` (the default) | refused at startup: with a cloud model the safeguard is required |
+
+`VEKTRA_ENV` defaults to `development` for the platform, but assess counts only an explicit
+`VEKTRA_ENV=development`; a production deployment sets `VEKTRA_ENV=production`. Set the three in
+the deployment `.env`. The exact startup error and
+its fix are in the [deployment guide](../guides/operators/assess-deployment.md#the-safeguard-and-the-models-locality).
 
 #### Connection budget (assess)
 

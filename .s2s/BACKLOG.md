@@ -93,6 +93,27 @@ So "unify" means one implementation with the policy as a parameter, not one poli
 
 ---
 
+### DEBT-043: the platform default `VEKTRA_ENV=development` makes an unset production env behave as development
+
+**Status**: draft | **Priority**: medium | **Created**: 2026-11-11
+**Origin**: the review of #203 (PR 2a-1 of the LMS separation). The coordinator decided not to change the platform default in that PR; this item records the decision still to be made.
+
+**Context**: `VektraSettings.env` and `VektraAssessSettings.env` both default to `development` (`vektra_shared/config.py`, `vektra_assess/config.py`). A deployment whose `.env` does not set `VEKTRA_ENV` therefore runs as development. Measured on the tree of #203:
+- `vektra_app/main.py` stores query traces by default when `VEKTRA_ANALYTICS_STORE_TRACES` is unset and `env == "development"`;
+- `VektraSettings` refuses `eval_mode` only when `env == "production"`, so an unset env lets it through;
+- `docs` and `.env.example` say "in production, non-TLS connections are rejected". No check on `env` that rejects non-TLS connections was found in the platform's `src` (`rg 'settings\.env|\.env ==' */src`); the claim itself needs verifying.
+
+`vektra-assess` is guarded since #203: every assess development-only switch asks `VektraAssessSettings.is_development`, which is true only for an explicit `VEKTRA_ENV=development`. The rest of the platform has no such guard.
+
+**Proposed approach**: decide platform-wide. Either the default becomes `production` (dev compose files and `docker-compose.override.yml` already set `development` explicitly), or every platform decision on `env` asks the same "explicitly development" question assess uses. Then fix or remove the non-TLS claim in the docs.
+
+**Acceptance criteria**:
+- [ ] A deployment with `VEKTRA_ENV` unset stores no traces by default and refuses `eval_mode`, shown by tests
+- [ ] The documented non-TLS behaviour is either implemented and tested, or removed from the docs and `.env.example`
+- [ ] The dev and CI stacks keep working (they set `VEKTRA_ENV=development` explicitly)
+
+---
+
 ### BUG-029: the documented `namespace` form field of `POST /api/v1/ingest` was ignored
 
 **Status**: completed (2026-11-07) | **Priority**: high | **Created**: 2026-11-07

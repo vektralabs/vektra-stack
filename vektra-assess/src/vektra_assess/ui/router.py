@@ -225,7 +225,7 @@ async def ui_page(request: Request, site: str = "") -> Response:
     # UI origin (or not https outside development) is never framed
     settings = settings_of(request)
     if ui_origin_problem(
-        settings.ui_origin, [origin], development=settings.env == "development"
+        settings.ui_origin, [origin], development=settings.is_development
     ):
         return _refused(503, assess_unavailable("site_origin"), page_headers(None))
     manifest = manifest_of(static_dir(request))

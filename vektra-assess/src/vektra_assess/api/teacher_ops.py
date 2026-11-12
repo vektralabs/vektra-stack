@@ -244,7 +244,7 @@ async def reset_session(
             raise _Refused(fail(reset_refused("already_reset")))
         if cfg is None:
             raise _Refused(fail(reset_refused("gate", gate="not_enabled")))
-        allowed_unset = settings.privacy_allow_unset and settings.env == "development"
+        allowed_unset = settings.privacy_allow_unset and settings.is_development
         privacy_ok = bool(await privacy.is_configured(conn, site)) or allowed_unset
         db_now = int((await conn.execute(_CLOCK)).scalar_one())
 

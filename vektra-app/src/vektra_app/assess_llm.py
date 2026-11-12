@@ -31,8 +31,15 @@ STEP = "assess_llm_check"
 
 
 def build_assess_safeguard(
-    mode: str, *, factory: Callable[[str], SafeguardHook] | None = None
+    settings: VektraAssessSettings,
+    *,
+    factory: Callable[[str], SafeguardHook] | None = None,
 ) -> SafeguardHook:
+    """The discussion safeguard for ``settings``: mode, model locality and the explicit
+    development flag. The safeguard/locality rule is enforced HERE, so every caller (startup
+    step 13, the eval adapter) gets it; step 13 also checks it first, for its message."""
+    check_safeguard_locality(settings)
+    mode = settings.safeguard_mode
     if mode == "none":
         return PassthroughSafeguard()
     if factory is None:
@@ -63,6 +70,35 @@ def build_assess_safeguard(
             ),
         )
     return hook
+
+
+def check_safeguard_locality(settings: VektraAssessSettings) -> None:
+    """``VEKTRA_ASSESS_SAFEGUARD_MODE=none`` is a development switch unless the model runs on
+    the institution's own hardware (plan 2a-1.11, decided by the product owner on 2026-11-11).
+
+    | ``VEKTRA_ENV``  | ``VEKTRA_ASSESS_PROVIDER_LOCALITY`` | ``SAFEGUARD_MODE=none`` |
+    | development     | any                                 | accepted                |
+    | not development | ``onprem``                          | accepted                |
+    | not development | ``cloud`` (the default)             | refused here            |
+    """
+    if settings.safeguard_mode != "none" or settings.is_development:
+        return
+    if settings.provider_locality == "onprem":
+        return
+    raise StartupValidationError(
+        step=STEP,
+        detail=(
+            "VEKTRA_ASSESS_SAFEGUARD_MODE=none with VEKTRA_ASSESS_PROVIDER_LOCALITY=cloud is "
+            "only honoured with VEKTRA_ENV=development (this process runs with "
+            f"{settings.env_described})"
+        ),
+        remediation=(
+            "with a cloud model the safeguard is required: set "
+            "VEKTRA_ASSESS_SAFEGUARD_MODE=presidio, or declare "
+            "VEKTRA_ASSESS_PROVIDER_LOCALITY=onprem if the model runs on the institution's "
+            "hardware."
+        ),
+    )
 
 
 def build_assess_llm(settings: VektraAssessSettings) -> LLMProvider:
@@ -323,17 +359,18 @@ async def step_13_assess_llm_check(
     if not settings.enabled:
         log.info("startup_step", step=STEP, status="disabled")
         return
-    if settings.llm_allow_unactivated and settings.env != "development":
+    if settings.llm_allow_unactivated and not settings.is_development:
         raise StartupValidationError(
             step=STEP,
             detail=(
                 "VEKTRA_ASSESS_LLM_ALLOW_UNACTIVATED is honoured only with VEKTRA_ENV=development "
-                f"(this process runs with VEKTRA_ENV={settings.env})"
+                f"(this process runs with {settings.env_described})"
             ),
             remediation="Unset it, and activate the model through the NFR-023 endpoint.",
         )
+    check_safeguard_locality(settings)
     app.state.assess_safeguard = build_assess_safeguard(
-        settings.safeguard_mode, factory=safeguard_factory
+        settings, factory=safeguard_factory
     )
     app.state.assess_llm = build_assess_llm(settings)
     app.state.assess_metrics = (

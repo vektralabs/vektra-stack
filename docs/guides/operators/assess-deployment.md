@@ -67,10 +67,53 @@ For development and CI only, add `-f docker-compose.assess.dev.yml`: it sets
 `VEKTRA_ENV=development`, `VEKTRA_ASSESS_WORKER_ALLOW_UNBOUND=true`,
 `VEKTRA_ASSESS_LLM_ALLOW_UNACTIVATED=true`, `VEKTRA_ASSESS_PRIVACY_ALLOW_UNSET=true` and
 `VEKTRA_ASSESS_SAFEGUARD_MODE=none`. The three boolean overrides are refused
-outside development. **`VEKTRA_ASSESS_SAFEGUARD_MODE=none` is not**: the
-API accepts it in any environment and runs the discussion with a passthrough safeguard, so a
-production `.env` must not carry it (the default is `presidio`, which refuses to start when
-Presidio cannot load).
+outside development. Every assess development-only switch needs `VEKTRA_ENV=development` set
+explicitly: the platform default of `VEKTRA_ENV` is `development`, but assess does not count the
+default, so a production `.env` should set `VEKTRA_ENV=production`. `VEKTRA_ASSESS_SAFEGUARD_MODE=none` is accepted outside development only
+with a model on the institution's own hardware: see
+[the safeguard and the model's locality](#the-safeguard-and-the-models-locality). The default
+is `presidio`, which refuses to start when Presidio cannot load.
+
+## The safeguard and the model's locality
+
+`VEKTRA_ASSESS_SAFEGUARD_MODE=none` runs the discussion with a passthrough safeguard. Whether
+the API accepts it depends on the environment and on where the model runs
+(`VEKTRA_ASSESS_PROVIDER_LOCALITY`, default `cloud`):
+
+| Environment | `VEKTRA_ASSESS_PROVIDER_LOCALITY` | `VEKTRA_ASSESS_SAFEGUARD_MODE=none` |
+|---|---|---|
+| development (`VEKTRA_ENV=development`, set explicitly) | any | accepted |
+| not development, or `VEKTRA_ENV` unset | `onprem` | accepted |
+| not development, or `VEKTRA_ENV` unset | `cloud` (the default) | refused at startup |
+
+Declare `onprem` only when the model runs on the institution's hardware. An unset `VEKTRA_ENV`
+is not development for assess, even though the platform default is `development`.
+
+**Put these values in the deployment `.env`, not in a shell export.** The API reads them from
+`.env` (its `env_file`); a value exported in the shell that runs `docker compose` is not passed
+to the API container, so the API would not see it and would start with whatever `.env` says.
+The development overlay `docker-compose.assess.dev.yml` sets `VEKTRA_ENV=development` and
+`VEKTRA_ASSESS_SAFEGUARD_MODE=none` in the API's `environment`, which wins over `.env`: with that
+overlay, `VEKTRA_ASSESS_SAFEGUARD_MODE=presidio` in `.env` has no effect. To run Presidio in a
+development stack, add a local Compose override after the overlay that sets the API's
+`VEKTRA_ASSESS_SAFEGUARD_MODE` to `presidio`.
+
+With `none` and a cloud model outside development, the API stops at startup with:
+
+```text
+[STARTUP ERROR] Step: assess_llm_check
+  Detail: VEKTRA_ASSESS_SAFEGUARD_MODE=none with VEKTRA_ASSESS_PROVIDER_LOCALITY=cloud is only honoured with VEKTRA_ENV=development (this process runs with VEKTRA_ENV=production)
+  Remediation: with a cloud model the safeguard is required: set VEKTRA_ASSESS_SAFEGUARD_MODE=presidio, or declare VEKTRA_ASSESS_PROVIDER_LOCALITY=onprem if the model runs on the institution's hardware.
+```
+
+With `VEKTRA_ENV` unset the parenthesis reads `(this process runs with VEKTRA_ENV unset; the
+default 'development' does not count for assess: set VEKTRA_ENV=development explicitly)`; every
+other development-only switch is refused with the same parenthesis.
+
+To fix it, in `.env`, either remove `VEKTRA_ASSESS_SAFEGUARD_MODE=none` (the default `presidio`
+applies; the image needs the Presidio extra and a spaCy model), or, only if the model really runs
+on the institution's hardware, add `VEKTRA_ASSESS_PROVIDER_LOCALITY=onprem`. Then recreate the
+API container (`docker compose ... up -d`), which re-reads `.env`.
 
 ## Settings the API and the worker must share
 
@@ -102,7 +145,8 @@ Settings a production deployment must set (each is refused or unset by default):
 | `VEKTRA_ASSESS_API_PUBLIC_ORIGIN` | API (setup check) | `ui_not_same_origin` cannot compare the two origins |
 | `VEKTRA_ASSESS_SMTP_HOST`, `VEKTRA_ASSESS_SMTP_FROM`, `VEKTRA_ASSESS_OPERATOR_EMAIL` | worker (and API for the test send) | the worker refuses to start |
 | `VEKTRA_ASSESS_RECIPIENT_DOMAINS` | worker | every transcript address is refused (`FAILED`, `domain_not_allowed`) |
-| `VEKTRA_ASSESS_SAFEGUARD_MODE` | API | the default `presidio` is right; `none` is accepted and disables the safeguard (see above) |
+| `VEKTRA_ASSESS_SAFEGUARD_MODE` | API | the default `presidio` is right; `none` disables the safeguard and is refused outside development unless `VEKTRA_ASSESS_PROVIDER_LOCALITY=onprem` (see [the safeguard and the model's locality](#the-safeguard-and-the-models-locality)) |
+| `VEKTRA_ASSESS_PROVIDER_LOCALITY` | API | the default `cloud` is the safe one; declare `onprem` only for a model on the institution's hardware |
 | `VEKTRA_ASSESS_ERASURE_MODE` | API | the API refuses to start outside development (OQ-033, no implicit choice) |
 | `VEKTRA_ASSESS_DB_BACKUP_RETENTION_DAYS` | worker | a startup warning: the crypto-shredding scope is unknown |
 | `VEKTRA_ASSESS_INGEST_ACCOUNT_USERNAME` | worker (setup check) | the `not_ingestion_account` item is `UNVERIFIABLE`, so the setup check is not green |

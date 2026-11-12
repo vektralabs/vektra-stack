@@ -239,6 +239,28 @@ class VektraAssessSettings(BaseSettings):
         alias="VEKTRA_ENV",
         description="Environment mode (shared with the main settings). Plain http to Moodle needs development.",
     )
+
+    @property
+    def is_development(self) -> bool:
+        """True only when ``VEKTRA_ENV=development`` was SET, never when it merely defaulted.
+
+        The platform default is ``development`` (``vektra_shared.config``, shared with every
+        component and left as is), so a production ``.env`` that forgets ``VEKTRA_ENV`` would
+        otherwise honour every assess development-only switch. Every such switch asks this.
+        """
+        return self.env == "development" and "env" in self.model_fields_set
+
+    @property
+    def env_described(self) -> str:
+        """The environment as a refusal message states it."""
+        # empty is unset too: compose passes ${VEKTRA_ENV:-} to the processes without env_file
+        if "env" not in self.model_fields_set or not self.env.strip():
+            return (
+                "VEKTRA_ENV unset; the default 'development' does not count for assess: "
+                "set VEKTRA_ENV=development explicitly"
+            )
+        return f"VEKTRA_ENV={self.env}"
+
     moodle_ca_file: Path | None = Field(
         None,
         alias="VEKTRA_ASSESS_MOODLE_CA_FILE",
@@ -447,8 +469,23 @@ class VektraAssessSettings(BaseSettings):
     provider_locality: Literal["onprem", "cloud"] = Field(
         "cloud",
         alias="VEKTRA_ASSESS_PROVIDER_LOCALITY",
-        description="Where the discussion model runs. 'cloud' (the safe default) makes the eval adapter refuse any dataset whose data_basis is not 'synthetic' before a single request (NFR-022 data basis); set 'onprem' only for a model on the institution's own hardware.",
+        description="Where the discussion model runs. 'cloud' (the safe default) makes the eval adapter refuse any dataset whose data_basis is not 'synthetic' before a single request (NFR-022 data basis), and makes the API refuse VEKTRA_ASSESS_SAFEGUARD_MODE=none outside development; set 'onprem' only for a model on the institution's own hardware.",
     )
+    # --- LMS provider (ADR-0033, plan 2a-1.6) -------------------------------------------------
+    lms_provider: str | None = Field(
+        None,
+        alias="VEKTRA_ASSESS_LMS_PROVIDER",
+        pattern=r"^[a-z][a-z0-9_-]{0,63}$",
+        description="Name of the LMS provider to load from the entry-point group vektra.lms_providers (ADR-0033 D2). Read by nothing yet: the worker composes its LMS client directly until plan task 2a-4b.5.",
+    )
+
+    @field_validator("lms_provider", mode="before")
+    @classmethod
+    def _empty_provider_is_none(cls, value: Any) -> Any:
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
+
     # --- student session lifecycle (plan assess-session-lifecycle) ---------------------------
     token_issuer: str = Field(
         "vektra-assess",
@@ -970,7 +1007,7 @@ def erasure_mode_problem(settings: VektraAssessSettings) -> str | None:
     if (
         settings.enabled
         and settings.erasure_mode is None
-        and settings.env != "development"
+        and not settings.is_development
     ):
         return (
             "VEKTRA_ASSESS_ERASURE_MODE must be set while assess is enabled outside development: "

@@ -79,6 +79,39 @@ def assert_import_ceiling(loaded: Iterable[str] | None = None) -> None:
         )
 
 
+#: What a parsing CHILD must not hold, beyond the process ceiling. The forkserver preloads
+#: ``vektra_assess.parser_sidecar.child`` (package ``__init__`` included) and every child inherits
+#: it: the child holds the parser and the stdlib, never the shared kernel or a logging stack
+#: (review of #203: a registration in ``vektra_assess/__init__`` pulled both in).
+CHILD_FORBIDDEN_MODULES: tuple[str, ...] = (
+    *FORBIDDEN_MODULES,
+    "vektra_shared",
+    "vektra_app",
+    "structlog",
+    "pydantic_settings",
+)
+
+
+def assert_child_import_ceiling(loaded: Iterable[str]) -> None:
+    """The ceiling of a parsing child, checked on what the forkserver preload leaves loaded."""
+    modules = set(loaded)
+    present = sorted(
+        m
+        for m in modules
+        if m in CHILD_FORBIDDEN_MODULES
+        or any(m.startswith(f + ".") for f in CHILD_FORBIDDEN_MODULES)
+    )
+    if present:
+        raise StartupValidationError(
+            step=STEP,
+            detail=f"forbidden modules loaded in a parsing child: {present}",
+            remediation=(
+                "A parsing child holds the parser and the stdlib only (ARCH-066). Keep imports "
+                "out of package __init__ modules on the child's import path."
+            ),
+        )
+
+
 def check_environment() -> VektraAssessSettings:
     """Refuse to run unless enabled and holding nothing. Returns the loaded settings."""
     from vektra_assess.keys import enforce_key_matrix

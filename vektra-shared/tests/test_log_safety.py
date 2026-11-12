@@ -1,4 +1,5 @@
-"""Allowlist log safety for vektra_assess.* loggers (plan assess-context A)."""
+"""Allowlist log safety for strict loggers: ``vektra_assess.*`` and every registered prefix
+(plan assess-context A; plan 2a-1.4, ADR-0033 D8)."""
 
 from __future__ import annotations
 
@@ -18,9 +19,17 @@ from vektra_shared.log_safety import (
     configure_assess_worker_logging,
     install_assess_stdlib_handler,
     is_assess_logger,
+    register_strict_logger_prefix,
 )
 
 CANARY = "CNRY-right_answer-multichoice-1a2b3c4d"
+
+
+@pytest.fixture(autouse=True)
+def _assess_prefix_registered() -> None:
+    """What ``import vektra_assess`` does (its ``__init__``): this package's tests do not import
+    the vertical, so they register its prefix themselves. Registration is idempotent."""
+    register_strict_logger_prefix("vektra_assess")
 
 
 def _reset() -> None:
@@ -215,6 +224,159 @@ def test_processor_reads_the_logger_key_too() -> None:
         None, "info", {"event": "e", "logger": "vektra_assess.a", "text": CANARY}
     )
     assert out["text"] == DROPPED
+
+
+#: a provider's logger namespace (plan 2a-1.4): neutral, and not registered by anything else
+PROVIDER_PREFIX = "vektra_lms_example"
+
+
+@pytest.fixture
+def provider_prefix(monkeypatch: pytest.MonkeyPatch) -> Iterator[str]:
+    """Register the provider prefix for one test only, and take its handler off afterwards."""
+    from vektra_shared import log_safety
+
+    monkeypatch.setattr(log_safety, "_STRICT_PREFIXES", log_safety._STRICT_PREFIXES)
+    log_safety.register_strict_logger_prefix(PROVIDER_PREFIX)
+    yield PROVIDER_PREFIX
+    lg = logging.getLogger(PROVIDER_PREFIX)
+    for h in [h for h in lg.handlers if getattr(h, "_vektra_assess", False)]:
+        lg.removeHandler(h)
+    lg.setLevel(logging.NOTSET)
+
+
+def test_a_newly_registered_prefix_gets_the_strict_redaction_on_both_stacks(
+    stream: io.StringIO, provider_prefix: str
+) -> None:
+    """ADR-0033 D8: a provider's loggers leave the ``vektra_assess.*`` namespace. Once they
+    register their prefix they are redacted exactly like the vertical's, at every level."""
+    structlog.get_logger(f"{provider_prefix}.client").debug(
+        "lms_call", status=200, token=CANARY, body=CANARY
+    )
+    logging.getLogger(f"{provider_prefix}.client").warning(
+        "lms_call_failed %s", CANARY, extra={"status": 500, "url": CANARY}
+    )
+    first, second = _lines(stream)
+    assert (first["status"], first["token"], first["body"]) == (200, DROPPED, DROPPED)
+    assert (second["status"], second["url"]) == (500, DROPPED)
+    assert CANARY not in stream.getvalue()
+
+
+def test_a_prefix_registered_after_install_is_scrubbed_before_the_root_handlers(
+    caplog: pytest.LogCaptureFixture, provider_prefix: str
+) -> None:
+    """The API installs the stdlib scrub handler at startup; a provider loaded later still gets
+    its own scrub handler, so caplog/uvicorn on the root see the record already scrubbed."""
+    install_assess_stdlib_handler()
+    try:
+        with caplog.at_level(logging.INFO, logger=f"{provider_prefix}.client"):
+            logging.getLogger(f"{provider_prefix}.client").info(
+                "lms_call", extra={"status": 1, "payload": CANARY}
+            )
+        (rec,) = caplog.records
+        assert rec.payload == DROPPED  # type: ignore[attr-defined]
+    finally:
+        _reset()
+
+
+def test_an_unregistered_prefix_is_not_redacted(stream: io.StringIO) -> None:
+    """The negative control: the strictness comes from the registration, not from the name."""
+    structlog.get_logger("vektra_lms_unregistered.client").info(
+        "lms_call", body="visible"
+    )
+    (line,) = _lines(stream)
+    assert line["body"] == "visible"
+
+
+def test_the_prefixes_are_an_immutable_snapshot_swapped_under_a_lock(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Review of #203: a record is filtered while another thread may register a prefix. The
+    filter iterates an immutable tuple, which registration replaces whole, under a lock, so
+    no iteration sees a set change size and no concurrent registration is lost."""
+    import threading
+
+    from vektra_shared import log_safety
+
+    monkeypatch.setattr(log_safety, "_STRICT_PREFIXES", ())
+    assert isinstance(log_safety._STRICT_PREFIXES, tuple)
+    names = [f"vektra_lms_t{i}" for i in range(64)]
+    start = threading.Barrier(len(names))
+
+    def reg(n: str) -> None:
+        start.wait()
+        log_safety.register_strict_logger_prefix(n)
+        assert log_safety.is_strict_logger(f"{n}.x")
+
+    threads = [threading.Thread(target=reg, args=(n,)) for n in names]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert isinstance(log_safety._STRICT_PREFIXES, tuple)
+    assert sorted(log_safety._STRICT_PREFIXES) == sorted(names)
+    for n in names:
+        lg = logging.getLogger(n)
+        for h in [h for h in lg.handlers if getattr(h, "_vektra_assess", False)]:
+            lg.removeHandler(h)
+
+
+def test_a_reinstall_never_leaves_the_prefix_without_a_scrub_handler(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """CodeRabbit 4543758782: the re-install removed the old scrub handler before adding the
+    new one, so a record logged in between reached the root handlers unscrubbed. A record
+    logged at the very moment the old handler is removed must still arrive scrubbed."""
+    from vektra_shared import log_safety
+
+    monkeypatch.setattr(log_safety, "_STRICT_PREFIXES", ())
+    log_safety.register_strict_logger_prefix("vektra_lms_reinstall")
+    target = logging.getLogger("vektra_lms_reinstall")
+    install_assess_stdlib_handler()
+    real_remove = logging.Logger.removeHandler
+
+    def remove_and_log(self: logging.Logger, h: logging.Handler) -> None:
+        real_remove(self, h)
+        if self is target:  # the window: right after a scrub handler left
+            target.info("in_window", extra={"payload": CANARY})
+
+    monkeypatch.setattr(logging.Logger, "removeHandler", remove_and_log)
+    try:
+        with caplog.at_level(logging.INFO, logger="vektra_lms_reinstall"):
+            install_assess_stdlib_handler()  # a repeat install replaces the handler
+        recs = [r for r in caplog.records if r.getMessage() == "in_window"]
+        assert recs and all(r.payload == DROPPED for r in recs)  # type: ignore[attr-defined]
+        assert CANARY not in caplog.text
+        scrubbers = [h for h in target.handlers if getattr(h, "_vektra_assess", False)]
+        assert len(scrubbers) == 1
+    finally:
+        monkeypatch.undo()
+        for h in [h for h in target.handlers if getattr(h, "_vektra_assess", False)]:
+            target.removeHandler(h)
+        target.setLevel(logging.NOTSET)
+        _reset()
+
+
+def test_a_record_scrubbed_twice_is_counted_once() -> None:
+    """During the overlap of a re-install a record passes two scrub handlers: the second pass
+    changes nothing and does not inflate the dropped-key count."""
+    from vektra_shared.log_safety import dropped_keys_total
+
+    rec = logging.makeLogRecord(
+        {"name": "vektra_assess.x", "msg": "e", "payload": CANARY, "job_id": 1}
+    )
+    before = dropped_keys_total()
+    AssessAllowlistFilter().filter(rec)
+    once = dict(rec.__dict__)
+    AssessAllowlistFilter().filter(rec)
+    assert rec.__dict__ == once and dropped_keys_total() - before == 1
+
+
+@pytest.mark.parametrize("bad", ["", "a..b", ".a", "a.", "with space", "Upper-Case"])
+def test_a_malformed_prefix_is_refused(bad: str) -> None:
+    from vektra_shared.log_safety import register_strict_logger_prefix
+
+    with pytest.raises(ValueError):
+        register_strict_logger_prefix(bad)
 
 
 def test_dropped_keys_are_counted_on_both_stacks(stream: io.StringIO) -> None:

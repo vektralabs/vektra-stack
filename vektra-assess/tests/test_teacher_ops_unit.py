@@ -124,7 +124,10 @@ def world(monkeypatch: pytest.MonkeyPatch) -> Any:
         return Readable(True) if holder["w"].readable.get(flag) else None
 
     settings = SimpleNamespace(
-        teacher_gate_max_age_s=120, privacy_allow_unset=False, env="production"
+        teacher_gate_max_age_s=120,
+        privacy_allow_unset=False,
+        env="production",
+        is_development=False,
     )
     monkeypatch.setattr(ops, "engine_of", lambda r: SimpleNamespace(begin=begin))
     monkeypatch.setattr(ops, "settings_of", lambda r: settings)

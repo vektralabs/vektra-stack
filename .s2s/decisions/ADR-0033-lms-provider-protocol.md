@@ -105,7 +105,7 @@ class LmsProvider(Protocol):
     def setup_items(self) -> tuple[str, ...]: ...  # the service-account items it returns (D3)
 
     # lifecycle
-    def startup_problems(self, env: str) -> tuple[StartupProblem, ...]: ...   # was assess_worker.py:229
+    def startup_problems(self, development: bool) -> tuple[StartupProblem, ...]: ...   # was assess_worker.py:229; the resolved flag (an explicit VEKTRA_ENV=development), never the raw env (amended in 2a-1)
     async def aclose(self) -> None: ...
 
     # site and service account (REQ-079, ARCH-070)

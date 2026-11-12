@@ -248,3 +248,55 @@ def test_a_field_validator_message_is_never_copied(
         "VEKTRA_ASSESS_API_POOL_SIZE: Input should be greater than or equal to 1"
         in detail
     )
+
+
+# --- development is explicit (assess only; the platform default stays "development") ---------
+
+
+def test_development_must_be_set_explicitly(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("VEKTRA_ENV", raising=False)
+    defaulted = VektraAssessSettings()
+    assert defaulted.env == "development"  # the shared default, unchanged
+    assert defaulted.is_development is False
+    assert "VEKTRA_ENV unset" in defaulted.env_described
+    monkeypatch.setenv("VEKTRA_ENV", "development")
+    assert VektraAssessSettings().is_development is True
+    monkeypatch.setenv("VEKTRA_ENV", "production")
+    prod = VektraAssessSettings()
+    assert (
+        prod.is_development is False and prod.env_described == "VEKTRA_ENV=production"
+    )
+    explicit = VektraAssessSettings.model_validate({"VEKTRA_ENV": "development"})
+    assert explicit.is_development is True
+    # compose forwards ${VEKTRA_ENV:-}: an empty value is unset, never development
+    empty = VektraAssessSettings.model_validate({"VEKTRA_ENV": ""})
+    assert empty.is_development is False and "VEKTRA_ENV unset" in empty.env_described
+
+
+def test_the_erasure_default_needs_an_explicit_development(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from vektra_assess.config import erasure_mode_problem
+
+    monkeypatch.delenv("VEKTRA_ENV", raising=False)
+    on = {"VEKTRA_ASSESS_ENABLED": "true"}
+    assert erasure_mode_problem(VektraAssessSettings.model_validate(on)) is not None
+    dev = VektraAssessSettings.model_validate({**on, "VEKTRA_ENV": "development"})
+    assert erasure_mode_problem(dev) is None
+
+
+# --- LMS provider name (ADR-0033, plan 2a-1.6) ------------------------------------------------
+
+
+def test_the_lms_provider_is_unset_by_default_and_read_by_its_alias() -> None:
+    assert VektraAssessSettings().lms_provider is None
+    s = VektraAssessSettings.model_validate({"VEKTRA_ASSESS_LMS_PROVIDER": "example"})
+    assert s.lms_provider == "example"
+    blank = VektraAssessSettings.model_validate({"VEKTRA_ASSESS_LMS_PROVIDER": " "})
+    assert blank.lms_provider is None  # an empty compose value means unset
+
+
+@pytest.mark.parametrize("bad", ["Example", "a b", "x" * 65, "../evil", "1abc"])
+def test_a_malformed_lms_provider_name_is_refused(bad: str) -> None:
+    with pytest.raises(ValidationError):
+        VektraAssessSettings.model_validate({"VEKTRA_ASSESS_LMS_PROVIDER": bad})

@@ -474,7 +474,7 @@ async def ui_origin_distinct(ctx: CheckContext) -> Outcome:
     problem = ui_origin_problem(
         ctx.settings.ui_origin,
         [moodle] if moodle else [],
-        development=ctx.settings.env == "development",
+        development=ctx.settings.is_development,
     )
     if problem is not None:
         return missing(problem)

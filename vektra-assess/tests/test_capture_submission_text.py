@@ -4,7 +4,7 @@
 snapshot: the file-count and size caps, a file of no selected submission, a refused
 ownership check (audited), and the total text budget, which keeps what fits as partial and never
 presents a cut text as complete. Until 2a-4 these branches ran only over the Moodle provider's
-recordings (now in ``adapters/``).
+recordings (now in vektra-moodle-discuss ``provider/``).
 """
 
 from __future__ import annotations

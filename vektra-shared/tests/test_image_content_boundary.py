@@ -33,7 +33,10 @@ import itertools
 import posixpath
 import re
 import shlex
+import subprocess
 from pathlib import Path
+
+import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DOCKERFILE = REPO_ROOT / "Dockerfile"
@@ -577,19 +580,16 @@ def test_tracked_test_assets_fall_outside_every_copied_directory() -> None:
     roots = _shipped_roots()
     assets = [
         p.relative_to(REPO_ROOT).as_posix()
-        for pattern in ("vektra-*/tests/**/*", "tests/**/*", "adapters/*/tests/**/*")
+        for pattern in ("vektra-*/tests/**/*", "tests/**/*")
         for p in REPO_ROOT.glob(pattern)
         if p.is_file() and "__pycache__" not in p.parts
     ]
-    # the guard must have something to judge: the sink and the canary datasets exist in the tree
+    # the guard must have something to judge: the sink and the parser corpus exist in the tree
+    # (the canary datasets and the recordings left with the Moodle provider, plan 2b)
     assert any(a.endswith("fixtures/mailsink.py") for a in assets), (
         "mail sink not found"
     )
-    assert any("/canary/" in a for a in assets), "canary datasets not found"
-    # the LMS provider's recordings (ADR-0033 D10) are test assets too, and judged the same way
-    assert any("/fixtures/moodle_ws/" in a for a in assets), (
-        "provider recordings not found"
-    )
+    assert any("/fixtures/parser/" in a for a in assets), "parser corpus not found"
     shipped = sorted(a for a in assets if any(_under(a, r) for r in roots))
     assert shipped == [], f"test assets inside a copied directory: {shipped[:20]}"
 
@@ -888,15 +888,30 @@ def test_the_wheel_check_can_say_no(tmp_path: Path) -> None:
     assert "vektra_testkit/recorders.py" in kit_offenders(names)
 
 
-# --- ADR-0033 D6, OD-6 (plan task 2a-4b.10): an LMS provider ships only in its image variant ------
-# The default image holds no provider: no ``vektra_lms_*`` package, no file of ``adapters/``. The
-# variant built with ``--build-arg INSTALL_LMS_PROVIDER=moodle`` holds the Moodle one. The build
-# picks a provider stage by that argument (``FROM lms-provider-${INSTALL_LMS_PROVIDER:-none}``),
+# --- ADR-0033 D6, OD-6 (plan tasks 2a-4b.10, 2b.2, 2b.3): a provider ships only in its variant ---
+# The default image holds no provider: no ``vektra_lms_*`` package. The variant built with
+# ``--build-arg INSTALL_LMS_PROVIDER=moodle`` holds the Moodle one, and since phase 2b that is the
+# wheel released from the provider's repository, installed by version and sha256 from its pin file
+# ``docker/lms-providers/<name>.txt`` (the one place the pin lives), never built from this tree.
+# The build picks a provider stage by that argument (``FROM lms-provider-${INSTALL_LMS_PROVIDER:-none}``),
 # and BuildKit builds only the stage it picks, so the checks below read the Dockerfile per stage.
+# The built image is checked by tests/assess/test_lms_provider_image.py (the assess-stack job).
 LMS_ARG = "INSTALL_LMS_PROVIDER"
 LMS_DIST_PREFIX = "vektra-lms-"
-ADAPTERS = "adapters"
+PIN_DIR = "docker/lms-providers"
 _FROM = re.compile(r"^FROM\s+(\S+)(?:\s+AS\s+(\S+))?", re.IGNORECASE)
+_PIN_LINE = re.compile(
+    r"^(?P<dist>vektra-lms-[a-z0-9-]+) @ "
+    r"(?P<url>https://github\.com/vektralabs/[a-z0-9-]+/releases/download/(?P<tag>[^/\s]+)/"
+    r"(?P<file>[^/\s]+\.whl)) --hash=sha256:(?P<sha256>[0-9a-f]{64})$"
+)
+#: the flags every provider install must carry, and why
+REQUIRED_INSTALL_FLAGS = (
+    "--require-hashes",  # the downloaded bytes must have the pinned sha256, or the build fails
+    "--no-deps",  # vektra-shared is on no index: the venv's own is used, checked by `uv pip check`
+    "--no-index",  # nothing is looked up anywhere: the pinned URL is the only source
+    "--no-config",  # the workspace's [tool.uv] settings are not this install's
+)
 
 
 def dockerfile_stages(dockerfile_text: str) -> list[tuple[str, str, list[str]]]:
@@ -934,6 +949,96 @@ def default_install() -> list[str]:
     return _stage_syncs("builder")[-1]
 
 
+def parse_pin(text: str) -> dict[str, str]:
+    """The one requirement of a pin file: a ``vektra-lms-*`` wheel by https URL from a vektralabs
+    release, with its sha256; the version is the wheel file name's, and the release tag must
+    carry it. Anything else (no hash, a second line, an index name, a version the URL does not
+    carry) is refused."""
+    lines = [
+        ln.strip()
+        for ln in text.splitlines()
+        if ln.strip() and not ln.lstrip().startswith("#")
+    ]
+    if len(lines) != 1:
+        raise ValueError(
+            f"a pin file holds exactly one requirement, found {len(lines)}"
+        )
+    m = _PIN_LINE.match(lines[0])
+    if not m:
+        raise ValueError(f"not a hashed wheel URL of a vektralabs release: {lines[0]}")
+    pin = m.groupdict()
+    package = pin["dist"].replace("-", "_")
+    w = re.fullmatch(re.escape(package) + r"-([^-]+)-py3-none-any\.whl", pin["file"])
+    if not w:
+        raise ValueError(
+            f"the wheel {pin['file']} is not a pure wheel of {pin['dist']}"
+        )
+    pin["version"] = w.group(1)
+    if not pin["tag"].endswith(f"v{pin['version']}"):
+        raise ValueError(
+            f"release tag {pin['tag']} does not carry version {pin['version']}"
+        )
+    return pin
+
+
+def provider_install_problems(name: str, lines: list[str]) -> list[str]:
+    """What is wrong with the provider stage ``lms-provider-<name>``: it must copy its pin file
+    and nothing else from the context, and run one ``uv pip install`` of exactly that file with
+    every flag of REQUIRED_INSTALL_FLAGS, then ``uv pip check``; no ``uv sync`` and no other
+    install (a sync or a second install could add a provider that no hash pins)."""
+    problems = []
+    pin = f"{PIN_DIR}/{name}.txt"
+    copies = [
+        shlex.split(ln)[1:]
+        for ln in lines
+        if ln.split(maxsplit=1)[0].upper() in {"COPY", "ADD"}
+    ]
+    sources = [_normalise(s) for s in context_copy_sources("\n".join(lines))]
+    if sources != [pin]:
+        problems.append(f"copies {sources} from the context, not exactly {pin}")
+    dest = copies[0][-1] if len(copies) == 1 else None
+    runs = [ln for ln in lines if ln.split(maxsplit=1)[0].upper() == "RUN"]
+    if len(runs) != 1:
+        problems.append(f"{len(runs)} RUN instructions, not one")
+    installs = [
+        m.group(0)
+        for ln in runs
+        for m in re.finditer(r"\b(?:uv )?pip3? install\b[^;&|]*", ln)
+    ]
+    if len(installs) != 1:
+        problems.append(f"{len(installs)} installs, not one: {installs}")
+    else:
+        args = shlex.split(installs[0])
+        for flag in REQUIRED_INSTALL_FLAGS:
+            if flag not in args:
+                problems.append(f"the install lacks {flag}")
+        reqs = [b for a, b in itertools.pairwise(args) if a in {"-r", "--requirement"}]
+        positional = [
+            a
+            for prev, a in itertools.pairwise(["", *args])
+            if not a.startswith("-")
+            and prev not in {"-r", "--requirement", "--python", "-p"}
+            and a not in {"uv", "pip", "pip3", "install"}
+        ]
+        if reqs != [dest] or positional:
+            problems.append(
+                f"installs {reqs + positional}, not only the pin file {dest}"
+            )
+    if not any(re.search(r"\buv pip check\b", ln) for ln in runs):
+        problems.append("no `uv pip check` after the install")
+    if any(_UV_SYNC.search(ln) for ln in runs):
+        problems.append("a provider stage must not run uv sync")
+    return problems
+
+
+def _provider_stages(text: str) -> dict[str, list[str]]:
+    return {
+        n.removeprefix("lms-provider-"): lines
+        for n, _b, lines in dockerfile_stages(text)
+        if n.startswith("lms-provider-") and n != "lms-provider-none"
+    }
+
+
 def test_the_default_build_selects_the_stage_without_a_provider() -> None:
     text = DOCKERFILE.read_text()
     global_lines = dockerfile_stages(text)[0][2]
@@ -950,21 +1055,165 @@ def test_the_default_build_selects_the_stage_without_a_provider() -> None:
     assert venv_copies == ["COPY --from=venv /app/.venv /app/.venv"], venv_copies
 
 
-def test_only_a_provider_stage_copies_adapters_and_never_its_tests() -> None:
-    text = DOCKERFILE.read_text()
-    for name, _base, lines in dockerfile_stages(text):
-        sources = [_normalise(s) for s in context_copy_sources("\n".join(lines))]
-        mine = [s for s in sources if _under(s, ADAPTERS)]
-        if not name.startswith("lms-provider-") or name == "lms-provider-none":
-            assert mine == [], f"stage {name or '(global)'} copies {mine}"
-            continue
-        assert mine, f"{name} installs no provider"
-        provider = mine[0].split("/")[1]
-        assert set(mine) <= {
-            f"{ADAPTERS}/{provider}/pyproject.toml",
-            f"{ADAPTERS}/{provider}/README.md",
-            f"{ADAPTERS}/{provider}/src",
-        }, mine
+def test_every_provider_stage_installs_its_hashed_pin_and_nothing_else() -> None:
+    """Plan 2b.2: each provider stage installs the one wheel its pin file names, by sha256, and
+    each pin file has its stage (a pin no build reads would be a pin nobody checks)."""
+    stages = _provider_stages(DOCKERFILE.read_text())
+    pins = sorted(p.stem for p in (REPO_ROOT / PIN_DIR).glob("*.txt"))
+    assert "moodle" in stages, sorted(stages)
+    assert sorted(stages) == pins, (sorted(stages), pins)
+    for name, lines in stages.items():
+        assert provider_install_problems(name, lines) == [], name
+
+
+def test_the_moodle_pin_is_one_hashed_wheel_of_its_release() -> None:
+    """Plan 2b.3: the variant's wheel is pinned by version and sha256 in one place, and that
+    place names the provider's own release (the provider repository's ``provider-v*`` tag)."""
+    pin = parse_pin((REPO_ROOT / PIN_DIR / "moodle.txt").read_text(encoding="utf-8"))
+    assert pin["dist"] == "vektra-lms-moodle"
+    assert pin["url"].startswith(
+        "https://github.com/vektralabs/vektra-moodle-discuss/releases/download/provider-v"
+    ), pin["url"]
+    assert pin["tag"] == f"provider-v{pin['version']}"
+    assert re.fullmatch(r"[0-9a-f]{64}", pin["sha256"])
+
+
+def test_the_pin_parser_can_say_no() -> None:
+    """Negative control: every way a pin can stop pinning is refused."""
+    url = (
+        "https://github.com/vektralabs/vektra-moodle-discuss/releases/download/"
+        "provider-v0.9.0/vektra_lms_moodle-0.9.0-py3-none-any.whl"
+    )
+    sha = "--hash=sha256:" + "a" * 64
+    good = f"# comment\nvektra-lms-moodle @ {url} {sha}\n"
+    assert parse_pin(good)["version"] == "0.9.0"
+    bad = {
+        "no hash": f"vektra-lms-moodle @ {url}",
+        "md5": f"vektra-lms-moodle @ {url} --hash=md5:" + "a" * 32,
+        "two lines": good + good,
+        "by name": f"vektra-lms-moodle==0.9.0 {sha}",
+        "plain http": f"vektra-lms-moodle @ {url.replace('https', 'http')} {sha}",
+        "another host": f"vektra-lms-moodle @ https://example.org/vektra_lms_moodle-0.9.0-py3-none-any.whl {sha}",
+        "tag without the version": f"vektra-lms-moodle @ {url.replace('provider-v0.9.0', 'latest')} {sha}",
+        "another package's wheel": f"vektra-lms-moodle @ {url.replace('vektra_lms_moodle-', 'evil-')} {sha}",
+        "an sdist": f"vektra-lms-moodle @ {url.replace('-py3-none-any.whl', '.tar.gz')} {sha}",
+    }
+    for case, text in bad.items():
+        with pytest.raises(ValueError):
+            parse_pin(text)
+            pytest.fail(case)
+
+
+def test_the_provider_stage_check_can_say_no() -> None:
+    """Negative control: a stage that builds the provider from a tree, drops the hash check,
+    installs a second requirement or resolves dependencies is reported."""
+    pin = f"{PIN_DIR}/moodle.txt"
+    good = [
+        f"COPY {pin} /tmp/p.txt",
+        "RUN uv pip install --no-config --python /app/.venv/bin/python --no-index --no-cache "
+        "--require-hashes --no-deps -r /tmp/p.txt && uv pip check --no-config --python /app/.venv/bin/python",
+    ]
+    assert provider_install_problems("moodle", good) == []
+    cases = {
+        "from a tree": [
+            "COPY adapters/vektra-lms-moodle/src adapters/vektra-lms-moodle/src",
+            "RUN uv sync --frozen --no-dev --group lms-moodle",
+        ],
+        "no hash check": [good[0], good[1].replace("--require-hashes ", "")],
+        "resolves deps": [good[0], good[1].replace("--no-deps ", "")],
+        "a second package": [
+            good[0],
+            good[1].replace("-r /tmp/p.txt", "-r /tmp/p.txt evil"),
+        ],
+        "no pip check": [good[0], good[1].split(" && ")[0]],
+        "another file": [*good, "COPY docker/entrypoint.sh /x"],
+        "two installs": [*good, "RUN pip install vektra-lms-moodle==0.9.0"],
+    }
+    for case, lines in cases.items():
+        assert provider_install_problems("moodle", lines), case
+
+
+def _fake_wheel(out: Path) -> Path:
+    """A minimal, valid pure wheel (``vektra_lms_fake``) to install offline."""
+    import base64
+    import hashlib
+    import zipfile
+
+    files = {
+        "vektra_lms_fake/__init__.py": b"X = 1\n",
+        "vektra_lms_fake-0.0.1.dist-info/METADATA": (
+            b"Metadata-Version: 2.1\nName: vektra-lms-fake\nVersion: 0.0.1\n"
+        ),
+        "vektra_lms_fake-0.0.1.dist-info/WHEEL": (
+            b"Wheel-Version: 1.0\nGenerator: test\nRoot-Is-Purelib: true\nTag: py3-none-any\n"
+        ),
+    }
+    record = []
+    for name, data in files.items():
+        digest = base64.urlsafe_b64encode(hashlib.sha256(data).digest()).rstrip(b"=")
+        record.append(f"{name},sha256={digest.decode()},{len(data)}")
+    record.append("vektra_lms_fake-0.0.1.dist-info/RECORD,,")
+    wheel = out / "vektra_lms_fake-0.0.1-py3-none-any.whl"
+    with zipfile.ZipFile(wheel, "w") as zf:
+        for name, data in files.items():
+            zf.writestr(name, data)
+        zf.writestr("vektra_lms_fake-0.0.1.dist-info/RECORD", "\n".join(record) + "\n")
+    return wheel
+
+
+def _replayed_install(pin_file: Path, python: Path) -> subprocess.CompletedProcess[str]:
+    """The moodle stage's own ``uv pip install`` (its flags, read from the Dockerfile), with only
+    the interpreter and the pin file swapped for local ones."""
+    import subprocess
+
+    (run,) = [ln for ln in _stage("lms-provider-moodle")[2] if ln.startswith("RUN")]
+    m = re.search(r"\buv pip install\b[^;&|]*", run)
+    assert m, run
+    args = shlex.split(m.group(0))[3:]
+    swapped = []
+    for prev, arg in itertools.pairwise(["", *args]):
+        if prev == "--python":
+            arg = str(python)
+        elif prev in {"-r", "--requirement"}:
+            arg = str(pin_file)
+        swapped.append(arg)
+    return subprocess.run(
+        [_uv(), "pip", "install", *swapped],
+        cwd=REPO_ROOT,  # the workspace config is next to it: --no-config must keep it out
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+
+
+def test_the_provider_install_refuses_a_wheel_with_another_hash(tmp_path: Path) -> None:
+    """Plan 2b.2, failing first: the stage's real install command, run offline on a local wheel,
+    installs it when the pin carries its sha256 and fails, installing nothing, when one hex digit
+    differs. That failure is the build failure a tampered or re-uploaded release produces."""
+    import hashlib
+    import subprocess
+
+    wheel = _fake_wheel(tmp_path)
+    sha = hashlib.sha256(wheel.read_bytes()).hexdigest()
+    wrong = ("0" if sha[0] != "0" else "1") + sha[1:]
+    subprocess.run(
+        [_uv(), "venv", "--no-config", "-q", str(tmp_path / "venv")],
+        check=True,
+        cwd=tmp_path,
+    )
+    python = tmp_path / "venv/bin/python"
+    pin = tmp_path / "pin.txt"
+
+    pin.write_text(f"vektra-lms-fake @ {wheel.as_uri()} --hash=sha256:{wrong}\n")
+    refused = _replayed_install(pin, python)
+    assert refused.returncode != 0, refused.stdout
+    assert "hash" in refused.stderr.lower(), refused.stderr
+    assert not list((tmp_path / "venv").rglob("vektra_lms_fake/__init__.py"))
+
+    pin.write_text(f"vektra-lms-fake @ {wheel.as_uri()} --hash=sha256:{sha}\n")
+    installed = _replayed_install(pin, python)
+    assert installed.returncode == 0, installed.stderr
+    assert list((tmp_path / "venv").rglob("vektra_lms_fake/__init__.py"))
 
 
 def test_the_default_resolution_has_no_lms_provider() -> None:
@@ -974,16 +1223,33 @@ def test_the_default_resolution_has_no_lms_provider() -> None:
     assert [n for n in names if n.startswith(LMS_DIST_PREFIX)] == []
 
 
-def test_the_provider_stage_resolution_has_the_provider() -> None:
-    """Positive control: the moodle stage's install, replayed the same way, has the provider,
-    and still no test kit or pytest (the variant is a production image too)."""
-    syncs = _stage_syncs("lms-provider-moodle")
-    assert len(syncs) == 2, syncs  # both branches of INSTALL_UNSTRUCTURED
-    for args in syncs:
-        assert ("--group", "lms-moodle") in list(itertools.pairwise(args)), args
-        names = exported_packages(args)
-        assert "vektra-lms-moodle" in names
-        assert TESTKIT not in names and "pytest" not in names
+def test_the_repository_resolves_and_holds_no_provider() -> None:
+    """Plan 2b acceptance: ``adapters/`` is gone, no tracked file is a provider's source, and
+    neither the root's dependency groups nor the lock name a ``vektra-lms-*`` distribution (the
+    variant's provider comes from its pin file, never from the workspace resolution)."""
+    import tomllib
+
+    assert not (REPO_ROOT / "adapters").exists()
+    assert [
+        f for f in _tracked_files() if re.search(r"(^|/)vektra_lms_[a-z0-9_]+/", f)
+    ] == []
+    root = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text())
+    grouped = [
+        d
+        for group in root.get("dependency-groups", {}).values()
+        for d in group
+        if isinstance(d, str) and d.startswith(LMS_DIST_PREFIX)
+    ]
+    assert grouped == []
+    assert not [
+        s
+        for s in root["tool"]["uv"].get("sources", {})
+        if s.startswith(LMS_DIST_PREFIX)
+    ]
+    lock = tomllib.loads((REPO_ROOT / "uv.lock").read_text())
+    assert [
+        p["name"] for p in lock["package"] if p["name"].startswith(LMS_DIST_PREFIX)
+    ] == []
 
 
 def test_no_shipped_source_imports_an_lms_provider() -> None:

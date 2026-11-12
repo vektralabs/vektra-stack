@@ -37,13 +37,9 @@ dev = [
     # the recording test doubles and the LMS conformance kit (plan task 3.1): dev only
     "vektra-testkit",
 ]
-# The Moodle LMS provider (ADR-0033 D6): staged in adapters/, NOT a workspace member and not in the
-# default image. Opt in with `uv sync --group lms-moodle` (its tests: `make test-lms-moodle`).
-lms-moodle = ["vektra-lms-moodle"]
 
 [tool.uv.sources]
 vektra-testkit = { workspace = true }
-vektra-lms-moodle = { path = "adapters/vektra-lms-moodle", editable = true }
 
 # ---------------------------------------------------------------------------
 # Ruff: linter and formatter (replaces flake8, isort, black)
@@ -83,7 +79,6 @@ known-first-party = [
     "vektra_learn",
     "vektra_assess",
     "vektra_testkit",
-    "vektra_lms_moodle",
 ]
 
 [tool.ruff.format]
@@ -231,11 +226,11 @@ source_modules = ["vektra_assess"]
 forbidden_modules = ["vektra_core", "vektra_analytics", "vektra_learn", "vektra_ingest", "vektra_index", "vektra_admin", "vektra_app"]
 
 # (c) the platform depends on the LMS Protocol only (ADR-0033 D2, D6, plan 2a-4b.11): no platform
-# package imports an LMS provider distribution (``vektra_lms_*``, staged in adapters/, never a
-# workspace member). The worker reaches its provider only through the entry point
+# package imports an LMS provider distribution (``vektra_lms_*``, released from its own repository,
+# never a workspace member). The worker reaches its provider only through the entry point
 # ``vektra.lms_providers`` (vektra_app.lms_providers). One line per provider package: import-linter
-# takes no wildcard for a root package; vektra-shared/tests/test_lms_boundary.py fails when an
-# adapter's package is not listed here.
+# takes no wildcard for a root package; vektra-assess/tests/test_boundaries.py fails when the
+# package of a provider pinned in docker/lms-providers/ is not listed here.
 [[tool.importlinter.contracts]]
 name = "no platform package imports an LMS provider"
 type = "forbidden"
@@ -360,7 +355,6 @@ asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "module"
 markers = [
     "integration: integration tests requiring Docker (excluded from ci-unit)",
-    "moodle: live contract tests against the seeded Moodle 4.3 / 5.2 dev envs (the adapters/vektra-lms-moodle provider)",
 ]
 
 [tool.coverage.run]

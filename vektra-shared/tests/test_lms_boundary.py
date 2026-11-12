@@ -40,13 +40,13 @@ Pico CSS uses `canvas` as the HTML element.
 The perimeter is read from `git ls-files`, so an untracked scratch file cannot make the
 guard pass or fail, and a missing git is a failure, never a silent pass.
 
-**LMS providers are outside it by the same rule** (ADR-0033 D6). A provider is its own
-distribution, staged in `adapters/` (the Moodle one: `adapters/vektra-lms-moodle`) until it
-moves to its home repository. `adapters/` is not a workspace member, so nothing under it is
-in the perimeter, and naming its LMS is the point there. Two checks keep that from being a
-perimeter trick: no workspace member may depend on a `vektra-lms-*` distribution (below), and
-the default image contains no provider package and no file of `adapters/`
-(`test_image_content_boundary.py`).
+**LMS providers are outside it** (ADR-0033 D6). A provider is its own distribution, released
+from its own repository (the Moodle one: `vektra-lms-moodle`, in vektra-moodle-discuss under
+`provider/`, since phase 2b; it was staged in `adapters/` before). Nothing of it is in this
+repository: the `lms-moodle` image variant installs its released wheel, pinned by version and
+sha256 in `docker/lms-providers/moodle.txt`. Two checks keep the platform from growing one back:
+no workspace member may be or depend on a `vektra-lms-*` distribution (below), and the default
+image contains no provider package (`test_image_content_boundary.py`).
 """
 
 from __future__ import annotations
@@ -345,12 +345,12 @@ def test_every_spelling_of_a_product_is_matched() -> None:
     ]
 
 
-def test_an_adapter_is_outside_the_perimeter_by_its_own_rule() -> None:
-    """``adapters/`` is not a workspace member: the member rule alone keeps it out, with no
-    special case for it in ``in_perimeter``."""
+def test_a_non_member_tree_is_outside_the_perimeter_by_its_own_rule() -> None:
+    """A tree that is not a workspace member (as ``adapters/`` was until phase 2b) is outside
+    the perimeter by the member rule alone, with no special case for it in ``in_perimeter``."""
     path = "adapters/vektra-lms-moodle/src/vektra_lms_moodle/client.py"
     assert not in_perimeter(path, MEMBERS)
-    # the same path WOULD be judged if adapters/vektra-lms-moodle were made a member
+    # the same path WOULD be judged if that tree were made a member
     assert in_perimeter(path, [*MEMBERS, "adapters"])
 
 
@@ -412,31 +412,46 @@ def test_the_baseline_is_empty() -> None:
     assert baseline.files == {} and baseline.directories == ()
 
 
-def test_no_workspace_member_is_an_adapter() -> None:
+def _pinned_providers() -> list[str]:
+    """The provider distributions the image variants install (one pin file per provider)."""
+    return sorted(
+        f"{LMS_DIST_PREFIX}{p.stem}"
+        for p in (REPO_ROOT / "docker/lms-providers").glob("*.txt")
+    )
+
+
+def test_no_workspace_member_is_a_provider() -> None:
+    """Phase 2b: the providers are released from their own repositories; none is a member here,
+    by directory or by distribution name, and no ``adapters/`` tree is left to become one."""
     members = workspace_members()
     assert not [m for m in members if m == "adapters" or m.startswith("adapters/")]
-    adapters = sorted(
-        p.parent.name for p in (REPO_ROOT / "adapters").glob("*/pyproject.toml")
-    )
-    assert adapters, "no adapter found: the next check would pass for nothing"
-    for name in adapters:
-        assert name.startswith(LMS_DIST_PREFIX), name
-        assert name not in members
+    assert not (REPO_ROOT / "adapters").exists()
+    providers = _pinned_providers()
+    assert providers, "no provider pin found: the next check would pass for nothing"
+    names = {
+        tomllib.loads((REPO_ROOT / m / "pyproject.toml").read_text())["project"]["name"]
+        for m in members
+    }
+    assert [n for n in names if n.startswith(LMS_DIST_PREFIX)] == []
+    assert not set(providers) & names
 
 
-def test_the_adapter_names_its_lms_so_the_perimeter_rule_is_not_dead() -> None:
-    """Positive control of the predicate the acceptance criteria use: the same matcher that
-    finds nothing in the platform finds the provider's own mentions."""
-    out = subprocess.run(
-        ["git", "ls-files", "-z", "--", "adapters"],
-        cwd=REPO_ROOT,
-        capture_output=True,
-        check=True,
-    ).stdout.decode()
-    sources = [p for p in out.split("\0") if "/src/" in p and p.endswith(".py")]
-    assert sources
-    named = [p for p in sources if mentions_in(p, (REPO_ROOT / p).read_text())]
-    assert len(named) > 10, named
+def test_the_real_perimeter_still_catches_a_planted_provider_reference() -> None:
+    """The predicate is not dead (this replaces the check that the staged ``adapters/`` sources
+    named their LMS, gone with them in phase 2b): the real perimeter, read from git with the real
+    members and the real, empty baseline, turns red when one platform source, the provider
+    loader itself, names the provider it loads; it stays green without the plant."""
+    members, migrations = workspace_members(), migrations_dir()
+    tree = tracked_tree(members, migrations)
+    target = "vektra-app/src/vektra_app/lms_providers.py"
+    assert target in tree
+    assert violations(tree, members, load_baseline(), migrations) == []
+    planted = {
+        **tree,
+        target: tree[target] + "\nDEFAULT_PROVIDER = 'vektra_lms_moodle'\n",
+    }
+    found = violations(planted, members, load_baseline(), migrations)
+    assert len(found) == 1 and target in found[0] and "(moodle)" in found[0], found
 
 
 # ---------------------------------------------------------------------------
@@ -482,8 +497,8 @@ def test_no_workspace_member_depends_on_an_lms_provider() -> None:
     }
     assert offenders == {}, (
         f"workspace members depend on an LMS provider: {offenders}. The platform loads its "
-        "provider by entry point (vektra.lms_providers); only the repository root's opt-in "
-        "group `lms-moodle` installs one, for development"
+        "provider by entry point (vektra.lms_providers); an image variant installs its "
+        "released wheel from a pin in docker/lms-providers/"
     )
 
 

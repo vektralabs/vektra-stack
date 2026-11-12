@@ -1,7 +1,7 @@
 """BR-012 attempt selection and BR-014 "fully graded", on the neutral values of
 ``vektra_shared.lms`` (what any LMS provider hands the vertical). The same selection on the
 recorded Moodle responses, through the Moodle provider, is the provider's suite
-(``adapters/vektra-lms-moodle/tests/test_context_selection_recorded.py``).
+(vektra-moodle-discuss ``provider/tests/test_context_selection_recorded.py``).
 """
 
 from __future__ import annotations

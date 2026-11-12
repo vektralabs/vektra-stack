@@ -1,7 +1,7 @@
 """A minimal LMS provider for the worker's startup and composition tests (ADR-0033 D6).
 
-The platform installs no provider: the Moodle one is a separate distribution (``adapters/``,
-``--group lms-moodle``). The worker tests still need one to reach the steps after the provider
+The platform installs no provider: the Moodle one is a separate distribution, released from
+its own repository (vektra-moodle-discuss ``provider/``). The worker tests still need one to reach the steps after the provider
 load, so this stub is offered through ``install`` (the loader's own ``entry_points`` seam) under
 the name ``stub``. It is NOT marked as a test double, so it loads with ``VEKTRA_ENV=production``
 like a real provider; it reads nothing (every read member is a stub that returns ``None``), and

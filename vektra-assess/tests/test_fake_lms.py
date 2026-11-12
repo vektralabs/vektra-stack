@@ -4,8 +4,6 @@ to a provider broken on purpose (the negative controls that prove the kit is not
 from __future__ import annotations
 
 import dataclasses
-import sys
-from pathlib import Path
 
 import pytest
 import structlog
@@ -40,14 +38,8 @@ from vektra_shared.lms import (
     UnreadableReason,
 )
 from vektra_shared.registry import ProviderRegistry
-
-# the kit lives in vektra-shared's test tree until plan task 3.1 makes it a distribution
-_KIT_PARENT = str(Path(__file__).resolve().parents[2] / "vektra-shared" / "tests")
-if _KIT_PARENT not in sys.path:
-    sys.path.insert(0, _KIT_PARENT)
-
-from lms_conformance import kit  # noqa: E402
-from lms_conformance.suite import LmsConformanceSuite  # noqa: E402
+from vektra_testkit.lms_conformance import kit
+from vektra_testkit.lms_conformance.suite import LmsConformanceSuite
 
 SECRET = "fake-transport-credential-9f8e7d"
 FILE_REF = SubmissionFileRef("essay.txt", "/", 5, "text/plain", LOCATOR, 1_700_000_000)

@@ -24,7 +24,8 @@ from __future__ import annotations
 from typing import Any
 
 #: the class attribute that marks a test double. Defined here, in product code, once: the
-#: recorders (a test asset) and the LMS provider loader import it from here.
+#: recorders (``vektra_testkit.recorders``, a dev-only test asset) and the LMS provider
+#: loader import it from here.
 TEST_DOUBLE_MARKER = "__vektra_test_double__"
 _TEST_DOUBLE_MARKER = TEST_DOUBLE_MARKER  # the name this module used before
 
@@ -39,9 +40,9 @@ class ProviderRegistry:
 
     def __init__(self, *, allow_test_doubles: bool = False) -> None:
         self._store: dict[str, dict[str, Any]] = {}
-        # The Recording* doubles in vektra_shared.testing_recorders ship in the package but are
-        # test assets: a production registry refuses them (plan assess-context). Only a test
-        # that builds its own registry may opt in.
+        # The Recording* doubles live in vektra_testkit.recorders, a dev-only distribution that
+        # the image never installs (plan task 3.1); a production registry still refuses them,
+        # as defence in depth (ADR-0033 D8). Only a test that builds its own registry may opt in.
         self._allow_test_doubles = allow_test_doubles
 
     def register(self, category: str, name: str, instance: Any) -> None:

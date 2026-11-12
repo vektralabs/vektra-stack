@@ -22,7 +22,7 @@ import eval_assess as E  # noqa: E402
 from fakes import ScriptedHostileLLM  # noqa: E402
 
 from vektra_assess.config import VektraAssessSettings  # noqa: E402
-from vektra_shared.testing_recorders import RecordingLLMProvider  # noqa: E402
+from vektra_testkit.recorders import RecordingLLMProvider  # noqa: E402
 
 CLEAN_JUDGE = json.dumps({k: False for k in J.CRITERIA})
 

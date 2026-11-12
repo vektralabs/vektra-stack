@@ -39,7 +39,7 @@ from vektra_assess.moodle.readers import read_submission_status
 from vektra_assess.moodle.result import Readable
 from vektra_assess.parser_protocol import FileStatus
 from vektra_assess.parser_sidecar.child import run
-from vektra_shared.testing_recorders import find_canaries
+from vektra_testkit.recorders import find_canaries
 
 OFF = TeacherConfigView(show_solution=False, rubric_source="none")
 

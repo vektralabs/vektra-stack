@@ -19,7 +19,7 @@ from test_llm_runner import _visible_bundle
 from vektra_assess.config import VektraAssessSettings
 from vektra_assess.llm import DiscussionTurnRunner, StudentTurn, TurnResult
 from vektra_assess.llm.types import PriorTurn
-from vektra_shared.testing_recorders import RecordingLLMProvider
+from vektra_testkit.recorders import RecordingLLMProvider
 
 ROOT = Path(__file__).resolve().parents[2]
 PROBES = ROOT / "tests" / "eval" / "assess" / "probes"

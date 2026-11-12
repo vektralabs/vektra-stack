@@ -1,0 +1,26 @@
+# Test-only distribution (ADR-0033 D8/D10, plan task 3.1): the recording test doubles and the
+# LMS provider conformance kit. Installed by the dev dependency groups only, never by a runtime
+# dependency and never in the production image (the Dockerfile syncs with `--no-dev`);
+# vektra-shared/tests/test_image_content_boundary.py checks both.
+[project]
+name = "vektra-testkit"
+version = "0.8.0"
+description = "Test doubles and the LMS provider conformance kit for Vektra (dev only)"
+requires-python = ">=3.12"
+# pytest is deliberately not declared: every dev group that installs the kit already brings it,
+# and the image's `--no-install-package vektra-testkit` skips the kit but not its dependencies,
+# so declaring it would put pytest in the production image.
+dependencies = [
+    "vektra-shared",
+    "structlog>=24.0",
+]
+
+[tool.uv.sources]
+vektra-shared = { workspace = true }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/vektra_testkit"]

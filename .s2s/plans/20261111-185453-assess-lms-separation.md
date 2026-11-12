@@ -322,3 +322,4 @@ Each criterion is checked against the guard's data file. A status line or a gree
   - **Parser wire**: `PROTOCOL_VERSION` 2 (worker and sidecar of different builds refuse each other); a profile is validated on its encoded size against the request header (`MAX_PROFILE_BYTES`); a request the client cannot frame is a protocol violation (the item degrades), not an exception; the profile's wire form is cached per profile.
   - **Worker lifecycle**: the provider is closed when a later startup check refuses, and at shutdown (tested). `VEKTRA_ASSESS_LMS_PROVIDER=moodle` is an active line in `.env.example`; no implicit default.
   - The Moodle setup-check module returns the Protocol's `SetupItem` and uses `SETUP_*`; its own `Outcome` and `OK`/`MISSING`/`UNVERIFIABLE` aliases are gone.
+  - **Review**: CodeRabbit skipped (163 files > 100); replaced by two local /code-review high passes (coordinator, 2026-11-12: no split, to avoid another CI and merge cycle).

@@ -4,8 +4,6 @@ to a provider broken on purpose (the negative controls that prove the kit is not
 from __future__ import annotations
 
 import dataclasses
-import sys
-from pathlib import Path
 
 import pytest
 import structlog
@@ -40,14 +38,8 @@ from vektra_shared.lms import (
     UnreadableReason,
 )
 from vektra_shared.registry import ProviderRegistry
-
-# the kit lives in vektra-shared's test tree until plan task 3.1 makes it a distribution
-_KIT_PARENT = str(Path(__file__).resolve().parents[2] / "vektra-shared" / "tests")
-if _KIT_PARENT not in sys.path:
-    sys.path.insert(0, _KIT_PARENT)
-
-from lms_conformance import kit  # noqa: E402
-from lms_conformance.suite import LmsConformanceSuite  # noqa: E402
+from vektra_testkit.lms_conformance import kit
+from vektra_testkit.lms_conformance.suite import LmsConformanceSuite
 
 SECRET = "fake-transport-credential-9f8e7d"
 FILE_REF = SubmissionFileRef("essay.txt", "/", 5, "text/plain", LOCATOR, 1_700_000_000)
@@ -355,6 +347,30 @@ async def test_every_provider_a_check_builds_is_closed_even_on_failure() -> None
             dataclasses.replace(failing, factory=lambda m: _ForgetsAnItemCounted())
         )
     assert _Counted.built and all(p.closed for p in _Counted.built)
+
+
+class _ProbeLogsItsCredential(FakeLmsProvider):
+    async def probe_capabilities(self, site, manifest, flags):  # type: ignore[no-untyped-def,override]
+        structlog.get_logger("vektra_lms_fake").info(f"probe {self.secret}")
+        return await super().probe_capabilities(site, manifest, flags)
+
+
+class _StartupLogsItsCredential(FakeLmsProvider):
+    def startup_problems(self, development):  # type: ignore[no-untyped-def,override]
+        if (
+            not development
+        ):  # only on the production path: both values must be exercised
+            structlog.get_logger("vektra_lms_fake").info(f"startup {self.secret}")
+        return super().startup_problems(development)
+
+
+@pytest.mark.parametrize("cls", [_ProbeLogsItsCredential, _StartupLogsItsCredential])
+async def test_a_credential_logged_by_a_probe_or_at_startup_is_red(
+    cls: type[FakeLmsProvider],
+) -> None:
+    """CodeRabbit 4544262249: the log check covered the reads and the setup check only."""
+    with pytest.raises(AssertionError, match="credential"):
+        await kit.check_no_secret_in_logs(_target(cls))
 
 
 class _ForgetsAnItemCounted(_Counted):

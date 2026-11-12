@@ -11,8 +11,6 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import json
-import sys
-from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -60,13 +58,8 @@ from vektra_shared.lms import (
     Unreadable,
     UnreadableReason,
 )
-
-_KIT_PARENT = str(Path(__file__).resolve().parents[2] / "vektra-shared" / "tests")
-if _KIT_PARENT not in sys.path:
-    sys.path.insert(0, _KIT_PARENT)
-
-from lms_conformance import kit  # noqa: E402
-from lms_conformance.suite import LmsConformanceSuite  # noqa: E402
+from vektra_testkit.lms_conformance import kit
+from vektra_testkit.lms_conformance.suite import LmsConformanceSuite
 
 ENV = {"VEKTRA_ASSESS_ENABLED": "true", "VEKTRA_ASSESS_WS_RPS": "1000"}
 #: LMS-side content with no slot in any neutral type: general feedback, overall feedback,

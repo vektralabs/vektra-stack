@@ -2,7 +2,7 @@
 
 A provider's test module subclasses it and names its target::
 
-    from lms_conformance.suite import LmsConformanceSuite
+    from vektra_testkit.lms_conformance.suite import LmsConformanceSuite
 
     class TestMyProviderConformance(LmsConformanceSuite):
         target = my_conformance_target()
@@ -17,7 +17,7 @@ from typing import ClassVar
 
 import pytest
 
-from lms_conformance import kit
+from vektra_testkit.lms_conformance import kit
 
 
 class LmsConformanceSuite:

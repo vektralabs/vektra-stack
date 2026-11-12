@@ -42,7 +42,7 @@ from vektra_assess.context.capture.capture import (
 from vektra_assess.context.capture.selection import NotEligibleReason
 from vektra_assess.context.part_a import SessionFacts, render_part_a
 from vektra_assess.context.snapshot import canonical_bytes
-from vektra_shared.testing_recorders import (
+from vektra_testkit.recorders import (
     RecordingVectorStoreProvider,
     find_canaries,
 )

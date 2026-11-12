@@ -75,7 +75,7 @@ class CanaryLogCapture:
     def assert_clean(
         self, canaries: Iterable[str], *, require_lines: bool = True
     ) -> None:
-        from vektra_shared.testing_recorders import assert_no_canaries
+        from vektra_testkit.recorders import assert_no_canaries
 
         if require_lines:
             assert self.lines(), (

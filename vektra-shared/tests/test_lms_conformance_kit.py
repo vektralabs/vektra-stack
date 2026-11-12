@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import pytest
 
-from lms_conformance import kit
 from vektra_shared.lms import (
     HtmlExtractionProfile,
     LmsSite,
@@ -12,6 +11,7 @@ from vektra_shared.lms import (
     ReviewHtml,
     UnreadableReason,
 )
+from vektra_testkit.lms_conformance import kit
 
 
 def test_the_member_table_is_exactly_the_protocol() -> None:

@@ -54,10 +54,13 @@ COPY vektra-analytics/pyproject.toml vektra-analytics/pyproject.toml
 COPY vektra-learn/pyproject.toml vektra-learn/pyproject.toml
 COPY vektra-assess/pyproject.toml vektra-assess/pyproject.toml
 COPY vektra-app/pyproject.toml vektra-app/pyproject.toml
+# The test kit is a workspace member, so uv needs its manifest to read the workspace; its source is
+# never copied and every sync below skips it (plan task 3.1, test_image_content_boundary.py).
+COPY testkit/pyproject.toml testkit/pyproject.toml
 
 # Install third-party dependencies only (no workspace packages yet).
 # Cached as long as manifests stay the same.
-RUN uv sync --frozen --no-install-workspace --no-dev
+RUN uv sync --frozen --no-install-workspace --no-dev --no-install-package vektra-testkit
 
 # Copy README.md files (required by hatchling for wheel metadata)
 COPY vektra-shared/README.md vektra-shared/README.md
@@ -89,9 +92,9 @@ COPY vektra-app/src vektra-app/src
 # When INSTALL_UNSTRUCTURED=true, also install the Unstructured PDF extractor.
 ARG INSTALL_UNSTRUCTURED=false
 RUN if [ "$INSTALL_UNSTRUCTURED" = "true" ]; then \
-       uv sync --frozen --no-editable --no-dev --extra sparse --extra qdrant --extra ocr; \
+       uv sync --frozen --no-editable --no-dev --no-install-package vektra-testkit --extra sparse --extra qdrant --extra ocr; \
     else \
-       uv sync --frozen --no-editable --no-dev --extra sparse --extra qdrant; \
+       uv sync --frozen --no-editable --no-dev --no-install-package vektra-testkit --extra sparse --extra qdrant; \
     fi
 
 # --------------------------------------------------------------------------

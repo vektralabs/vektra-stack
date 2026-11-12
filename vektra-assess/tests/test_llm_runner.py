@@ -15,8 +15,8 @@ from test_context_snapshot import make
 from vektra_assess.config import VektraAssessSettings
 from vektra_assess.context.assemble import assemble_context
 from vektra_assess.llm import DiscussionTurnRunner, RagNotAvailableError
-from vektra_shared.testing_recorders import RecordingLLMProvider
 from vektra_shared.types import QueryTrace
+from vektra_testkit.recorders import RecordingLLMProvider
 
 
 class _Safeguard:

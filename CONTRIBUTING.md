@@ -285,7 +285,9 @@ pin lives. The checks here are about the platform and the image, not the provide
 `--require-hashes`, a wrong hash fails the install, the default image resolves no provider) and,
 in the `assess-stack` CI job, `tests/assess/test_lms_provider_image.py` (the built variant holds
 exactly the pinned wheel's files, and the platform's loader builds the provider from it) plus a
-worker that starts on it.
+worker that starts on it. And one that is about the provider: `test-lms-provider` (`ci-unit.yml`)
+runs the provider's own suites, at the release tag of the pinned wheel, against the PR's tree, so
+a platform change that breaks the provider fails the PR that makes it.
 
 **Working on the provider** (in its repository; this workspace supplies `vektra-shared` and the
 vertical's test harness, so the provider is installed into this workspace's venv):

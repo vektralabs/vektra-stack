@@ -56,3 +56,18 @@ test("a fenced code block keeps its content and is not read as a list", () => {
   assert.ok(html.includes("<p>Before</p>"));
   assert.ok(html.includes("<p>After</p>"));
 });
+
+test("items all written as 1. across blank lines still form one list", () => {
+  const html = renderMarkdown("1. First\n\n1. Second\n\n1. Third");
+  assert.equal(count(html, "<ol"), 1);
+  assert.equal(count(html, "</ol>"), 1);
+  assert.equal(count(html, "<li"), 3);
+  assert.equal(count(html, '<li value="1">'), 2);
+});
+
+test("a contiguous ordered list without blank lines is unchanged", () => {
+  const html = renderMarkdown("1. First\n2. Second");
+  assert.equal(count(html, "<ol>"), 1);
+  assert.equal(count(html, "<li>"), 2);
+  assert.ok(!html.includes("<ol start="));
+});

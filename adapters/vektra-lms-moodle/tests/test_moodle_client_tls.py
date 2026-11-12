@@ -111,8 +111,6 @@ def client_for(ca_file: Path | None, lookups: list[str], answer: list[str]):
     env: dict[str, str] = {
         "VEKTRA_ASSESS_ENABLED": "true",
         "VEKTRA_LMS_MOODLE_ALLOWED_CIDRS": "127.0.0.0/8",
-        # the local TLS server is on loopback, allowed only in an EXPLICIT development env
-        "VEKTRA_ENV": "development",
     }
     if ca_file is not None:
         env["VEKTRA_LMS_MOODLE_CA_FILE"] = str(ca_file)
@@ -122,8 +120,12 @@ def client_for(ca_file: Path | None, lookups: list[str], answer: list[str]):
         ip = answer[0]
         return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (ip, port))]
 
+    # the local TLS server is on loopback, allowed only to a development client
     return MoodleWsClient(
-        MoodleSettings(**env), token_provider=lambda _s: TOKEN, resolver=resolver
+        MoodleSettings(**env),
+        token_provider=lambda _s: TOKEN,
+        resolver=resolver,
+        development=True,
     )  # type: ignore[arg-type]
 
 

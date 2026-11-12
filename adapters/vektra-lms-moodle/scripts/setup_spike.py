@@ -174,7 +174,11 @@ async def _run(args: argparse.Namespace) -> CheckOutcome:
             raise UsageError("--token-file is required without a database")
         token = read_token(args.token_file, args.token_key)
         client = MoodleWsClient(
-            moodle, token_provider=lambda _s: token, resolver=resolver
+            moodle,
+            token_provider=lambda _s: token,
+            resolver=resolver,
+            # the vertical's resolved flag: an explicit VEKTRA_ENV=development only
+            development=settings.is_development,
         )
         try:
             return await evaluate(
@@ -210,7 +214,12 @@ async def _run(args: argparse.Namespace) -> CheckOutcome:
             provider: Callable[[str], str | None] = lambda _s: token  # noqa: E731
         else:
             provider = secret_token_provider(moodle.secrets_dir)
-        client = MoodleWsClient(moodle, token_provider=provider, resolver=resolver)
+        client = MoodleWsClient(
+            moodle,
+            token_provider=provider,
+            resolver=resolver,
+            development=settings.is_development,
+        )
         try:
             return await run_setup_check(
                 engine,

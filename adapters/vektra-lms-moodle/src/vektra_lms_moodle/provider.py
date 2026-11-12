@@ -1,7 +1,7 @@
 """``MoodleLmsProvider``: the Moodle web-service client as an ``LmsProvider`` (ADR-0033 D1, D2).
 
-An adapter over the existing readers (``moodle/readers/*``), probes (``moodle/probes.py``) and
-service-account items (``moodle/setup_check.py``). It normalises Moodle's wire vocabulary into
+An adapter over the readers (``readers/*``), the probes (``probes.py``) and the service-account
+items (``setup_check.py``) of this package. It normalises Moodle's wire vocabulary into
 the neutral types of ``vektra_shared.lms``, in one place:
 
 - ``overduehandling`` -> ``OverdueMode``; ``grademethod`` -> ``GradeMethod``;
@@ -12,13 +12,16 @@ the neutral types of ``vektra_shared.lms``, in one place:
   question text and response and the ones that carry what Moodle hides (BR-011, D4);
 - the re-resolution refusal is ``NOT_IN_USER_COURSES``.
 
-It stays inside ``vektra_lms_moodle`` in this phase; plan 2a-4 moves it to
-``adapters/vektra-lms-moodle/``. The vertical reaches it only through the entry point
-``vektra.lms_providers: moodle`` and the Protocol.
+It is the distribution ``vektra-lms-moodle`` (``adapters/vektra-lms-moodle/`` until phase 2b moves
+it to its home repository). The platform reaches it only through the entry point
+``vektra.lms_providers: moodle`` (``build_provider``, which declares ``REQUIRED_SECRETS`` and is
+called with the composition root's ``development`` flag) and the Protocol; no platform package
+imports it.
 """
 
 from __future__ import annotations
 
+import os
 import time
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any, Literal
@@ -28,7 +31,7 @@ import structlog
 from vektra_lms_moodle import domain as m
 from vektra_lms_moodle import readers as r
 from vektra_lms_moodle.client import MoodleWsClient, SiteRef
-from vektra_lms_moodle.config import MoodleSettings
+from vektra_lms_moodle.config import MoodleSettings, legacy_names
 from vektra_lms_moodle.probes import run_probes
 from vektra_lms_moodle.readers.resolve import resolve_in_course
 from vektra_lms_moodle.setup_check import (
@@ -483,9 +486,12 @@ class MoodleLmsProvider:
         settings: MoodleSettings,
         *,
         clock: Callable[[], int] | None = None,
+        environ: Mapping[str, str] | None = None,
     ) -> None:
         self._client = client
         self._settings = settings
+        #: where the pre-2a-4 setting names are looked for (``startup_problems``)
+        self._environ = environ
         self._clock = clock
         # the full site_info of the last setup-check read, per site: the service-account items
         # need the function list and the account flags, which the neutral value does not carry
@@ -505,24 +511,45 @@ class MoodleLmsProvider:
 
     @property
     def required_secrets(self) -> tuple[str, ...]:
-        return (SECRET_NAME,)
+        return REQUIRED_SECRETS
+
+    @property
+    def call_deadline_s(self) -> float:
+        """The client's overall deadline of one call, body included (``WS_TOTAL_TIMEOUT_S``)."""
+        return float(self._settings.ws_total_timeout_s)
 
     # --- lifecycle ----------------------------------------------------------------------------
 
     def startup_problems(self, development: bool) -> tuple[StartupProblem, ...]:
+        problems: list[StartupProblem] = []
+        old = legacy_names(os.environ if self._environ is None else self._environ)
+        if old:
+            renames = ", ".join(f"{o} -> {n}" for o, n in old)
+            problems.append(
+                StartupProblem(
+                    setting=old[0][0],
+                    detail=(
+                        "settings of the Moodle LMS provider are set under their old names, "
+                        f"which are not read any more: {renames}"
+                    ),
+                    remediation=(
+                        "Rename each variable as shown (ADR-0033 OD-4, no alias; "
+                        "docs/reference/configuration.md, Moodle LMS provider)."
+                    ),
+                )
+            )
         if self._settings.moodle_allow_http and not development:
-            return (
+            problems.append(
                 StartupProblem(
                     setting="VEKTRA_LMS_MOODLE_ALLOW_HTTP",
                     detail=(
                         "VEKTRA_LMS_MOODLE_ALLOW_HTTP=true is only honoured with "
-                        "VEKTRA_ENV=development (this process runs with "
-                        f"{self._settings.env_described})"
+                        "VEKTRA_ENV=development set explicitly"
                     ),
                     remediation="Unset VEKTRA_LMS_MOODLE_ALLOW_HTTP; use https to the Moodle site.",
-                ),
+                )
             )
-        return ()
+        return tuple(problems)
 
     async def aclose(self) -> None:
         await self._client.aclose()
@@ -736,27 +763,39 @@ class MoodleLmsProvider:
         return _convert(res, _fillings)
 
 
-def build_provider() -> MoodleLmsProvider:
-    """The entry point ``vektra.lms_providers: moodle``: the provider reads its own settings
-    (``VEKTRA_LMS_MOODLE_*``) and its token secret (``assess_ws_tokens``, re-read at call time),
-    and registers its logger prefix for the strict redaction of ``vektra_shared.log_safety``
-    (its loggers are not under ``vektra_assess.*``: without this they would lose it, ADR-0033
-    D8). Nothing connects here."""
-    from vektra_lms_moodle import LOGGER_PREFIX
-    from vektra_lms_moodle.tokens import secret_token_provider
-    from vektra_shared.log_safety import register_strict_logger_prefix
+#: the secrets this provider reads, declared on its entry point so the platform knows them
+#: without building it (the worker's key matrix, the API's refusal; review of #207, finding 1)
+REQUIRED_SECRETS: tuple[str, ...] = (SECRET_NAME,)
 
-    register_strict_logger_prefix(LOGGER_PREFIX)
-    settings = MoodleSettings()
-    client = MoodleWsClient(
-        settings, token_provider=secret_token_provider(settings.secrets_dir)
-    )
-    return MoodleLmsProvider(client, settings, clock=lambda: int(time.time()))
+
+class _Factory:
+    """The entry point ``vektra.lms_providers: moodle``. ``REQUIRED_SECRETS`` is readable on it
+    without a call; called with the composition root's resolved ``development`` flag, it reads
+    the provider's own settings (an invalid one is a ``ProviderConfigurationError`` naming the
+    variable and its rule) and its token secret (re-read at call time). Nothing connects here."""
+
+    REQUIRED_SECRETS = REQUIRED_SECRETS
+
+    def __call__(self, *, development: bool) -> MoodleLmsProvider:
+        from vektra_lms_moodle.config import load_settings
+        from vektra_lms_moodle.tokens import secret_token_provider
+
+        settings = load_settings()
+        client = MoodleWsClient(
+            settings,
+            token_provider=secret_token_provider(settings.secrets_dir),
+            development=development,
+        )
+        return MoodleLmsProvider(client, settings, clock=lambda: int(time.time()))
+
+
+build_provider = _Factory()
 
 
 __all__ = [
     "MOODLE_REVIEW_PROFILE",
     "NAME",
+    "REQUIRED_SECRETS",
     "MoodleLmsProvider",
     "build_provider",
     "question_kind",

@@ -135,12 +135,16 @@ class MoodleWsClient:
         settings: MoodleSettings,
         *,
         token_provider: Callable[[str], str | None],
+        development: bool = False,
         breakers: BreakerRegistry | None = None,
         limiter: AsyncTokenBucket | None = None,
         transport: httpx.AsyncBaseTransport | None = None,
         resolver: Resolver = socket.getaddrinfo,
     ) -> None:
         self._s = settings
+        # the composition root's resolved flag (an explicit VEKTRA_ENV=development), never
+        # re-derived here; False unless told, so a client built without it is fail-closed
+        self._development = development
         self._token_for = token_provider
         self._breakers = breakers or BreakerRegistry(
             settings.breaker_threshold, settings.breaker_cooldown_s
@@ -174,8 +178,13 @@ class MoodleWsClient:
     async def aclose(self) -> None:
         await self._http.aclose()
 
+    @property
+    def plain_http_allowed(self) -> bool:
+        """Plain http: only with the switch AND the composition root's development flag."""
+        return self._s.moodle_allow_http and self._development
+
     def _allow_http(self) -> bool:
-        return self._s.moodle_allow_http and self._s.is_development
+        return self.plain_http_allowed
 
     def _cidrs(self) -> list[str]:
         return [c.strip() for c in self._s.moodle_allowed_cidrs.split(",") if c.strip()]
@@ -348,7 +357,7 @@ class MoodleWsClient:
                 site.base_url.rstrip("/") + path,
                 allowed_hosts=[parts.hostname or ""],
                 allowed_cidrs=self._cidrs(),
-                allow_loopback=self._s.is_development,
+                allow_loopback=self._development,
                 resolver=self._resolver,
             )
         except ResolutionFailed:

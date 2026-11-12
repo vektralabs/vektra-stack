@@ -362,7 +362,6 @@ async def test_reviews_carry_the_moodle_profile(branch: str) -> None:
 
 def test_startup_refuses_plain_http_outside_development() -> None:
     allow = MoodleSettings(  # type: ignore[arg-type]
-        VEKTRA_ENV="development",
         VEKTRA_LMS_MOODLE_ALLOW_HTTP="true",
     )
     p = make_provider(Replay("4.3"))
@@ -370,7 +369,7 @@ def test_startup_refuses_plain_http_outside_development() -> None:
     assert p_http.startup_problems(True) == ()
     (problem,) = p_http.startup_problems(False)
     assert problem.setting == "VEKTRA_LMS_MOODLE_ALLOW_HTTP"
-    assert "VEKTRA_ENV=development" in problem.detail
+    assert "VEKTRA_ENV=development set explicitly" in problem.detail
     assert p.startup_problems(False) == ()
 
 

@@ -47,12 +47,8 @@ globals().update(
     {k: v for k, v in vars(_assess_conftest).items() if not k.startswith("__")}
 )
 
-# what the provider's entry point does when the worker builds it (``build_provider``): its loggers
-# get the strict redaction too, also when a test builds the client directly
-from vektra_lms_moodle import LOGGER_PREFIX  # noqa: E402
-from vektra_shared.log_safety import register_strict_logger_prefix  # noqa: E402
-
-register_strict_logger_prefix(LOGGER_PREFIX)
+# The provider's own strict log prefix is registered by importing the package
+# (``vektra_lms_moodle/__init__.py``), so no test needs to do it.
 
 
 @pytest.fixture(scope="session", autouse=True)

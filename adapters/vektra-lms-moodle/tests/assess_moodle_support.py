@@ -179,7 +179,6 @@ def make_client(replay: Replay, **env: str) -> MoodleWsClient:
         live = _LIVE[replay.branch]
         settings = MoodleSettings(  # type: ignore[arg-type]
             **{
-                "VEKTRA_ENV": "development",
                 "VEKTRA_LMS_MOODLE_ALLOW_HTTP": "true",
                 "VEKTRA_LMS_MOODLE_ALLOWED_CIDRS": "127.0.0.0/8,::1/128",
                 "VEKTRA_LMS_MOODLE_WS_RPS": "1000",
@@ -188,8 +187,10 @@ def make_client(replay: Replay, **env: str) -> MoodleWsClient:
         )
         # ``localhost`` resolves to ::1 first, where the dev containers do not listen, and
         # Moodle redirects any other Host to its wwwroot: pin the IPv4 loopback address
+        # the dev sites are plain http on loopback: a development client
         return RecordingClient(
             settings,
+            development=True,
             token_provider=lambda _s: live.token,
             calls=replay.calls,
             resolver=resolver("127.0.0.1"),

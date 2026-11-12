@@ -198,12 +198,14 @@ async def test_metadata_address_is_refused_even_inside_an_allowed_range():
 async def test_plain_http_needs_development_and_the_flag():
     http_site = SiteRef("s", "http://moodle.example.org")
     assert (await make(ok({})).call(http_site, "f")).detail_code == "plain_http_refused"  # type: ignore[union-attr]
-    flag_only = settings(VEKTRA_LMS_MOODLE_ALLOW_HTTP="true", VEKTRA_ENV="production")
+    flag = settings(VEKTRA_LMS_MOODLE_ALLOW_HTTP="true")
+    # the switch alone is not enough: development is the composition root's flag, passed in
     assert (
-        await make(ok({}), s=flag_only).call(http_site, "f")
+        await make(ok({}), s=flag).call(http_site, "f")
     ).detail_code == "plain_http_refused"  # type: ignore[union-attr]
-    dev = settings(VEKTRA_LMS_MOODLE_ALLOW_HTTP="true", VEKTRA_ENV="development")
-    assert isinstance(await make(ok({}), s=dev).call(http_site, "f"), Readable)
+    assert isinstance(
+        await make(ok({}), s=flag, development=True).call(http_site, "f"), Readable
+    )
 
 
 async def test_no_token_means_unreadable_and_no_request():
@@ -504,16 +506,14 @@ def test_the_redaction_filter_handles_formatted_args_and_other_spellings():
 
 
 async def test_a_loopback_resolution_is_refused_outside_development():
-    prod = settings(
-        VEKTRA_ENV="production", VEKTRA_LMS_MOODLE_ALLOWED_CIDRS="127.0.0.0/8"
-    )
-    res = await make(ok({}), s=prod, ip="127.0.0.1").call(SITE, "f")
+    cidrs = settings(VEKTRA_LMS_MOODLE_ALLOWED_CIDRS="127.0.0.0/8")
+    res = await make(ok({}), s=cidrs, ip="127.0.0.1").call(SITE, "f")
     assert isinstance(res, Unreadable) and res.detail_code == "egress_denied"
-    dev = settings(
-        VEKTRA_ENV="development", VEKTRA_LMS_MOODLE_ALLOWED_CIDRS="127.0.0.0/8"
-    )
     assert isinstance(
-        await make(ok({"a": 1}), s=dev, ip="127.0.0.1").call(SITE, "f"), Readable
+        await make(ok({"a": 1}), s=cidrs, ip="127.0.0.1", development=True).call(
+            SITE, "f"
+        ),
+        Readable,
     )
 
 

@@ -317,7 +317,8 @@ what can be empty: the write-only fields below, `cap_minutes` and `available_unt
 `enabled` (bool), `cap_minutes` (5-120), `rubric_source` (`none`/`pasted`, plus `lms` for an
 assignment), `show_solution` (bool, default off), `rag_enabled` (only `false` is accepted: `true`
 is the field error `rag_unavailable` with `reason: operator_flag_off`), `available_until`
-(ISO 8601 with a time zone, or `null` for no limit; after the effective opening).
+(ISO 8601 with a time zone, or `null` for no limit; strictly after the opening floor below:
+`not_after_opening` with `opening_at`, or `opening_unknown` when no opening can exist).
 Write-only fields (OQ-034): `solution` and `pasted_rubric` (text, at most 20,000 code points after
 NFC normalisation with control characters other than newline and tab removed; text that is empty
 after that is a clear), `transcript_recipients` (1 to 3 addresses, each in
@@ -346,22 +347,30 @@ View (GET and PUT): `cmid`, `activity_type`, `version`, `configured`, `enabled`,
 (ACTIVE + OUTAGE), `updated_at`.
 
 `opening` (the same object in this view and in the session list's `gate`) is
-`{"at", "source", "fallback_required"}`, decided by the Start gate's own BR-006(d) / REQ-091
-rule on the worker's latest activity facts, so it cannot say "no date needed" while `/state`
-answers `close_unreadable`:
+`{"at", "source", "fallback_required"}`. It is the Start gate's own BR-006(d) / BR-007 / REQ-091
+decision (`gates.decide_opening`), applied to the worker's latest activity facts merged with the
+capability matrix: a close input the matrix does not hold as a fresh `readable` (an
+assignment's extensions, always; a quiz's `quiz_overrides` or `quiz_grace`) counts as
+unreadable even when the last facts read got it. The end-date rule, its warning,
+`PUT .../opening-fallback` and the gate panel's fallback fields read the same decision, so none
+of them can disagree with `/state`:
 
 | `source` | `at` | `fallback_required` | Meaning |
 |----------|------|---------------------|---------|
-| `activity_close` | the opening | `false` | the activity's close decides: the automatic close (every override and the grace readable), or, on the REQ-091 fallback path, the close plus grace when it is later than the teacher date |
+| `activity_close` | the opening | `false` | the activity's close decides: the automatic close (every input readable), or, on the REQ-091 path, the close plus grace when it is later than the teacher date |
 | `attested` | the opening | `false` | the REQ-091 teacher date decides (or ties the close) |
-| `unreadable` | `null` | `true` | some close input is unreadable (always for an assignment: extensions are not listable; for a quiz, an override or the grace) and no teacher date is set: Start refuses `close_unreadable` until `PUT .../opening-fallback` sets one |
-| `unreadable` | `null` | `false` | the activity's own close / cut-off cannot be read (a teacher date is set, but the gate cannot use it, and `PUT .../opening-fallback` would refuse `close_unreadable`): retry once the LMS answers |
-| `unknown` | `null` | `false` | neither a close nor a teacher date is known, or no close / cut-off is configured (BR-007: a teacher date never replaces it) |
+| `unreadable` | `null` | `true` | the close is known but another close input is unreadable and no teacher date is set: Start refuses `close_unreadable`; `PUT .../opening-fallback` accepts a date and that date opens the activity |
+| `unreadable` | `null` | `false` | the activity's own close / cut-off cannot be read: Start refuses `close_unreadable` with or without a teacher date, and `PUT .../opening-fallback` refuses `close_unreadable`; retry once the LMS answers |
+| `unknown` | `null` | `false` | no close / cut-off is configured (BR-007: Start refuses `no_close_date`; a stored teacher date never replaces it) |
 
-`unreadable` and `fallback_required` were added after 0.8.0 (additive): a client that only
-knows `activity_close` / `attested` / `unknown` must treat any other `source` as "no opening
-date". `warnings.available_until_not_after_opening` keeps comparing the end date with the
-activity's own close (or the teacher date) also while `at` is `null`.
+`fallback_required` is `true` exactly when `PUT .../opening-fallback` would accept a date, that
+date would make Start open, and Start refuses now. The end date's **floor** is `at` when it is
+decided; while `fallback_required` is `true` it is the close plus the grace (the earliest
+opening a teacher date can give); otherwise no opening exists and an `available_until` is
+refused `opening_unknown`. `warnings.available_until_not_after_opening` compares the stored
+end date with that same floor. `unreadable` and `fallback_required` were added after 0.8.0
+(additive): a client that only knows `activity_close` / `attested` / `unknown` must treat any
+other `source` as "no opening date".
 
 A change does not reach a session that has already started
 (it copied its duration, cap and snapshot at Start), with one exception: the transcript
@@ -420,12 +429,15 @@ into the session at Start; refused while the student's current session is STARTI
 OUTAGE, or CLOSED without a pending reset. The total prevails: a grant accepted at a smaller cap stays stored when the cap is
 raised, and the duration frozen at Start never exceeds 240 minutes.
 
-Opening fallback (REQ-091): accepted only while a BR-006(d) input is unreadable in the capability
-matrix (an assignment always: participants' extensions are not listable; a quiz when
-`quiz_overrides` or `quiz_grace` is not a fresh `readable`), on or after the activity's close /
-cut-off, and, once a session of the activity started, only later than the current date. The
-Start gate then opens at max(activity effective close, teacher date), or max(automatic close,
-teacher date) once every input is readable.
+Opening fallback (REQ-091): accepted while the REQ-091 path applies in the `opening` decision
+above: the activity's close / cut-off is known and some other close input is unreadable, in the
+capability matrix (an assignment always: participants' extensions are not listable; a quiz when
+`quiz_overrides` or `quiz_grace` is not a fresh `readable`) or in the last facts read (a quiz
+whose overrides could not be read). `fallback_not_needed` means every close input is readable in
+both: Start opens without a date. The date must be on or after the close / cut-off and before the
+end date, and, once a session of the activity started, only later than the current one. The
+Start gate then opens at max(close + grace, teacher date), or max(automatic close, teacher date)
+once every input is readable.
 
 List: `students` (in user-id order, 50 per page; `next_cursor` or `null`), each
 `{userid, sessions[{session_id, session_no, state, close_reason, committed_at, closed_at,
@@ -438,9 +450,8 @@ does not decrypt (a retired key, tampering) is `reason: null`, `reason_state: "u
 (alert `assess.teacher.alert` `teacher_reason_unreadable`); the list still renders. `gate`:
 `opening {at, source, fallback_required}` (identical to the configuration view's, see above),
 `fallback_reason` (`Vektra non può verificare proroghe/override per questa attività` when the
-REQ-091 fallback applies, else `null`), `fallback_date_missing` (the fallback applies in the
-capability matrix, so `PUT .../opening-fallback` accepts a date, and none is set; `opening.fallback_required`
-is the gate's own verdict on the latest facts), `active_sessions`, and
+REQ-091 path applies, i.e. `PUT .../opening-fallback` accepts a date, else `null`),
+`fallback_date_missing` (always equal to `opening.fallback_required`), `active_sessions`, and
 `override_holder` (a quiz participant's user id) only when the actor may manage overrides; never
 an override's reason, a name or an address.
 

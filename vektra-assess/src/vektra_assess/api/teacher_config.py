@@ -40,6 +40,7 @@ from vektra_assess.api.common import (
     site_of_key,
 )
 from vektra_assess.api.deps import settings_of
+from vektra_assess.api.teacher_ops import opening_for
 from vektra_assess.api.teachers import TeacherGate, header_int, path_id, verify_teacher
 from vektra_assess.audit import AssessAuditEvent, write_event
 from vektra_assess.crypto.teacher_config import (
@@ -143,8 +144,6 @@ def _facts(gate: TeacherGate) -> v.ActivityFacts:
         team_submission=flag("team_submission"),
         grading_method=method if isinstance(method, str) else None,
         lms_rubric=flag("lms_rubric"),
-        automatic_close_at=v.epoch_fact(f, "automatic_close_at"),
-        grace_s=v.epoch_fact(f, "grace_s"),
     )
 
 
@@ -243,11 +242,12 @@ async def _save(
         end = body.available_until
         new["available_until"] = None
         if end is not None:
-            opening = v.effective_opening(
-                v.gate_close(facts.close_at, facts.automatic_close_at),
-                row.attested_at if row is not None else None,
+            opening = await opening_for(
+                conn, site, gate.facts, row.attested_at if row is not None else None
             )
-            end_errors = v.check_end_date(end, opening)
+            # the end date must follow the opening the view shows (grace included); with no
+            # opening possible (no close, or the close unreadable) it is opening_unknown
+            end_errors = v.check_end_date(end, opening.floor)
             errors += end_errors
             # converted only once the rule accepted it (a naive or unrepresentable value is a
             # field error, never a conversion failure)
@@ -402,18 +402,10 @@ async def _view(conn: Any, site: UUID, cmid: int, gate: TeacherGate) -> dict[str
     flags = dict(row.flags or {}) if row is not None else {}
     attested = row.attested_at if row is not None else None
     end_at = row.end_at if row is not None else None
-    # the opening Start waits for, by the gate's own rule (REQ-091 included)
-    view = v.opening_view(
-        facts.close_at,
-        attested,
-        automatic_close_at=facts.automatic_close_at,
-        grace_s=facts.grace_s,
-    )
-    # the lower bound the end date is validated against (``check_end_date``), also when the
-    # opening itself is not yet decidable
-    floor = v.effective_opening(
-        v.gate_close(facts.close_at, facts.automatic_close_at), attested
-    )
+    # the opening Start waits for, by the gate's own rule (REQ-091 included); the warning
+    # compares the end date with the same ``floor`` the PUT validates it against
+    opening = await opening_for(conn, site, gate.facts, attested)
+    floor = opening.floor
     rec_set, rec_n = sealed.get(TRANSCRIPT_RECIPIENTS, (False, None))
     review = (await conn.execute(_REVIEW, {"s": site})).scalar()
     active = int((await conn.execute(_ACTIVE, {"s": site, "c": cmid})).scalar() or 0)
@@ -432,7 +424,7 @@ async def _view(conn: Any, site: UUID, cmid: int, gate: TeacherGate) -> dict[str
         "pasted_rubric_state": state(sealed.get(PASTED_RUBRIC, (False, None))[0]),
         "transcript_recipients_state": state(rec_set),
         "transcript_recipients_count": int(rec_n or 0) if rec_set else 0,
-        "opening": opening_json(view),
+        "opening": opening_json(opening),
         "warnings": {
             # REQ-077: the effective opening moved past the end date
             "available_until_not_after_opening": bool(

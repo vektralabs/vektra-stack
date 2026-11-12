@@ -31,6 +31,7 @@ from support.teacher_ops import (
 from support.world import auth, configure_activity, err, make_key, world
 
 from integration.test_session_preflight import _reset
+from integration.test_teacher_extra_time import caps
 from vektra_assess.api import teacher_sessions
 from vektra_assess.crypto import rotation
 from vektra_assess.crypto.envelope import InvalidTag
@@ -470,9 +471,14 @@ async def test_an_unreadable_reason_does_not_take_the_list_down(pg, worker) -> N
 async def test_the_panel_shows_the_opening_start_waits_for(pg) -> None:  # type: ignore[no-untyped-def]
     """CodeRabbit 4506916932: with a readable automatic close (an override past the quiz
     close, plus grace) the panel and the config view show it, not the quiz's own close; the
-    holder's id stays hidden from a non-viewer."""
+    holder's id stays hidden from a non-viewer. The capability matrix holds the quiz's close
+    inputs readable (otherwise the REQ-091 path applies, whatever the last facts read got)."""
     async with world(pg) as w:
         with_transcript_key(w)
+        await caps(
+            pg, w.site, "4.5 (Build: 20250101)", quiz_overrides="readable",
+            quiz_grace="readable",
+        )  # fmt: skip
         await configure_activity(pg, w.site, 908, kind="quiz", attested=False)
         await seed_teacher_gate(
             pg, w.site, 908, kind="quiz", close_at=1_900_000_000,

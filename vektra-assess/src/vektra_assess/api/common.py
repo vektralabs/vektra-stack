@@ -17,7 +17,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from vektra_assess.errors import assess_unavailable, bad_request, key_not_bound
-from vektra_assess.teacher.validation import OpeningView
+from vektra_assess.gates import Opening
 from vektra_shared.errors import ErrorResponse, http_status_for
 
 #: no assess request body is legitimately larger than this (a turn is capped far below it)
@@ -58,7 +58,7 @@ def iso_time(value: Any) -> str | None:
     return None
 
 
-def opening_json(view: OpeningView) -> dict[str, Any]:
+def opening_json(view: Opening) -> dict[str, Any]:
     """``opening`` of the teacher config view and of the session list's gate panel (one shape
     for both pages): ``{at, source, fallback_required}``."""
     return {

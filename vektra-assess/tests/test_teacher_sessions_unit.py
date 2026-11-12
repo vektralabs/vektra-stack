@@ -21,6 +21,7 @@ import pytest
 from fastapi import HTTPException
 from starlette.datastructures import Headers
 
+from vektra_assess.api import teacher_ops as ops
 from vektra_assess.api import teacher_sessions as ts
 from vektra_assess.api.teachers import TeacherCheck, TeacherGate
 from vektra_assess.crypto.teacher_reason import encrypt_reason
@@ -90,7 +91,8 @@ def world(monkeypatch: pytest.MonkeyPatch) -> Any:
     monkeypatch.setattr(ts, "transcript_key_of", lambda r: KEK)
     monkeypatch.setattr(ts, "site_of_key", site_of_key)
     monkeypatch.setattr(ts, "verify_teacher", verify_teacher)
-    monkeypatch.setattr(ts, "readable_close_flags", readable_close_flags)
+    # the panel decides through teacher_ops.opening_for, which reads the matrix there
+    monkeypatch.setattr(ops, "readable_close_flags", readable_close_flags)
 
     def make(script: dict[str, Any], **kw: Any) -> dict[str, Any]:
         holder["conn"] = Conn(script)
@@ -171,7 +173,12 @@ def test_the_list_groups_sessions_deliveries_resets_and_extra_time_per_student(
             "attested_opening_at": Result(scalar=None),
             "count(*) FROM assess_sessions": Result(scalar=1),
         },
-        facts={"activity_type": "quiz", "close_at": 1_800_000_000},
+        # every close input readable, in the matrix and in the last facts read
+        facts={
+            "activity_type": "quiz",
+            "close_at": 1_800_000_000,
+            "automatic_close_at": 1_800_000_000,
+        },
         readable={"quiz_overrides": True, "quiz_grace": True},
     )
     got = view()

@@ -171,7 +171,7 @@ async def test_quiz_facts() -> None:
 
 
 async def test_the_quiz_grace_is_a_fact_only_when_readable() -> None:
-    """The teacher opening view adds the grace as the Start gate does (gates.effective_close):
+    """The teacher opening view adds the grace as the Start gate does (gates.decide_opening):
     the GRACE overdue mode's period, 0 under another mode, None when unreadable."""
     for grace, expected in (
         (Readable(GracePolicy(600, OverdueMode.GRACE)), 600),

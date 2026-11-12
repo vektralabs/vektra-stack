@@ -10,7 +10,7 @@ forged Moodle attempt id in a body (refused or ignored, never read).
 B's snapshot is a real capture (``LmsStartSource``) over ``FakeLmsProvider``: the matrix tests the
 vertical's authority (re-resolution, ownership, gates), which no LMS provider takes part in
 (ADR-0033 D1). The Moodle provider's suites run the same ``_matrix`` with B's snapshot captured
-through it, on its recordings and live (``adapters/vektra-lms-moodle/tests``). Integration
+through it, on its recordings and live (vektra-moodle-discuss ``provider/tests``). Integration
 (testcontainers Postgres).
 """
 

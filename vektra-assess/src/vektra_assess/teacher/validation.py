@@ -19,7 +19,7 @@ from typing import Any
 
 from vektra_assess.delivery.address import normalize_address
 from vektra_assess.delivery.recipients import MAX_RECIPIENTS, domain_allowed
-from vektra_assess.gates import DB_SIDE, Code
+from vektra_assess.gates import DB_SIDE, Code, Opening, decide_opening
 from vektra_assess.teacher.schemas import FieldError
 
 MAX_TEXT_CHARS = 20_000
@@ -122,40 +122,38 @@ def check_rubric_source(source: str, activity_type: str) -> list[FieldError]:
     return []
 
 
-def effective_opening(close_at: int | None, attested_at: int | None) -> int | None:
-    """The opening the end date must follow (BR-006(d) or REQ-091), epoch seconds: the later of
-    the activity's own close (``close_at``, 0 = none configured) and the teacher's attested date.
-    None when neither is known."""
-    known = [t for t in (close_at or None, attested_at) if t]
-    return max(known) if known else None
-
-
 def epoch_fact(facts: Mapping[str, Any], name: str) -> int | None:
     """An epoch fact of the worker-written teacher facts, or None when absent or mistyped."""
     value = facts.get(name)
     return value if isinstance(value, int) and not isinstance(value, bool) else None
 
 
-def gate_close(close_at: int | None, automatic_close_at: int | None) -> int | None:
-    """The close the Start gate opens after (BR-006(d)): the automatic close (quiz close, every
-    participant's override, grace) when the worker could read all of it, else the activity's
-    own close (the REQ-091 fallback path, where the teacher date then decides with it)."""
-    return automatic_close_at if automatic_close_at is not None else close_at
-
-
-def opening_view(
-    close_at: int | None, attested_at: int | None
-) -> tuple[int | None, str]:
-    """The effective opening and what decides it, as the teacher pages show it (the config
-    view and the session list's gate panel share this one rule): ``attested`` when the REQ-091
-    date decides (or ties the close), ``activity_close`` when the activity's own close does,
-    ``unknown`` when neither is known."""
-    opening = effective_opening(close_at, attested_at)
-    if opening is None:
-        return None, "unknown"
-    if attested_at is not None and attested_at >= (close_at or 0):
-        return opening, "attested"
-    return opening, "activity_close"
+def opening_of(
+    facts: Mapping[str, Any],
+    attested_at: int | None,
+    readable: Mapping[str, bool],
+) -> Opening:
+    """The opening of an activity as every teacher route sees it: ``gates.decide_opening``
+    (the Start gate's own rule) on the worker's teacher facts (``close_at``,
+    ``automatic_close_at``, ``grace_s``) merged with the capability matrix ``readable``
+    (``readable_close_flags``). When the matrix does not hold every close input readable
+    (``fallback_needed``: an assignment always, a quiz with ``quiz_overrides`` or
+    ``quiz_grace`` not a fresh ``readable``) the automatic close is not used even when the
+    last facts read got it (fail closed, partial counts as unreadable): Start's own live read
+    is not expected to give it, so a teacher date is what opens the activity. The grace the
+    last facts read got is still added on that path, as Start adds the grace it reads. The
+    config view and its end-date rule, the session list's gate panel and PUT opening-fallback
+    all call this, once (unresolved facts never get here: ``verify_teacher`` refuses them)."""
+    kind = str(facts.get("activity_type"))
+    automatic = epoch_fact(facts, "automatic_close_at")
+    if fallback_needed(kind, readable):
+        automatic = None
+    return decide_opening(
+        epoch_fact(facts, "close_at"),
+        grace_s=epoch_fact(facts, "grace_s"),
+        automatic_close_at=automatic,
+        teacher_opening_at=attested_at,
+    )
 
 
 def check_end_date(end_at: datetime, opening_at: int | None) -> list[FieldError]:
@@ -367,8 +365,7 @@ def check_opening_fallback(
     opening_at: datetime,
     *,
     attestation: bool,
-    needed: bool,
-    close_at: int | None,
+    opening: Opening,
     current_at: int | None,
     started: bool,
     end_at: int | None = None,
@@ -379,9 +376,11 @@ def check_opening_fallback(
     ("disponibile fino al" must stay after the effective opening, as ``check_end_date`` requires
     when the end date is saved: otherwise no Start could ever happen)."""
     errors: list[FieldError] = []
+    close_at = opening.close_at
     if attestation is not True:
         errors.append(FieldError("attestation", "required"))
-    if not needed:
+    if close_at is not None and close_at > 0 and not opening.fallback_applies:
+        # every close input is readable: Start opens without a teacher date
         errors.append(FieldError("opening_at", "fallback_not_needed"))
     if opening_at.tzinfo is None:
         return [*errors, FieldError("opening_at", "timezone_required")]
@@ -423,8 +422,6 @@ class ActivityFacts:
     team_submission: bool | None = None
     grading_method: str | None = None
     lms_rubric: bool | None = None
-    #: BR-006(d) automatic close when every close input was readable (a quiz on 5.2 while open)
-    automatic_close_at: int | None = None
 
 
 @dataclass(frozen=True)

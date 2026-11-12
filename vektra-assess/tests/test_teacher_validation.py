@@ -3,13 +3,37 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from typing import Any
 
 import pytest
 
+from vektra_assess.gates import Code, GateInputs, decide_opening, evaluate_start_gates
 from vektra_assess.teacher import validation as v
 from vektra_assess.teacher.schemas import FieldError, field_errors
 
 UNI_DOMAINS = frozenset({"uni.example"})
+NOW = 2_000_000_000
+CLOSE_AT = NOW - 3600  # the activity closed an hour ago
+
+
+def gate_inputs(kind: str, **over: Any) -> GateInputs:
+    """Start-gate inputs passing every gate but the close (BR-006 (d)) under test."""
+    return GateInputs(
+        now=NOW,
+        activity_kind=kind,  # type: ignore[arg-type]
+        enabled=True,
+        team_submission=False,
+        grading_method="rubric",
+        attempt_in_progress=False,
+        has_submitted_attempt=True,
+        regrade_in_progress=False,
+        fully_graded=True,
+        released=True,
+        owner_verified=True,
+        enrolled=True,
+        privacy_configured=True,
+        **over,
+    )
 
 
 def codes(errors: list[FieldError]) -> list[tuple[str, str]]:
@@ -139,24 +163,31 @@ def _at(ts: int) -> datetime:
     return datetime.fromtimestamp(ts, UTC)
 
 
-def test_end_date_must_follow_the_effective_opening() -> None:
-    opening = v.effective_opening(1_000, 2_000)
-    assert opening == 2_000  # the later of the activity close and the attested date
-    assert codes(v.check_end_date(_at(2_000), opening)) == [
+def test_end_date_must_follow_the_opening_floor() -> None:
+    # the REQ-091 path with a teacher date after the close: the date is the opening
+    floor = decide_opening(
+        1_000, grace_s=0, automatic_close_at=None, teacher_opening_at=2_000
+    ).floor
+    assert floor == 2_000
+    assert codes(v.check_end_date(_at(2_000), floor)) == [
         ("available_until", "not_after_opening")
     ]
-    assert codes(v.check_end_date(_at(1_999), opening)) == [
+    assert codes(v.check_end_date(_at(1_999), floor)) == [
         ("available_until", "not_after_opening")
     ]
-    assert v.check_end_date(_at(2_001), opening) == []
+    assert v.check_end_date(_at(2_001), floor) == []
     assert codes(v.check_end_date(_at(5_000), None)) == [
         ("available_until", "opening_unknown")
     ]
-    assert codes(v.check_end_date(datetime(2030, 1, 1), opening)) == [
+    assert codes(v.check_end_date(datetime(2030, 1, 1), floor)) == [
         ("available_until", "timezone_required")
     ]
-    # an activity with no close configured (0) and no attestation has no opening
-    assert v.effective_opening(0, None) is None
+    # BR-007: no close configured has no opening, a stale teacher date included (finding 6)
+    for teacher in (None, 2_000):
+        no_close = decide_opening(
+            0, grace_s=0, automatic_close_at=None, teacher_opening_at=teacher
+        )
+        assert no_close.floor is None
 
 
 # --- recipients --------------------------------------------------------------------------------
@@ -408,11 +439,19 @@ def test_fallback_is_needed_only_when_a_close_input_is_unreadable(
 CLOSE = 1_900_000_000
 
 
-def _fallback(at: int, **over: object) -> list[tuple[str, str]]:
+def _fallback(
+    at: int, *, needed: bool = True, close_at: int | None = CLOSE, **over: object
+) -> list[tuple[str, str]]:
+    # needed: some close input unreadable (no automatic close); else every input readable
+    opening = decide_opening(
+        close_at,
+        grace_s=0,
+        automatic_close_at=None if needed or not close_at else close_at,
+        teacher_opening_at=None,
+    )
     args: dict[str, object] = {
         "attestation": True,
-        "needed": True,
-        "close_at": CLOSE,
+        "opening": opening,
         "current_at": None,
         "started": False,
         **over,
@@ -447,8 +486,9 @@ def test_opening_fallback_bounds_attestation_and_later_only() -> None:
     naive = v.check_opening_fallback(
         datetime(2030, 1, 1),
         attestation=True,
-        needed=True,
-        close_at=CLOSE,
+        opening=decide_opening(
+            CLOSE, grace_s=0, automatic_close_at=None, teacher_opening_at=None
+        ),
         current_at=None,
         started=False,
     )
@@ -456,22 +496,166 @@ def test_opening_fallback_bounds_attestation_and_later_only() -> None:
 
 
 @pytest.mark.parametrize(
-    ("close", "attested", "expected"),
+    ("close", "automatic", "grace", "attested", "expected"),
     [
-        (None, None, (None, "unknown")),
-        (0, None, (None, "unknown")),  # no close configured, no teacher date
-        (100, None, (100, "activity_close")),
-        (100, 100, (100, "attested")),  # a tie: the teacher's date decides
-        (100, 200, (200, "attested")),
-        (100, 50, (100, "activity_close")),
-        (None, 70, (70, "attested")),
+        # the activity's own close unreadable: no date can be computed, a teacher date
+        # cannot help (the PUT refuses it with close_unreadable): never "unknown" (finding 5)
+        (None, None, None, None, (None, "unreadable", False, False, None)),
+        (None, None, None, 70, (None, "unreadable", False, False, None)),
+        # BR-007: no close configured; a stale teacher date never replaces it (finding 6)
+        (0, None, None, None, (None, "unknown", False, False, None)),
+        (0, None, None, 500, (None, "unknown", False, False, None)),
+        # every close input readable (the automatic close): no teacher date needed
+        (100, 150, 0, None, (150, "activity_close", False, False, 150)),
+        # a tie: the teacher's date decides
+        (100, 150, 0, 150, (150, "attested", False, False, 150)),
+        (100, 150, 0, 120, (150, "activity_close", False, False, 150)),
+        (100, 150, 0, 200, (200, "attested", False, False, 200)),
+        # some close input unreadable: the REQ-091 fallback; without a teacher date Start
+        # refuses close_unreadable, and the opening cannot be before close + grace
+        (100, None, None, None, (None, "unreadable", True, True, 100)),
+        (100, None, 30, None, (None, "unreadable", True, True, 130)),
+        (100, None, None, 100, (100, "attested", True, False, 100)),
+        (100, None, None, 200, (200, "attested", True, False, 200)),
+        (100, None, None, 50, (100, "activity_close", True, False, 100)),
+        (100, None, 30, 110, (130, "activity_close", True, False, 130)),  # the grace
     ],
 )
-def test_one_opening_rule_for_the_config_view_and_the_gate_panel(
-    close: int | None, attested: int | None, expected: tuple[int | None, str]
+def test_one_opening_decision(
+    close: int | None,
+    automatic: int | None,
+    grace: int | None,
+    attested: int | None,
+    expected: tuple[int | None, str, bool, bool, int | None],
 ) -> None:
-    """Review 11b-8: the config view and the session list's gate panel share it."""
-    assert v.opening_view(close, attested) == expected
+    """``gates.decide_opening``: (at, source, fallback_applies, fallback_required, floor)."""
+    o = decide_opening(
+        close, grace_s=grace, automatic_close_at=automatic, teacher_opening_at=attested
+    )
+    assert (
+        o.at,
+        o.source,
+        o.fallback_applies,
+        o.fallback_required,
+        o.floor,
+    ) == expected
+
+
+def test_a_matrix_unreadable_input_takes_the_fallback_path() -> None:
+    """``opening_of``: an input the capability matrix does not hold readable is unreadable
+    even when the last facts read got it (findings 3, 4): no automatic close, a date opens."""
+    facts = {
+        "activity_type": "quiz",
+        "close_at": 100,
+        "automatic_close_at": 150,
+        "grace_s": 0,
+    }
+    readable = {"quiz_overrides": True, "quiz_grace": True}
+    assert v.opening_of(facts, None, readable).source == "activity_close"
+    partial = {"quiz_overrides": True, "quiz_grace": False}
+    o = v.opening_of(facts, None, partial)
+    assert (o.source, o.fallback_applies, o.fallback_required) == (
+        "unreadable",
+        True,
+        True,
+    )
+    # an assignment never has a readable automatic close (OQ-025)
+    assign = {**facts, "activity_type": "assign"}
+    assert v.opening_of(assign, None, readable).fallback_required is True
+
+
+@pytest.mark.parametrize("matrix", [True, False])
+@pytest.mark.parametrize("kind", ["quiz", "assign"])
+@pytest.mark.parametrize("participants", [(), (CLOSE_AT + 600,), None])
+@pytest.mark.parametrize("grace", [0, 120, None])
+@pytest.mark.parametrize(
+    "attested", [None, CLOSE_AT - 60, CLOSE_AT, CLOSE_AT + 300, CLOSE_AT + 900]
+)
+@pytest.mark.parametrize("close", [CLOSE_AT, 0, None])
+def test_every_teacher_route_agrees_with_the_start_gate(
+    matrix: bool,
+    kind: str,
+    participants: tuple[int, ...] | None,
+    grace: int | None,
+    attested: int | None,
+    close: int | None,
+) -> None:
+    """The plugin-team report and the review of PR #208: over every combination of the close
+    inputs, the capability matrix and the teacher date, the teacher routes' one decision
+    (``opening_of``) agrees with Start: the view's date is Start's opening; ``fallback_required``
+    holds exactly when PUT opening-fallback would accept a date AND that date would make Start
+    open while it refuses now; PUT accepts exactly while ``fallback_applies``; the end date
+    is validated against the view's date when decided, else against the earliest opening a
+    date can give, else it is ``opening_unknown``.
+
+    Start's live reads are modelled on the same facts; a close input the matrix does not hold
+    readable is not readable live either (the matrix is the site's readability record)."""
+    if kind == "assign":
+        grace, participants = 0, None  # extensions are never listable (OQ-025)
+    readable = {"quiz_overrides": matrix, "quiz_grace": matrix}
+    # the teacher facts as the worker writes them (start_source.teacher_facts)
+    automatic = (
+        max([close, *participants]) + grace
+        if close and participants is not None and grace is not None
+        else None
+    )
+    facts = {
+        "activity_type": kind,
+        "close_at": close,
+        "automatic_close_at": automatic,
+        "grace_s": grace,
+    }
+    opening = v.opening_of(facts, attested, readable)
+    live_participants = participants if kind == "quiz" and matrix else None
+
+    def start(teacher: int | None) -> Any:
+        return evaluate_start_gates(
+            gate_inputs(
+                kind,
+                activity_close_at=close,
+                grace_s=grace,
+                participant_closes=live_participants,
+                teacher_opening_at=teacher,
+            )
+        )
+
+    now = start(attested)
+    # 1. the view's date is Start's opening, the refusal codes are Start's
+    assert opening.at == now.gate_at
+    for code in (Code.CLOSE_UNREADABLE, Code.NO_CLOSE_DATE):
+        assert (code in now.reasons) == (opening.code is code)
+    if opening.code is Code.OK:
+        assert opening.source in ("attested", "activity_close")
+    else:
+        assert opening.source == ("unknown" if close == 0 else "unreadable")
+    # 2. PUT opening-fallback acceptance and fallback_required
+    date = (close or CLOSE_AT) + 1000  # after the close, before NOW
+    accepted = (
+        v.check_opening_fallback(
+            datetime.fromtimestamp(date, UTC),
+            attestation=True,
+            opening=opening,
+            current_at=attested,
+            started=False,
+        )
+        == []
+    )
+    assert accepted == opening.fallback_applies
+    opens_with_date = start(date).open
+    refused_now = Code.CLOSE_UNREADABLE in now.reasons
+    assert opening.fallback_required == (accepted and opens_with_date and refused_now)
+    # 3. the end-date floor
+    if opening.at is not None:
+        assert opening.floor == opening.at
+    elif opening.fallback_required:
+        assert opening.floor is not None and start(date).gate_at is not None
+        assert opening.floor <= start(date).gate_at
+        assert opening.floor == close + (grace or 0)  # type: ignore[operator]
+    else:
+        assert opening.floor is None
+        assert codes(v.check_end_date(_at(NOW), opening.floor)) == [
+            ("available_until", "opening_unknown")
+        ]
 
 
 def test_a_percentage_is_whole_minutes_rounded_up() -> None:

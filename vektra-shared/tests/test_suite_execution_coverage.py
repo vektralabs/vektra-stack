@@ -39,20 +39,15 @@ WORKFLOW_DIR = REPO_ROOT / ".github" / "workflows"
 # The `-m` expressions this guard knows how to reason about. An unrecognised one is a
 # hard failure rather than a silent "covers nothing" / "covers everything" guess: the
 # whole point is not to certify coverage we cannot actually demonstrate.
-# "moodle" (assess-moodle-contract.yml) selects only the live-Moodle tests, which are also
-# marked `integration`: it must not certify any other suite, so it selects neither path here
-# (the package-integration job collects those tests too, and skips them without a Moodle).
 _SELECTS_UNIT = {
     None: True,
     "not integration": True,
     "integration": False,
-    "moodle": False,
 }
 _SELECTS_INTEGRATION = {
     None: True,
     "not integration": False,
     "integration": True,
-    "moodle": False,
 }
 
 # Suites deliberately run by nothing. Every entry needs a reason, and the entry has to
@@ -151,12 +146,10 @@ def _classify(path: Path) -> Suite:
 
 
 def _suites() -> list[Suite]:
-    # the LMS providers staged in adapters/ (ADR-0033 D6) are suites like any other: outside the
-    # platform's perimeter, not outside what CI must run
+    # the LMS providers' suites run in their own repositories since phase 2b (ADR-0033 D6)
     roots = [
         *REPO_ROOT.glob("vektra-*/tests"),
         REPO_ROOT / "tests",
-        *REPO_ROOT.glob("adapters/*/tests"),
     ]
     files = {
         f
@@ -265,9 +258,8 @@ def _target_recipe(target: str) -> str:
     return "\n".join(recipe)
 
 
-#: the local gates: ``test`` for the platform, and the target of each LMS provider staged in
-#: adapters/, which is installed only by its opt-in group (ADR-0033 D6)
-MAKE_TEST_TARGETS = ("test", "test-lms-moodle")
+#: the local gate: ``test`` for the platform (the LMS providers' targets left with them, phase 2b)
+MAKE_TEST_TARGETS = ("test",)
 
 
 def _makefile_invocations() -> list[Invocation]:

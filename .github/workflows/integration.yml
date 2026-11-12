@@ -81,6 +81,21 @@ jobs:
       - name: Build Docker image
         run: docker compose build
 
+      # ADR-0033 D6: the platform image holds no LMS provider, no package and no entry point. The
+      # lms-moodle variant does, with the pinned wheel: the assess-stack job checks that one
+      # (tests/assess/test_lms_provider_image.py).
+      - name: The platform image holds no LMS provider
+        if: matrix.vector_store == 'pgvector'
+        run: |
+          docker run --rm --entrypoint python vektra-stack -c '
+          import importlib.metadata as md, importlib.util, sys
+          found = [d.metadata["Name"] for d in md.distributions() if d.metadata["Name"].startswith("vektra-lms-")]
+          eps = [e.name for e in md.entry_points(group="vektra.lms_providers")]
+          spec = importlib.util.find_spec("vektra_lms_moodle")
+          print(f"provider distributions: {found}, entry points: {eps}, vektra_lms_moodle: {spec}")
+          sys.exit(1 if found or eps or spec else 0)
+          '
+
       # The production VM's CPU predates x86-64-v2, and a wheel built for a newer
       # baseline does not degrade there: it aborts the interpreter at import
       # (BUG-027). Every GitHub runner supports far more than that host, so no
@@ -394,8 +409,8 @@ jobs:
           import xml.etree.ElementTree as ET
 
           root = ET.parse("test-results/package-integration.xml").getroot()
-          # the live-Moodle suites moved with the provider to adapters/vektra-lms-moodle
-          # (ADR-0033 D6; its test-lms-moodle job and assess-moodle-contract.yml run them).
+          # the live-Moodle suites moved with the provider to its own repository
+          # (ADR-0033 D6, phase 2b: vektra-moodle-discuss, provider.yml and provider-live.yml).
           # Exempt here: the browser suites, which a dedicated job runs
           LIVE = (
               # the browser e2e needs Node and Chromium: the assess-ui-e2e job runs it,
@@ -493,8 +508,11 @@ jobs:
           # runner-owned files (uid 1001) must be handed to the container user.
           sudo chown -R 1000:1000 secrets/assess
 
-      # the assess overlay runs the image variant with the Moodle provider (ADR-0033 D6):
-      # build that one, the platform image holds no LMS provider
+      # the assess overlay runs the image variant with the Moodle provider (ADR-0033 D6): build
+      # that one, the platform image holds no LMS provider. The variant installs the provider's
+      # released wheel pinned in docker/lms-providers/moodle.txt; the stack tests below check the
+      # built image holds exactly that wheel and that the platform's loader builds it
+      # (tests/assess/test_lms_provider_image.py), and the worker starts on it.
       - name: Build the image
         run: docker compose -f docker-compose.yml -f docker-compose.assess.yml build vektra
 

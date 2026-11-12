@@ -4,7 +4,7 @@ The renderers are the vertical's (``context.payload``, ``context.part_a``) and d
 model and the student are told for each shape of a question, criterion, grade and submission:
 a mark the student may not see is never shown as a number, an item that could not be read is
 said to be so, a truncated text is never presented as complete. Until 2a-4 these branches were
-reached only by the Moodle provider's recorded suites (now in ``adapters/``); here they are
+reached only by the Moodle provider's recorded suites (now in vektra-moodle-discuss); here they are
 pinned on neutral values.
 """
 

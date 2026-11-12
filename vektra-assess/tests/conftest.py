@@ -16,7 +16,8 @@ import structlog
 from vektra_shared.testing import hermetic_env  # noqa: F401  (autouse fixture)
 
 # Test modules import helper modules that sit beside them (support/, and test modules reused by
-# others; the Moodle provider's joint suites in adapters/ import them too). Under
+# others; the Moodle provider's joint suites import them too, from its own repository through
+# VEKTRA_STACK_ROOT). Under
 # `pytest vektra-*/tests` with --import-mode=importlib this directory is not on sys.path, so put
 # it there once, for every invocation style.
 _HERE = str(Path(__file__).resolve().parent)

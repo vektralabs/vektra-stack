@@ -38,17 +38,26 @@ assess work ships in the next minor, `0.9.0`. Nothing in this repository has bee
       enough: it runs only `test_ui_e2e.py`, while the CI job also runs
       `test_transcript_inert_browser.py` and `test_transcript_a11y.py` (all three in
       `vektra-assess/tests/integration/`, `-m integration`).
-- [ ] **LMS reader contract.** `.github/workflows/assess-moodle-contract.yml` (the web-service
-      readers against real LMS 4.3 and 5.2 sites) is checked in section 2, on the release-prep
-      commit itself: the latest scheduled run can predate a reader change or test another branch.
-      It does not test the plugin itself: the plugin release is tested in its own repository.
+- [ ] **LMS provider on this platform.** The `test-lms-provider` job of `ci-unit.yml` is green on
+      the release-prep commit: the pinned provider wheel (`docker/lms-providers/moodle.txt`) and
+      the provider's suites at its release tag, run against this tree (conformance kit, canary
+      matrix, joint suites on real Postgres).
+- [ ] **LMS reader contract.** The live contract run of the web-service readers against real LMS
+      4.3 and 5.2 sites is `provider-live.yml` in vektra-moodle-discuss (the provider's
+      repository), checked in section 2 against the release-prep commit itself: a scheduled run
+      tests whatever vektra-stack commit that repository pins, which can predate the release.
 
 ## 2. Release-prep PR (`chore/vX.Y.Z-release`)
 
-- [ ] A green run of `assess-moodle-contract.yml` on the head commit of this PR:
-      `gh workflow run assess-moodle-contract.yml --ref chore/vX.Y.Z-release`, then check that
-      the run's commit is the PR head. Like `chaos-assess.yml`, it can be dispatched only once the
-      workflow file is on the default branch; until then this gate cannot be met.
+- [ ] The LMS reader contract, tied to this release: in vektra-moodle-discuss,
+      `provider/vektra-stack.ref` set to the head commit of this PR (a change in that
+      repository), then a green `provider-live.yml` run on that change; check that the run read
+      that exact commit.
+- [ ] The pinned provider wheel was tested against this release: the provider release named in
+      `docker/lms-providers/moodle.txt` must have been tested (its `provider.yml` run, and the
+      release notes name the vektra-stack commit) against the head commit of this PR. If it was
+      tested against an earlier commit, the provider is re-released against this one and the pin
+      bumped here (CONTRIBUTING.md, "The Moodle LMS provider") before the tag.
 
 Follow CONTRIBUTING.md, with these points for assess:
 

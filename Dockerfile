@@ -7,8 +7,10 @@
 #
 # Build args:
 #   INSTALL_UNSTRUCTURED=true  - add Tesseract OCR + Poppler for PDF OCR
-#   INSTALL_LMS_PROVIDER=moodle - add the Moodle LMS provider (adapters/vektra-lms-moodle,
-#                                 ADR-0033 D6, OD-6); empty (the default): no provider at all
+#   INSTALL_LMS_PROVIDER=moodle - add the Moodle LMS provider: the wheel released from
+#                                 vektra-moodle-discuss, pinned by version and sha256 in
+#                                 docker/lms-providers/moodle.txt (ADR-0033 D6, OD-6); empty
+#                                 (the default): no provider at all
 # ==========================================================================
 
 # Empty by default: the platform image holds no LMS provider. Read by the FROM that picks the
@@ -106,21 +108,28 @@ RUN if [ "$INSTALL_UNSTRUCTURED" = "true" ]; then \
 # --------------------------------------------------------------------------
 # Stage 2b: the LMS provider (ADR-0033 D6, OD-6), opt-in. One stage per provider; the FROM
 # below picks one by INSTALL_LMS_PROVIDER, and BuildKit builds only the stage it picks, so the
-# default image never copies a file of adapters/. A provider stage copies the provider's
-# manifest and source only (never its tests or recordings) and installs it into the same venv,
-# non-editable, from the same lock: its version and its dependencies are the ones uv.lock pins.
+# default image never downloads or installs a provider. A provider stage installs the provider's
+# published wheel into the same venv, from its pin file under docker/lms-providers/ (the one
+# place its version, URL and sha256 live):
+#   --require-hashes  uv downloads the wheel and refuses it when its sha256 is not the pinned one:
+#                     the build fails, nothing is installed;
+#   --no-deps         the wheel requires vektra-shared, which is on no index: the venv already
+#                     holds the workspace's, and `uv pip check` then fails the build if any
+#                     requirement of the wheel is not met by what the venv holds. It cannot
+#                     catch a platform the provider no longer fits: the wheel declares
+#                     vektra-shared with no version bound, so any vektra-shared satisfies it.
+#                     That check is the test-lms-provider CI job (the provider's suites, at
+#                     the pinned release, run against this tree);
+#   --no-config       the root pyproject's [tool.uv] settings are the workspace's, not this
+#                     install's (its numpy constraint is not a pinned, hashed requirement).
 # --------------------------------------------------------------------------
 FROM builder AS lms-provider-none
 
 FROM builder AS lms-provider-moodle
-COPY adapters/vektra-lms-moodle/pyproject.toml adapters/vektra-lms-moodle/README.md adapters/vektra-lms-moodle/
-COPY adapters/vektra-lms-moodle/src adapters/vektra-lms-moodle/src
-ARG INSTALL_UNSTRUCTURED=false
-RUN if [ "$INSTALL_UNSTRUCTURED" = "true" ]; then \
-       uv sync --frozen --no-editable --no-dev --no-install-package vektra-testkit --group lms-moodle --extra sparse --extra qdrant --extra ocr; \
-    else \
-       uv sync --frozen --no-editable --no-dev --no-install-package vektra-testkit --group lms-moodle --extra sparse --extra qdrant; \
-    fi
+COPY docker/lms-providers/moodle.txt /tmp/lms-provider/moodle.txt
+RUN uv pip install --no-config --python /app/.venv/bin/python --no-index --no-cache \
+       --require-hashes --no-deps -r /tmp/lms-provider/moodle.txt \
+    && uv pip check --no-config --python /app/.venv/bin/python
 
 FROM lms-provider-${INSTALL_LMS_PROVIDER:-none} AS venv
 

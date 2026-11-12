@@ -203,7 +203,10 @@ async def test_fallback_follows_the_readability_matrix(pg) -> None:  # type: ign
         quiz, assign = 901, 902
         for cmid, kind in ((quiz, "quiz"), (assign, "assign")):
             await configure_activity(pg, w.site, cmid, kind=kind, attested=False)
-            await seed_teacher_gate(pg, w.site, cmid, kind=kind, close_at=CLOSE)
+            # the quiz's last facts read got every close input (an automatic close): with
+            # the matrix readable too, Start needs no teacher date
+            auto = {"automatic_close_at": CLOSE} if kind == "quiz" else {}
+            await seed_teacher_gate(pg, w.site, cmid, kind=kind, close_at=CLOSE, **auto)
         r = await w.client.put(
             fallback_url(quiz), json=fb(CLOSE, activity_type="quiz"), headers=teacher()
         )

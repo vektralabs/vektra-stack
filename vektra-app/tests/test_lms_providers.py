@@ -172,9 +172,9 @@ async def test_a_non_provider_with_an_aclose_is_closed_too() -> None:
 
 
 def test_no_platform_distribution_declares_a_provider() -> None:
-    """ADR-0033 D6: providers are separate distributions (``vektra-lms-*``, staged in
-    ``adapters/``). The real group is read, and whatever it lists comes from one of them, never
-    from a platform package: without ``--group lms-moodle`` it lists nothing."""
+    """ADR-0033 D6: providers are separate distributions (``vektra-lms-*``, released from
+    their own repositories). The real group is read, and whatever it lists comes from one of them,
+    never from a platform package: in this workspace's own venv it lists nothing."""
     from importlib.metadata import entry_points
 
     eps = list(entry_points(group=GROUP))

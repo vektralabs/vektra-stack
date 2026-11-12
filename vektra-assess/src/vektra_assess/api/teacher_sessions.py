@@ -27,9 +27,15 @@ from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
 
-from vektra_assess.api.common import engine_of, fail, iso_time, site_of_key
+from vektra_assess.api.common import (
+    engine_of,
+    fail,
+    iso_time,
+    opening_json,
+    site_of_key,
+)
 from vektra_assess.api.deps import settings_of
-from vektra_assess.api.teacher_ops import readable_close_flags
+from vektra_assess.api.teacher_ops import opening_for
 from vektra_assess.api.teachers import (
     TeacherGate,
     ascii_id,
@@ -45,7 +51,6 @@ from vektra_assess.crypto.teacher_reason import Table, decrypt_reason
 from vektra_assess.errors import bad_request
 from vektra_assess.keys import AssessKeyring
 from vektra_assess.privacy.purge import PURGED_KID
-from vektra_assess.teacher import validation as v
 from vektra_shared.auth import ApiKeyInfo, require_exact_scope
 
 log = structlog.get_logger(__name__)
@@ -128,21 +133,18 @@ async def _gate_panel(
     conn: Any, site: UUID, cmid: int, gate: TeacherGate, actor: int
 ) -> dict[str, Any]:
     facts = gate.facts
-    kind = str(facts.get("activity_type"))
-    close_at = v.gate_close(
-        v.epoch_fact(facts, "close_at"), v.epoch_fact(facts, "automatic_close_at")
-    )
     attested = (await conn.execute(_CONFIG, {"s": site, "c": cmid})).scalar()
-    fallback = v.fallback_needed(kind, await readable_close_flags(conn, site))
-    # the opening Start actually waits for: the automatic close (participants' overrides and
-    # grace included) when readable; the holder's id stays behind can_view_overrides
-    opening, source = v.opening_view(close_at, attested)
+    # the opening Start actually waits for, by the gate's own rule (the automatic close when
+    # every input is readable, else the REQ-091 fallback); the holder's id stays behind
+    # can_view_overrides
+    opening = await opening_for(conn, site, facts, attested)
     holder = facts.get("override_holder")
     panel: dict[str, Any] = {
-        "opening": {"at": iso_time(opening), "source": source},
-        # REQ-091: the fallback is active; without a teacher date the activity is not available
-        "fallback_reason": FALLBACK_REASON if fallback else None,
-        "fallback_date_missing": bool(fallback and attested is None),
+        "opening": opening_json(opening),
+        # REQ-091: the fallback applies (PUT opening-fallback accepts a date); without one the
+        # activity is not available. Both read from the same decision as ``opening``
+        "fallback_reason": FALLBACK_REASON if opening.fallback_applies else None,
+        "fallback_date_missing": opening.fallback_required,
         "active_sessions": int(
             (await conn.execute(_ACTIVE, {"s": site, "c": cmid})).scalar() or 0
         ),

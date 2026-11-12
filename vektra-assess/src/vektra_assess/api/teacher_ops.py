@@ -31,6 +31,7 @@ logged, audited or returned outside the grader list.
 from __future__ import annotations
 
 import uuid
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
@@ -55,6 +56,7 @@ from vektra_assess.errors import (
     session_not_found,
     terminate_count_mismatch,
 )
+from vektra_assess.gates import Opening
 from vektra_assess.teacher import validation as v
 from vektra_assess.teacher.schemas import (
     ExtraTimePut,
@@ -541,6 +543,14 @@ async def readable_close_flags(conn: Any, site: UUID) -> dict[str, bool]:
     }
 
 
+async def opening_for(
+    conn: Any, site: UUID, facts: Mapping[str, Any], attested: int | None
+) -> Opening:
+    """The activity's opening decision for every teacher route (``v.opening_of``: the Start
+    gate's rule on the teacher facts merged with the capability matrix)."""
+    return v.opening_of(facts, attested, await readable_close_flags(conn, site))
+
+
 @router.put("/activities/{cmid}/opening-fallback")
 async def put_opening_fallback(
     cmid: str, request: Request, key: ApiKeyInfo = Depends(_guard)
@@ -554,18 +564,13 @@ async def put_opening_fallback(
             raise _Refused(
                 _invalid([FieldError("opening_at", "activity_not_configured")])
             )
-        kind = str(gate.facts.get("activity_type"))
-        close = gate.facts.get("close_at")
-        close_at = (
-            close if isinstance(close, int) and not isinstance(close, bool) else None
-        )
-        needed = v.fallback_needed(kind, await readable_close_flags(conn, site))
+        # the same decision the views show: accepted exactly while a date opens the activity
+        opening = await opening_for(conn, site, gate.facts, cfg.attested_at)
         started = bool((await conn.execute(_STARTED, {"s": site, "c": c})).scalar())
         errors = v.check_opening_fallback(
             body.opening_at,
             attestation=body.attestation,
-            needed=needed,
-            close_at=close_at,
+            opening=opening,
             current_at=cfg.attested_at,
             started=started,
             end_at=cfg.end_at,

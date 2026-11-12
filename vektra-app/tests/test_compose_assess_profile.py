@@ -25,7 +25,7 @@ SERVICE_ROLE = {
 SOCKET_VOLUME = "assess_parser_sock"
 #: the credentials the overlay's LMS provider declares (``required_secrets``), which the matrix
 #: does not list (ADR-0033 D5, plan 2a-4b.13); the provider's own suite checks the overlay mounts
-#: exactly these for the worker (adapters/vektra-lms-moodle/tests/test_entry_point.py)
+#: exactly these for the worker (vektra-moodle-discuss provider/tests/test_entry_point.py)
 PROVIDER_SECRETS = {"assess_ws_tokens"}
 
 

@@ -1,0 +1,22 @@
+# The Moodle LMS provider of the `lms-moodle` image variant (ADR-0033 D6, OD-5, OD-6).
+#
+# The ONE place its pin lives: the distribution, its version (in the wheel's file name), the
+# release URL and the wheel's sha256. The Dockerfile's `lms-provider-moodle` stage installs exactly
+# this requirement with `uv pip install --require-hashes --no-deps` (uv downloads the wheel and
+# refuses it, failing the build, when its sha256 differs), and the guards read it from here:
+# vektra-shared/tests/test_image_content_boundary.py (the stage installs this pin and nothing
+# else) and tests/assess/test_lms_provider_image.py (the built image holds this wheel's files).
+#
+# The wheel is released from vektralabs/vektra-moodle-discuss (`provider/`, tag
+# `provider-v<version>`, the sha256 is published with the release). `--no-deps`: the wheel
+# requires `vektra-shared`, which is on no index; the image already holds the workspace's, and the
+# stage runs `uv pip check` after the install, so a requirement of the wheel the image does not
+# satisfy fails the build too.
+#
+# To bump: take the new release's wheel URL and sha256, download it once and check the hash
+# yourself (`shasum -a 256 <wheel>`), replace the line below (version, URL and hash change
+# together), then build the variant (`docker compose -f docker-compose.yml
+# -f docker-compose.assess.yml build vektra`) and run `make test` (the static guard) and
+# `VEKTRA_ASSESS_STACK=1 uv run pytest tests/assess/test_lms_provider_image.py` (the image check).
+# See CONTRIBUTING.md, "The Moodle LMS provider".
+vektra-lms-moodle @ https://github.com/vektralabs/vektra-moodle-discuss/releases/download/provider-v0.9.0.dev1/vektra_lms_moodle-0.9.0.dev1-py3-none-any.whl --hash=sha256:b84bf253345197cce430ee6263be1dc44e93e93e3e8371b7370a3f78e067e6d3

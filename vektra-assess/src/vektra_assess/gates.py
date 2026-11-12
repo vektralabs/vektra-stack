@@ -30,7 +30,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import Literal
+from typing import Any, Literal
 
 
 class ButtonState(StrEnum):
@@ -166,30 +166,111 @@ class GateDecision:
         return self.code is Code.OK
 
 
-def _effective_gate(i: GateInputs) -> tuple[Code, int | None, int | None]:
-    """(code, gate_at, showable date) of BR-006 (d) with BR-007 and REQ-091."""
-    close = i.activity_close_at
+@dataclass(frozen=True)
+class Opening:
+    """The one BR-006 (d) / BR-007 / REQ-091 decision (``decide_opening``). Start reads
+    ``code`` and ``at``; the teacher pages show ``at``, ``source``, ``fallback_required``;
+    ``PUT opening-fallback`` accepts a date only while ``fallback_applies``; the end date
+    ("disponibile fino al") must follow ``floor``. Nothing recomputes any of them."""
+
+    code: Code  # OK | CLOSE_UNREADABLE | NO_CLOSE_DATE
+    #: the opening Start waits for; None while it cannot be decided
+    at: int | None
+    #: ``activity_close`` | ``attested`` | ``unreadable`` | ``unknown``
+    source: str
+    #: the activity's own close (quiz close / assignment cut-off): 0 none, None unreadable
+    close_at: int | None
+    #: the REQ-091 path: the close is known but another close input is not readable, so a
+    #: teacher-attested date is what opens the activity (PUT opening-fallback accepts one)
+    fallback_applies: bool
+    #: ``fallback_applies`` and no teacher date yet: Start refuses ``close_unreadable`` until
+    #: one is set, and a date would open it
+    fallback_required: bool
+    #: the earliest the opening can be: ``at`` when decided, the close plus grace while a
+    #: teacher date is required (the date is on or after the close, the gate adds the grace),
+    #: None when no opening can exist (no close configured, or the close unreadable)
+    floor: int | None
+
+
+def decide_opening(
+    activity_close_at: int | None,
+    *,
+    grace_s: int | None,
+    automatic_close_at: int | None,
+    teacher_opening_at: int | None,
+) -> Opening:
+    """BR-006 (d) with BR-007 and REQ-091. ``automatic_close_at``: max(close, every
+    participant's override or extension) + grace, None when ANY of those inputs is unreadable
+    (partial counts as unreadable); ``grace_s``: the grace when readable (None counts 0 on the
+    REQ-091 path, as the gate always did). The Start gate (live LMS reads) and every teacher
+    route (the worker's teacher facts merged with the capability matrix,
+    ``teacher.validation.opening_of``) decide through this function only."""
+    close = activity_close_at
+    teacher = teacher_opening_at
+
+    def made(code: Code, at: int | None, source: str, **flags: Any) -> Opening:
+        return Opening(
+            code=code,
+            at=at,
+            source=source,
+            close_at=close,
+            fallback_applies=flags.get("applies", False),
+            fallback_required=flags.get("required", False),
+            floor=flags.get("floor", at),
+        )
+
     if close is None:
         # the activity's own close cannot be read: no gate can be computed, with or without a
         # teacher date (REQ-091: max(activity close, teacher date) needs both)
-        return Code.CLOSE_UNREADABLE, None, None
+        return made(Code.CLOSE_UNREADABLE, None, "unreadable")
     if close <= 0:
-        return Code.NO_CLOSE_DATE, None, None  # BR-007: the fallback never replaces it
+        # BR-007: the fallback never replaces a missing close, a stale teacher date included
+        return made(Code.NO_CLOSE_DATE, None, "unknown")
+    if automatic_close_at is not None:
+        at = max(automatic_close_at, teacher or 0)
+        source = (
+            "attested"
+            if teacher is not None and teacher >= automatic_close_at
+            else "activity_close"
+        )
+        return made(Code.OK, at, source)
+    own = close + (grace_s or 0)
+    if teacher is None:  # REQ-091: NOT_AVAILABLE, fail closed
+        return made(
+            Code.CLOSE_UNREADABLE,
+            None,
+            "unreadable",
+            applies=True,
+            required=True,
+            floor=own,
+        )
+    source = "attested" if teacher >= own else "activity_close"
+    return made(Code.OK, max(own, teacher), source, applies=True)
+
+
+def _effective_gate(i: GateInputs) -> tuple[Code, int | None, int | None]:
+    """(code, gate_at, showable date) of BR-006 (d) with BR-007 and REQ-091."""
+    close = i.activity_close_at
     grace = i.grace_s
-    readable = grace is not None and i.participant_closes is not None
-    own_effective = close + (grace or 0)
-    if readable:
-        assert grace is not None and i.participant_closes is not None
+    automatic = None
+    if (
+        close is not None
+        and close > 0
+        and grace is not None
+        and i.participant_closes is not None
+    ):
         automatic = max([close, *i.participant_closes]) + grace
-        gate = max(automatic, i.teacher_opening_at or 0)
-    else:
-        if i.teacher_opening_at is None:
-            return (
-                Code.CLOSE_UNREADABLE,
-                None,
-                None,
-            )  # REQ-091: NOT_AVAILABLE, fail closed
-        gate = max(own_effective, i.teacher_opening_at)
+    opening = decide_opening(
+        close,
+        grace_s=grace,
+        automatic_close_at=automatic,
+        teacher_opening_at=i.teacher_opening_at,
+    )
+    if opening.code is not Code.OK:
+        return opening.code, None, None
+    gate = opening.at
+    assert close is not None and gate is not None
+    own_effective = close + (grace or 0)
     showable = {own_effective}
     if i.own_close_at is not None:
         showable.add(i.own_close_at + (grace or 0))

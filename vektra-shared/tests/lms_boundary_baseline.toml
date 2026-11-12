@@ -5,6 +5,6 @@
 # `directory` entries exempt a package being separated, with no count.
 # `file` entries record how many mentions the file had when recorded.
 #
-# Empty since 2026-11-12 (ADR-0033, PR 2a-4): the Moodle provider left the platform for
-# adapters/vektra-lms-moodle, outside the perimeter. Do not add an entry: a step that seems to
-# need one is an ADR question.
+# Empty since 2026-11-12 (ADR-0033, PR 2a-4): the Moodle provider left the platform; since
+# phase 2b it lives in its own repository, outside the perimeter. Do not add an entry: a step
+# that seems to need one is an ADR question.

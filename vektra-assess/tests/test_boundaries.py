@@ -73,23 +73,6 @@ def test_contract_c_covers_every_child(
     } == forbidden
 
 
-def test_contract_c_covers_every_platform_package() -> None:
-    """ADR-0033 D6, plan 2a-4b.11: every root package of the import graph is a source of (c)
-    (a new component cannot slip outside it), and its forbidden list is exactly the provider
-    packages the image variants install, one per pin file in ``docker/lms-providers/`` (since
-    phase 2b the providers are released from their own repositories; import-linter has no root
-    wildcard)."""
-    cfg = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
-    roots = set(cfg["tool"]["importlinter"]["root_packages"])
-    contract = _contracts()[CONTRACT_C]
-    assert set(contract["source_modules"]) == roots
-    providers = {
-        f"vektra_lms_{p.stem}" for p in (ROOT / "docker/lms-providers").glob("*.txt")
-    }
-    assert providers, "no provider pin found: the predicate is dead"
-    assert set(contract["forbidden_modules"]) == providers
-
-
 # --- who holds an LmsProvider (plan 2a-2a.9) ---------------------------------
 #
 # Only the worker (the composition, the start source, the setup-check handler), capture (the

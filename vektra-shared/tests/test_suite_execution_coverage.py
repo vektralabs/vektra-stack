@@ -39,20 +39,15 @@ WORKFLOW_DIR = REPO_ROOT / ".github" / "workflows"
 # The `-m` expressions this guard knows how to reason about. An unrecognised one is a
 # hard failure rather than a silent "covers nothing" / "covers everything" guess: the
 # whole point is not to certify coverage we cannot actually demonstrate.
-# "moodle" (assess-moodle-contract.yml) selects only the live-Moodle tests, which are also
-# marked `integration`: it must not certify any other suite, so it selects neither path here
-# (the package-integration job collects those tests too, and skips them without a Moodle).
 _SELECTS_UNIT = {
     None: True,
     "not integration": True,
     "integration": False,
-    "moodle": False,
 }
 _SELECTS_INTEGRATION = {
     None: True,
     "not integration": False,
     "integration": True,
-    "moodle": False,
 }
 
 # Suites deliberately run by nothing. Every entry needs a reason, and the entry has to

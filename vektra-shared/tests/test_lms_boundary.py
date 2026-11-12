@@ -412,12 +412,48 @@ def test_the_baseline_is_empty() -> None:
     assert baseline.files == {} and baseline.directories == ()
 
 
+def _lms_pins():  # type: ignore[no-untyped-def]
+    """``lms_pins.py``, the one pin parser, loaded by path (registered so its dataclass
+    resolves its own module)."""
+    import importlib.util
+    import sys
+
+    name = "vektra_lms_pins"
+    if name not in sys.modules:
+        spec = importlib.util.spec_from_file_location(
+            name, Path(__file__).with_name("lms_pins.py")
+        )
+        assert spec and spec.loader
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[name] = module
+        spec.loader.exec_module(module)
+    return sys.modules[name]
+
+
 def _pinned_providers() -> list[str]:
     """The provider distributions the image variants install (one pin file per provider)."""
-    return sorted(
-        f"{LMS_DIST_PREFIX}{p.stem}"
-        for p in (REPO_ROOT / "docker/lms-providers").glob("*.txt")
+    return sorted(pin.dist for pin in _lms_pins().pins().values())
+
+
+def test_contract_c_covers_every_platform_package() -> None:
+    """ADR-0033 D6, plan 2a-4b.11: every root package of the import graph is a source of
+    import-linter contract (c) (a new component cannot slip outside it), and its forbidden list
+    is exactly the provider packages the image variants install, one per pin file in
+    ``docker/lms-providers/`` (import-linter has no root wildcard). Here, in test-structure, and
+    not in the vertical's suite: a PR that only adds a pin matches no component path filter."""
+    pyproject = tomllib.loads(
+        (REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8")
     )
+    cfg = pyproject["tool"]["importlinter"]
+    (contract,) = [
+        c
+        for c in cfg["contracts"]
+        if c["name"] == "no platform package imports an LMS provider"
+    ]
+    assert set(contract["source_modules"]) == set(cfg["root_packages"])
+    providers = {pin.module for pin in _lms_pins().pins().values()}
+    assert providers, "no provider pin found: the predicate is dead"
+    assert set(contract["forbidden_modules"]) == providers
 
 
 def test_no_workspace_member_is_a_provider() -> None:

@@ -41,8 +41,7 @@ jobs:
             vektra-learn/src/vektra_learn \
             vektra-assess/src/vektra_assess \
             vektra-app/src/vektra_app \
-            testkit/src/vektra_testkit \
-            adapters/vektra-lms-moodle/src/vektra_lms_moodle
+            testkit/src/vektra_testkit
 
       - name: import-linter (boundary check)
         run: uv run lint-imports

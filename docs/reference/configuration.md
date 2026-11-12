@@ -322,11 +322,13 @@ which is why the margin is tracked here.
 
 ### Moodle LMS provider (vektra-lms-moodle)
 
-The Moodle provider (`adapters/vektra-lms-moodle`, ADR-0033) is not part of the platform image. It
-is installed by the image variant built with `--build-arg INSTALL_LMS_PROVIDER=moodle`
-(`docker-compose.assess.yml` builds it as `vektra-stack-lms-moodle`; a release publishes it as
-`ghcr.io/vektralabs/vektra:<version>-lms-moodle`), or in development with
-`uv sync --group lms-moodle`. A deployment selects it with `VEKTRA_ASSESS_LMS_PROVIDER=moodle`.
+The Moodle provider (`vektra-lms-moodle`, ADR-0033) is not part of the platform image, and not
+part of this repository: it is released as a wheel from vektra-moodle-discuss (`provider/`). It is
+installed by the image variant built with `--build-arg INSTALL_LMS_PROVIDER=moodle`, which takes the
+wheel pinned by version and sha256 in `docker/lms-providers/moodle.txt` (`docker-compose.assess.yml`
+builds it as `vektra-stack-lms-moodle`; a release publishes it as
+`ghcr.io/vektralabs/vektra:<version>-lms-moodle`). For development, see CONTRIBUTING.md ("The Moodle
+LMS provider"). A deployment selects it with `VEKTRA_ASSESS_LMS_PROVIDER=moodle`.
 
 The provider reads its own settings (`vektra_lms_moodle.config.MoodleSettings`), from the process
 environment, with the prefix `VEKTRA_LMS_MOODLE_` (OD-4). They had the vertical's prefix before

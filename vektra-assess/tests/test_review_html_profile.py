@@ -5,7 +5,7 @@ question text and the response, which ones carry what the LMS hides). These test
 class names, so they pin the generic contract: exactly one block or nothing (fail closed), the
 dropped classes removed with their whole subtree but the surrounding text kept, the caps, and
 the item's JSON never cut into something unreadable. The Moodle profile's own oracle is the
-provider's suite (``adapters/vektra-lms-moodle/tests/test_review_block_extraction.py``).
+provider's suite (vektra-moodle-discuss ``provider/tests/test_review_block_extraction.py``).
 """
 
 from __future__ import annotations

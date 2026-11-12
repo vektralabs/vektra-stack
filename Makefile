@@ -33,7 +33,7 @@ endif
 # Targets
 # --------------------------------------------------------------------------
 
-.PHONY: help up down health ingest query demo logs test test-lms-moodle test-assess-ui test-assess-e2e lint reindex batch-ingest eval-retrieval eval-e2e eval-assess assess-keys test-chaos-assess
+.PHONY: help up down health ingest query demo logs test test-assess-ui test-assess-e2e lint reindex batch-ingest eval-retrieval eval-e2e eval-assess assess-keys test-chaos-assess
 
 help: ## Show available targets
 	@awk 'BEGIN {FS = ":.*##"} /^[a-zA-Z_-]+:.*##/ { \
@@ -80,14 +80,6 @@ test: ## Run unit tests with coverage
 		vektra-app/tests/ \
 		-v --tb=short -m "not integration"
 
-# The Moodle LMS provider is not a workspace member (ADR-0033 D6): it is installed only by the
-# opt-in group, and its suites run with the platform beside it. UV_NO_SYNC: the suites' own
-# `uv run alembic` would otherwise sync the venv back to the default groups mid-run.
-test-lms-moodle: ## Moodle LMS provider (adapters/): its tests, the conformance kit, the joint suites (needs Docker)
-	uv sync --frozen --group lms-moodle
-	UV_NO_SYNC=1 uv run pytest adapters/vektra-lms-moodle/tests -v --tb=short \
-		--cov=vektra_lms_moodle --cov-report=term-missing --cov-fail-under=95
-
 test-assess-ui: ## Assess discussion UI: no-HTML-sink lint, type check, build, vitest (needs Node 22)
 	cd vektra-assess/ui && npm ci --ignore-scripts && npm run lint && npm run typecheck && npm run build && npm test
 
@@ -126,8 +118,7 @@ lint: ## Run linters (ruff + mypy + import-linter)
 		vektra-learn/src/vektra_learn \
 		vektra-assess/src/vektra_assess \
 		vektra-app/src/vektra_app \
-		testkit/src/vektra_testkit \
-		adapters/vektra-lms-moodle/src/vektra_lms_moodle
+		testkit/src/vektra_testkit
 	uv run lint-imports
 
 reindex: ## Create reindex job (skeleton): make reindex VER=2 [NS=default]

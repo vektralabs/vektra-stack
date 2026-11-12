@@ -28,6 +28,7 @@ jobs:
       assess:    ${{ steps.filter.outputs.assess }}
       assess-ui: ${{ steps.filter.outputs.assess-ui }}
       app:       ${{ steps.filter.outputs.app }}
+      lms-provider: ${{ steps.filter.outputs.lms-provider }}
     steps:
       - uses: actions/checkout@v7
       - uses: dorny/paths-filter@v4
@@ -37,6 +38,8 @@ jobs:
             shared:
               - 'vektra-shared/**'
               - 'testkit/**'
+              - 'docker/lms-providers/**'
+              - 'Dockerfile'
             core:
               - 'vektra-core/**'
               - 'vektra-shared/**'
@@ -59,12 +62,25 @@ jobs:
               - 'vektra-assess/**'
               - 'vektra-shared/**'
               - 'testkit/**'
+              - 'docker/lms-providers/**'
+              - 'Dockerfile'
             assess-ui:
               - 'vektra-assess/ui/**'
             app:
               - 'vektra-app/**'
               - 'vektra-*/**'
               - 'testkit/**'
+            # what the LMS provider's suites depend on (see test-lms-provider)
+            lms-provider:
+              - 'vektra-shared/**'
+              - 'vektra-assess/**'
+              - 'vektra-app/**'
+              - 'testkit/**'
+              - 'docker/lms-providers/**'
+              - 'Dockerfile'
+              - 'pyproject.toml'
+              - 'uv.lock'
+              - '.github/workflows/ci-unit.yml'
 
   test-shared:
     name: Test vektra-shared
@@ -240,13 +256,13 @@ jobs:
           cache-dependency-glob: "uv.lock"
       - run: uv sync --dev --frozen --package vektra-assess
       # 77, not 80, since 2a-4 (ADR-0033 D6): the Moodle provider (3070 statements, 97.2% covered
-      # by unit tests) left vektra_assess for adapters/. On develop at 01dfe327 the package was
+      # by unit tests) left vektra_assess (now in vektra-moodle-discuss). On develop at 01dfe327 the package was
       # 80.66% (17217 statements, 3330 missed); the same code without moodle/ was 77.07% (14147,
       # 3244 missed). After 2a-4 it is 77.04% (14128, 3244 missed): not one covered line of the
       # remaining code was lost (the vertical's tests that ran only over the recordings were
       # re-written on neutral values), the drop is the denominator. The missing ~420 lines to
       # 80% are DB-bound handlers covered by the integration suites, not by mocks. The moved code
-      # keeps its own gate (test-lms-moodle, 95%).
+      # keeps its own gate (95%) in the provider's repository (provider.yml).
       - name: Run unit tests with coverage
         run: >
           uv run pytest vektra-assess/tests/ -v --tb=short -m "not integration"
@@ -325,61 +341,102 @@ jobs:
           vektra-shared/tests/test_lms_boundary.py
           -v --tb=short
 
-  # The Moodle LMS provider (ADR-0033 D6, plan 2a-4b.4): not a workspace member, so no change
-  # filter selects it; like test-structure it runs on every PR. It installs the platform plus the
-  # provider (the opt-in group), then runs the provider's tests, the conformance kit on its 4.3 and
-  # 5.2 recordings, and the joint suites (the vertical's capture, canary sinks, IDOR matrix and
-  # setup check over those recordings, on real Postgres). The live suites (-m moodle) need two
-  # Moodle sites: here they skip as BLOCKED, and assess-moodle-contract.yml runs them.
-  test-lms-moodle:
-    name: Test the Moodle LMS provider (adapters/vektra-lms-moodle)
+  # The released Moodle LMS provider against THIS PR's platform (ADR-0033 D6, phase 2b). The
+  # provider lives in vektra-moodle-discuss and its own CI tests it against a pinned vektra-stack
+  # commit, so without this job a platform change that breaks the provider (vektra_shared.lms, the
+  # vertical's harness its joint suites import, the conformance kit in testkit) would surface only
+  # when that pin is next bumped. It installs this PR's workspace plus the pinned wheel (the same
+  # bytes the lms-moodle image installs, hash-checked the same way), checks out the provider's
+  # tests at the release tag of that wheel (read from the pin file, never written twice), and runs
+  # them with VEKTRA_STACK_ROOT at this checkout: unit, conformance kit on the 4.3 and 5.2
+  # recordings, canary matrix and the joint suites on real Postgres. The live suites (-m moodle)
+  # need the dev Moodle sites and are deselected; provider-live.yml runs them weekly there.
+  #
+  # This is also the real check of the wheel's requirements: it declares `vektra-shared` with no
+  # version bound, so the image stage's `uv pip check` passes against ANY vektra-shared; only
+  # running the provider on this platform shows the two still fit.
+  #
+  # Skip-safe (DEBT-031): the job always runs and is in the CI gate; it skips its work, saying
+  # so, only when nothing it depends on changed (the lms-provider filter above), and always runs
+  # it on a push to develop or main.
+  test-lms-provider:
+    name: The released Moodle LMS provider against this platform
+    needs: detect-changes
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    env:
+      RELEVANT: ${{ github.event_name == 'push' || needs.detect-changes.outputs.lms-provider == 'true' }}
     steps:
+      - name: Skipped (nothing the provider depends on changed)
+        if: env.RELEVANT != 'true'
+        run: echo "no change under the lms-provider filter; the provider's suites are not re-run"
       - uses: actions/checkout@v7
+        if: env.RELEVANT == 'true'
         with:
           # Runs PR-authored test code; don't leave the token in .git/config
           persist-credentials: false
+      - name: Read the provider release from the pin
+        if: env.RELEVANT == 'true'
+        id: pin
+        run: |
+          echo "tag=$(python3 vektra-shared/tests/lms_pins.py tag moodle)" >> "$GITHUB_OUTPUT"
+          echo "version=$(python3 vektra-shared/tests/lms_pins.py version moodle)" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v7
+        if: env.RELEVANT == 'true'
+        with:
+          repository: vektralabs/vektra-moodle-discuss
+          ref: refs/tags/${{ steps.pin.outputs.tag }}
+          path: _lms-provider
+          persist-credentials: false
       - uses: astral-sh/setup-uv@v7
+        if: env.RELEVANT == 'true'
         with:
           enable-cache: true
           cache-dependency-glob: "uv.lock"
-      - run: uv sync --dev --frozen --group lms-moodle
-      - name: Provider tests, conformance kit and joint suites
+      # the pinned wheel, as the image installs it (hash-checked, no resolution): the suites run
+      # on the released bytes, not on a rebuild of the tag's source
+      - name: Install this workspace and the pinned provider wheel
+        if: env.RELEVANT == 'true'
+        run: |
+          uv sync --dev --frozen
+          uv pip install --no-config --python .venv/bin/python --no-index --no-cache \
+            --require-hashes --no-deps -r docker/lms-providers/moodle.txt
+          .venv/bin/python -c "import importlib.metadata as m, sys; v = m.version('vektra-lms-moodle'); print('vektra-lms-moodle', v); sys.exit(v != '${{ steps.pin.outputs.version }}')"
+      - name: The provider's suites, on this platform
+        if: env.RELEVANT == 'true'
+        working-directory: _lms-provider
         env:
+          VEKTRA_STACK_ROOT: ${{ github.workspace }}
           # the joint suites' fixtures run `uv run alembic`: never sync the provider away mid-run
           UV_NO_SYNC: "1"
         run: >
-          uv run pytest adapters/vektra-lms-moodle/tests -v -rs --tb=short
-          --cov=vektra_lms_moodle --cov-report=term-missing --cov-fail-under=95
-          --junitxml=lms-moodle.xml
-      # A green job is not evidence on its own (plan Testing Approach): the conformance kit ran
-      # on both recorded releases, and the joint suites on real Postgres ran, not skipped.
+          "$VEKTRA_STACK_ROOT/.venv/bin/python" -m pytest provider/tests -m "not moodle"
+          -v -rs --tb=short -p no:cacheprovider --junitxml="$GITHUB_WORKSPACE/lms-provider.xml"
+      # A green job is not evidence on its own: the conformance kit ran on both recorded releases,
+      # and the joint suites on real Postgres ran, not skipped.
       - name: The conformance kit and the joint suites must have run
+        if: env.RELEVANT == 'true'
         run: |
-          uv run --no-sync python - <<'PY'
+          python3 - <<'PY'
           import sys
           import xml.etree.ElementTree as ET
 
-          root = ET.parse("lms-moodle.xml").getroot()
-          cases = list(root.iter("testcase"))
-          def ran(fragment):
-              hit = [c for c in cases if fragment in (c.get("classname") or "")]
-              skipped = [c.get("name") for c in hit if c.find("skipped") is not None]
-              return len(hit), skipped
+          cases = list(ET.parse("lms-provider.xml").getroot().iter("testcase"))
           problems = []
           for fragment, minimum in (
               ("TestMoodle43Conformance", 5),
               ("TestMoodle52Conformance", 5),
+              ("integration_moodle.", 8),
               ("integration_moodle.test_setup_check_run", 5),
               ("integration_moodle.test_idor_moodle", 2),
               ("integration_moodle.test_snapshot_canary_db", 1),
               ("test_canary_matrix", 2),
           ):
-              n, skipped = ran(fragment)
-              print(f"{fragment}: {n} collected, {len(skipped)} skipped")
-              if n < minimum or skipped:
-                  problems.append(f"{fragment}: {n} collected, skipped={skipped}")
+              hit = [c for c in cases if fragment in (c.get("classname") or "")]
+              skipped = [c.get("name") for c in hit if c.find("skipped") is not None]
+              print(f"{fragment}: {len(hit)} collected, {len(skipped)} skipped")
+              if len(hit) < minimum or skipped:
+                  problems.append(f"{fragment}: {len(hit)} collected, skipped={skipped}")
           if problems:
               sys.exit("; ".join(problems))
           PY
@@ -388,7 +445,7 @@ jobs:
   # Passes if no upstream job failed (skipped jobs are treated as passing).
   ci-gate:
     name: CI gate
-    needs: [detect-changes, test-shared, test-core, test-ingest, test-index, test-admin, test-analytics, test-learn, test-learn-widget, test-assess-ui, test-assess, test-app, test-structure, test-lms-moodle]
+    needs: [detect-changes, test-shared, test-core, test-ingest, test-index, test-admin, test-analytics, test-learn, test-learn-widget, test-assess-ui, test-assess, test-app, test-structure, test-lms-provider]
     runs-on: ubuntu-latest
     if: always()
     steps:

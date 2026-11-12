@@ -4,7 +4,8 @@ Backend of the assessment discussion chatbot: a per-attempt, time-boxed discussi
 student and an LLM about the student's own submitted and graded work, launched from the LMS by
 its discussion plugin. The vertical reads the LMS only through the `LmsProvider` Protocol
 (`vektra_shared.lms`, ADR-0033); the provider is a separate distribution loaded by name
-(`VEKTRA_ASSESS_LMS_PROVIDER`), never imported; providers are staged in `adapters/`.
+(`VEKTRA_ASSESS_LMS_PROVIDER`), never imported; the Moodle one is released from
+vektra-moodle-discuss (`provider/`) and installed by the `lms-moodle` image variant.
 
 Dormant by default: with `VEKTRA_ASSESS_ENABLED=false` no `/api/v1/assess` route is mounted and
 the `assess-worker` / `assess-parser` entrypoints refuse to run.

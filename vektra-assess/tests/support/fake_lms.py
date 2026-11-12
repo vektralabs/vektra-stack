@@ -698,6 +698,7 @@ class AssignScenario:
     graded: bool = True
     released: bool = True
     files: int = 0
+    marking_workflow: bool = False
 
 
 #: name -> scenario; the names are the ones the suites used for the recorded activities
@@ -710,6 +711,11 @@ ASSIGNS: dict[str, AssignScenario] = {
     "team": AssignScenario(106, 206, team=True),
     "nocutoff": AssignScenario(107, 207, cutoff=0, graded=False),
     "hiddengrade": AssignScenario(108, 208, released=False),
+    # the browser e2e (vektra-assess/ui/e2e) opens these two: a released rubric assignment
+    # (the rubric's descriptors are never shown, BR-011) and one released through a marking
+    # workflow (BR-010)
+    "rubric_hidden": AssignScenario(109, 209, method="rubric"),
+    "wf": AssignScenario(110, 210, marking_workflow=True),
 }
 #: name -> (cmid, quiz id): one closed, graded essay quiz
 QUIZZES: dict[str, tuple[int, int]] = {"essay": (111, 211)}
@@ -745,7 +751,7 @@ def _assign_world(world: FakeLmsWorld, name: str, a: AssignScenario) -> None:
         grading_due_date=0,
         allow_submissions_from=CLOSED_AT - 86_400,
         team_submission=a.team,
-        marking_workflow=False,
+        marking_workflow=a.marking_workflow,
         grade_type="scale" if a.grade_type == "scale" else "point",
         scale_id=5 if a.grade_type == "scale" else None,
         grade_max=None if a.grade_type == "scale" else 100.0,
@@ -830,8 +836,11 @@ def _assign_world(world: FakeLmsWorld, name: str, a: AssignScenario) -> None:
             a.assignment_id,
             uid,
             item,
-            "graded" if a.graded else "notgraded",
-            False,
+            # with a marking workflow, "released" is the workflow state that releases it (BR-010)
+            ("released" if a.marking_workflow else "graded")
+            if a.graded
+            else "notgraded",
+            a.marking_workflow,
             a.released,
         )
         if rubric is not None:

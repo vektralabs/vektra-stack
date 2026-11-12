@@ -14,8 +14,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from vektra_assess.moodle.client import MoodleWsClient, SiteRef
-from vektra_assess.moodle.domain import (
+from vektra_lms_moodle.client import MoodleWsClient, SiteRef
+from vektra_lms_moodle.domain import (
     AttemptReview,
     AttemptState,
     AttemptSummary,
@@ -26,9 +26,9 @@ from vektra_assess.moodle.domain import (
     ReviewVisibility,
     UserReviewOptions,
 )
-from vektra_assess.moodle.models import branch_of
-from vektra_assess.moodle.readers._support import fetch, reader
-from vektra_assess.moodle.result import Readable, Reading, Unreadable, UnreadableReason
+from vektra_lms_moodle.models import branch_of
+from vektra_lms_moodle.readers._support import fetch, reader
+from vektra_lms_moodle.result import Readable, Reading, Unreadable, UnreadableReason
 
 _GRADEMETHOD = {1: "highest", 2: "average", 3: "first", 4: "last"}
 _AFTER_CLOSE = 0x10  # quiz review bitmask: "after the quiz is closed"

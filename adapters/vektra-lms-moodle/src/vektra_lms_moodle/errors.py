@@ -11,7 +11,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from vektra_assess.moodle.result import Unreadable, UnreadableReason
+from vektra_lms_moodle.result import Unreadable, UnreadableReason
 
 _CODE = re.compile(r"[A-Za-z0-9_.-]{1,64}")
 

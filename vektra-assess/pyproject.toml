@@ -28,11 +28,6 @@ dependencies = [
     "prometheus-client>=0.20",
 ]
 
-# The Moodle LMS provider (ADR-0033 D2), staged here until plan 2a-4 moves it to
-# adapters/vektra-lms-moodle, whose own distribution then declares this entry point.
-[project.entry-points."vektra.lms_providers"]
-moodle = "vektra_assess.moodle.provider:build_provider"
-
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
@@ -49,7 +44,6 @@ asyncio_default_fixture_loop_scope = "module"
 pythonpath = ["tests"]
 markers = [
     "integration: integration tests requiring Docker (excluded from ci-unit)",
-    "moodle: live contract tests against the seeded Moodle 4.3 / 5.2 dev envs (assess WS readers)",
 ]
 
 [tool.uv.sources]

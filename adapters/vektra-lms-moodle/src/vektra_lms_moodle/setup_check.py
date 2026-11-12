@@ -11,7 +11,7 @@ order:
   ``auth == 'webservice'`` (``nologin`` cannot be used: WS refuses it);
 - ``not_site_admin``: ``site_info.userissiteadmin`` is false;
 - ``not_ingestion_account``: site_info username differs from
-  ``VEKTRA_ASSESS_INGEST_ACCOUNT_USERNAME`` (unset: UNVERIFIABLE);
+  ``VEKTRA_LMS_MOODLE_INGEST_ACCOUNT_USERNAME`` (unset: UNVERIFIABLE);
 - ``denied_function_probe``: a harmless read-only function left out of the service
   (``core_course_get_categories``) answers ``accessexception``; a write function is never called;
 - ``no_grade_write``: no grade-write function in ``site_info.functions`` (hard-coded denylist);
@@ -32,10 +32,10 @@ from urllib.parse import urlsplit
 
 import structlog
 
-from vektra_assess.config import VektraAssessSettings
-from vektra_assess.moodle.client import MoodleWsClient, SiteRef
-from vektra_assess.moodle.domain import SiteInfo
-from vektra_assess.moodle.readers import (
+from vektra_lms_moodle.client import MoodleWsClient, SiteRef
+from vektra_lms_moodle.config import MoodleSettings
+from vektra_lms_moodle.domain import SiteInfo
+from vektra_lms_moodle.readers import (
     fetch_submission_file,
     read_assign_close_inputs,
     read_assign_settings,
@@ -51,7 +51,7 @@ from vektra_assess.moodle.readers import (
     read_user_attempts,
     read_user_review_options,
 )
-from vektra_assess.moodle.result import Readable, Reading, Unreadable, UnreadableReason
+from vektra_lms_moodle.result import Readable, Reading, Unreadable, UnreadableReason
 from vektra_shared.lms import (
     SETUP_MISSING,
     SETUP_OK,
@@ -87,7 +87,7 @@ def unverifiable(reason: str) -> SetupItem:
 class CheckContext:
     client: MoodleWsClient
     site: SiteRef  # carries the release when site_info answered
-    settings: VektraAssessSettings
+    settings: MoodleSettings
     manifest: Mapping[str, Any] | None  # the probe manifest of the site
     info: Reading[SiteInfo]  # site_info, read once for the whole run
 

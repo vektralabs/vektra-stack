@@ -19,8 +19,8 @@ from __future__ import annotations
 import html
 import re
 
-from vektra_assess.moodle.client import MoodleWsClient, SiteRef
-from vektra_assess.moodle.domain import (
+from vektra_lms_moodle.client import MoodleWsClient, SiteRef
+from vektra_lms_moodle.domain import (
     GradingView,
     MarkingGuideSummary,
     RubricCriterion,
@@ -30,8 +30,8 @@ from vektra_assess.moodle.domain import (
     RubricLevel,
     ScaleDefinition,
 )
-from vektra_assess.moodle.readers._support import fetch, reader
-from vektra_assess.moodle.result import Readable, Reading, Unreadable, UnreadableReason
+from vektra_lms_moodle.readers._support import fetch, reader
+from vektra_lms_moodle.result import Readable, Reading, Unreadable, UnreadableReason
 
 NO_ACTIVE_METHOD = "invalid_method_name"
 

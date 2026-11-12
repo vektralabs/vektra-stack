@@ -9,6 +9,7 @@ from vektra_assess.jobs import JobKind
 from vektra_assess.worker.policy import (
     KIND_DEFAULTS,
     POOL_DEFAULTS,
+    TEACHER_GATE_ASSUMED_CALL_DEADLINE_S,
     WorkerPolicyError,
     load_policy,
 )
@@ -155,20 +156,16 @@ def test_incoherent_preflight_settings_refuse_to_start(env: dict[str, str]) -> N
         load_policy(env)
 
 
-def test_the_teacher_gate_budget_covers_its_two_moodle_stages() -> None:
-    """CodeRabbit 4505511249: a refresh resolves the cmid (one call) and then reads the editors
-    and the facts concurrently (one more call's deadline): the budget must cover two full WS
-    deadlines plus a DB margin, from the configured deadline."""
+def test_the_teacher_gate_budget_covers_its_three_lms_stages() -> None:
+    """CodeRabbit 4505511249 / 4505705696: the quiz path is THREE sequential LMS calls (resolve,
+    the quiz settings, then its overrides), each bounded by the provider's call deadline, plus a
+    DB margin. The deadline is the provider's setting now (ADR-0033 D5): the vertical budgets the
+    30 s default (the Moodle provider's suite checks its default fits), and a deployment that
+    raises the deadline raises the job budget with it."""
     from vektra_assess.jobs import JobKind
 
     default = load_policy({}).kinds[JobKind.TEACHER_GATE]
-    total = float(VektraAssessSettings.model_fields["ws_total_timeout_s"].default)
-    # CodeRabbit 4505705696: the quiz path is THREE sequential calls (resolve, the quiz
-    # settings, then its overrides inside read_quiz_close_inputs)
-    assert default.budget_s >= 3 * total + 5 and default.lease_s >= 2 * default.budget_s
-    slow = load_policy({"VEKTRA_ASSESS_WS_TOTAL_TIMEOUT_S": "90"}).kinds[
-        JobKind.TEACHER_GATE
-    ]
-    assert slow.budget_s >= 3 * 90 + 5 and slow.lease_s >= 2 * slow.budget_s
+    assert default.budget_s >= 3 * 30 + 5 and default.lease_s >= 2 * default.budget_s
+    assert TEACHER_GATE_ASSUMED_CALL_DEADLINE_S == 30.0
     explicit = load_policy({"VEKTRA_ASSESS_JOB_TEACHER_GATE_BUDGET_S": "100"})
     assert explicit.kinds[JobKind.TEACHER_GATE].budget_s == 100

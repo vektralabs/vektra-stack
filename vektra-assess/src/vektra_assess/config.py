@@ -233,11 +233,13 @@ class VektraAssessSettings(BaseSettings):
         description="RLIMIT_AS of each parsing child, in MiB.",
     )
 
-    # --- Moodle web-service client (plan assess-moodle-ws, group B) -------------------------
+    # --- environment mode -------------------------------------------------------------------
+    # The LMS client's own settings (TLS, timeouts, caps, breaker, plain-http switch) belong to
+    # the LMS provider, which reads them itself (ADR-0033 D5, OD-4).
     env: str = Field(
         "development",
         alias="VEKTRA_ENV",
-        description="Environment mode (shared with the main settings). Plain http to Moodle needs development.",
+        description="Environment mode (shared with the main settings). Development-only switches need it set explicitly.",
     )
 
     @property
@@ -261,70 +263,10 @@ class VektraAssessSettings(BaseSettings):
             )
         return f"VEKTRA_ENV={self.env}"
 
-    moodle_ca_file: Path | None = Field(
-        None,
-        alias="VEKTRA_ASSESS_MOODLE_CA_FILE",
-        description="CA bundle used to verify Moodle TLS certificates; the system store when unset.",
-    )
-    ws_timeout_connect_s: float = Field(
-        3.0, gt=0, le=60, alias="VEKTRA_ASSESS_WS_TIMEOUT_CONNECT_S"
-    )
-    ws_timeout_read_s: float = Field(
-        10.0, gt=0, le=120, alias="VEKTRA_ASSESS_WS_TIMEOUT_READ_S"
-    )
-    ws_total_timeout_s: float = Field(
-        30.0,
-        gt=0,
-        le=600,
-        alias="VEKTRA_ASSESS_WS_TOTAL_TIMEOUT_S",
-        description="Overall deadline of one Moodle call, body included: a server that drips bytes cannot hold it open.",
-    )
-    ws_max_response_bytes: int = Field(
-        8 * 1024 * 1024,
-        ge=1024,
-        le=64 * 1024 * 1024,
-        alias="VEKTRA_ASSESS_WS_MAX_RESPONSE_BYTES",
-        description="Byte cap of a JSON web-service response; the stream is aborted on overflow.",
-    )
-    ws_max_file_bytes: int = Field(
-        10 * 1024 * 1024,
-        ge=1024,
-        le=64 * 1024 * 1024,
-        alias="VEKTRA_ASSESS_WS_MAX_FILE_BYTES",
-        description="Byte cap of one downloaded submission file (REQ-101).",
-    )
-    ws_rps: float = Field(
-        10.0,
-        gt=0,
-        le=1000,
-        alias="VEKTRA_ASSESS_WS_RPS",
-        description="Global cap on Moodle calls per second, shared by every caller in the worker.",
-    )
-    breaker_threshold: int = Field(
-        5, ge=1, le=100, alias="VEKTRA_ASSESS_BREAKER_THRESHOLD"
-    )
-    breaker_cooldown_s: float = Field(
-        30.0, gt=0, le=3600, alias="VEKTRA_ASSESS_BREAKER_COOLDOWN_S"
-    )
-    moodle_allow_http: bool = Field(
-        False,
-        alias="VEKTRA_ASSESS_MOODLE_ALLOW_HTTP",
-        description="Plain http to Moodle. Honoured only with VEKTRA_ENV=development; the worker refuses to start otherwise.",
-    )
-    moodle_allowed_cidrs: str = Field(
-        "",
-        alias="VEKTRA_ASSESS_MOODLE_ALLOWED_CIDRS",
-        description="Comma-separated CIDRs a Moodle host may resolve into (an on-prem Moodle on a private network). Empty: private addresses are refused.",
-    )
-    ingest_account_username: str | None = Field(
-        None,
-        alias="VEKTRA_ASSESS_INGEST_ACCOUNT_USERNAME",
-        description="Username of the ingestion web-service account; the setup check refuses the assess token if it belongs to it. Unset: that item is UNVERIFIABLE.",
-    )
     ui_origin: str | None = Field(
         None,
         alias="VEKTRA_ASSESS_UI_ORIGIN",
-        description="Origin the chat UI is served from; the setup check refuses it if it is the same site as the Moodle base_url or the API public origin (CONF-004). Unset: UNVERIFIABLE.",
+        description="Origin the chat UI is served from; the setup check refuses it if it is the same site as the LMS base_url or the API public origin (CONF-004). Unset: UNVERIFIABLE.",
     )
     api_public_origin: str | None = Field(
         None,
@@ -476,7 +418,7 @@ class VektraAssessSettings(BaseSettings):
         None,
         alias="VEKTRA_ASSESS_LMS_PROVIDER",
         pattern=r"^[a-z][a-z0-9_-]{0,63}$",
-        description="Name of the LMS provider the worker loads from the entry-point group vektra.lms_providers (ADR-0033 D2), for example moodle. Required with VEKTRA_ASSESS_ENABLED=true: unset, the worker refuses to start and lists the installed providers.",
+        description="Name of the LMS provider the worker loads from the entry-point group vektra.lms_providers (ADR-0033 D2), the name an installed provider distribution declares. Required with VEKTRA_ASSESS_ENABLED=true: unset, the worker refuses to start and lists the installed providers.",
     )
 
     @field_validator("lms_provider", mode="before")

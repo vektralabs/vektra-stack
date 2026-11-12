@@ -1,4 +1,5 @@
-"""Capability probes: one per flag of ``vektra_assess.capabilities.FLAGS`` (ARCH-070).
+"""Capability probes: one per flag of the vertical's capability contract (ARCH-070), which the
+vertical passes in (``probe_capabilities(..., flags)``); ``PROBES`` covers every flag it names.
 
 A probe passes (``readable``) only if the reader's OUTPUT equals the value recorded in the
 site's probe manifest. "The call returned 200" is not evidence (project rule: verify
@@ -45,9 +46,8 @@ from typing import Any
 
 import structlog
 
-from vektra_assess.capabilities import FLAGS
-from vektra_assess.moodle.client import MoodleWsClient, SiteRef
-from vektra_assess.moodle.readers import (
+from vektra_lms_moodle.client import MoodleWsClient, SiteRef
+from vektra_lms_moodle.readers import (
     read_assign_close_inputs,
     read_assign_release,
     read_assign_settings,
@@ -63,8 +63,8 @@ from vektra_assess.moodle.readers import (
     read_user_attempts,
     read_user_review_options,
 )
-from vektra_assess.moodle.result import Readable, Reading, Unreadable, UnreadableReason
-from vektra_assess.moodle.shape import evidence_for
+from vektra_lms_moodle.result import Readable, Reading, Unreadable, UnreadableReason
+from vektra_lms_moodle.shape import evidence_for
 from vektra_shared.lms import CapabilityResult
 
 log = structlog.get_logger(__name__)
@@ -644,7 +644,7 @@ async def _release_state(ctx: ProbeContext, a: Mapping[str, Any]) -> Reading[Any
     return Readable(_rows(rows))
 
 
-#: one probe per flag; a test asserts the keys equal ``capabilities.FLAGS``.
+#: one probe per flag; a test asserts the keys equal the vertical's ``capabilities.FLAGS``.
 PROBES: dict[str, Probe] = {
     "quiz_overrides": _quiz_overrides,
     "assign_extensions": _assign_extensions,
@@ -713,7 +713,7 @@ async def run_probes(
     manifest: Mapping[str, Any] | None,
     *,
     now: int | None = None,
-    flags: Sequence[str] = FLAGS,
+    flags: Sequence[str] | None = None,
 ) -> tuple[FlagResult, ...]:
     """Probe every flag of ``flags``; the result has one entry per flag, in that order. A flag
     this provider has no probe for is ``unreadable/not_probed``.
@@ -726,7 +726,7 @@ async def run_probes(
     seeded: Mapping[str, Any] = (manifest or {}).get("flags", {}) if manifest else {}
     ctx = ProbeContext(client, site, int((manifest or {}).get("courseid", 0)))
     out: list[FlagResult] = []
-    for flag in flags:
+    for flag in tuple(PROBES) if flags is None else flags:
         checks = list((seeded.get(flag) or {}).get("checks") or [])
         if not checks or flag not in PROBES:
             out.append(

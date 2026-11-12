@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Record Moodle web-service responses from a DEV site as hermetic test fixtures.
 
-Plan assess-moodle-ws, group C. For every reader of ``vektra_assess.moodle.readers`` this calls
+Plan assess-moodle-ws, group C. For every reader of ``vektra_lms_moodle.readers`` this calls
 the WS functions the reader uses against a seeded dev site and writes
 
     <out>/<4.3|5.2>/<wsfunction>__<fixture>.json     {"wsfunction", "fixture", "params", "response"}
@@ -21,7 +21,7 @@ Safety rules (the recorder REFUSES, it does not warn):
 
 Usage::
 
-    uv run python scripts/assess_record_ws.py --base-url http://localhost:8080 \\
+    uv run python adapters/vektra-lms-moodle/scripts/record_ws.py --base-url http://localhost:8080 \\
         --token-file <dir>/provision-m43.json --manifest <dir>/manifest-m43.json
 """
 
@@ -52,11 +52,7 @@ LOCAL_URL = re.compile(
     r"^http://(" + "|".join(re.escape(h) for h in DEV_HOSTS) + r"):\d{2,5}$"
 )
 DEFAULT_OUT = (
-    Path(__file__).resolve().parent.parent
-    / "vektra-assess"
-    / "tests"
-    / "fixtures"
-    / "moodle_ws"
+    Path(__file__).resolve().parent.parent / "tests" / "fixtures" / "moodle_ws"
 )
 SECRET_KEYS = {"userprivateaccesskey", "privatetoken", "token", "wstoken"}
 
@@ -353,7 +349,7 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
         return None
 
 
-from vektra_assess.moodle.client import flatten_params  # noqa: E402
+from vektra_lms_moodle.client import flatten_params  # noqa: E402
 
 _OPENER = urllib.request.build_opener(_NoRedirect)
 

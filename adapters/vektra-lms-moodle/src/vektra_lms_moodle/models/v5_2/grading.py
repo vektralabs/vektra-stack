@@ -8,8 +8,8 @@ from typing import Any
 
 from pydantic import TypeAdapter
 
-from vektra_assess.moodle.models.base import Strict as _Strict
-from vektra_assess.moodle.models.base import Warning
+from vektra_lms_moodle.models.base import Strict as _Strict
+from vektra_lms_moodle.models.base import Warning
 
 
 class GradingDefinitionsAreasItemDefinitionsItemGuideGuideCriteriaItem(_Strict):

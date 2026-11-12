@@ -20,8 +20,8 @@ from typing import Any
 
 from pydantic import ValidationError
 
-from vektra_assess.moodle.client import MoodleWsClient, SiteRef
-from vektra_assess.moodle.domain import (
+from vektra_lms_moodle.client import MoodleWsClient, SiteRef
+from vektra_lms_moodle.domain import (
     AssignCloseInputs,
     AssignReleaseState,
     AssignSettings,
@@ -31,9 +31,9 @@ from vektra_assess.moodle.domain import (
     SubmissionStatus,
     UserFlag,
 )
-from vektra_assess.moodle.models.base import Strict
-from vektra_assess.moodle.readers._support import fetch, reader
-from vektra_assess.moodle.result import Readable, Reading, Unreadable, UnreadableReason
+from vektra_lms_moodle.models.base import Strict
+from vektra_lms_moodle.readers._support import fetch, reader
+from vektra_lms_moodle.result import Readable, Reading, Unreadable, UnreadableReason
 
 
 @reader

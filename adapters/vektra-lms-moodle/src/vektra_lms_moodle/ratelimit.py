@@ -2,7 +2,7 @@
 
 One bucket per worker process (single replica, COMP-003: scaling the worker out multiplies
 the cap by the replica count), shared by every caller in it (render checks, gate
-refresh, bursts of Starts): ``VEKTRA_ASSESS_WS_RPS`` is a cap on the load put on Moodle,
+refresh, bursts of Starts): ``VEKTRA_LMS_MOODLE_WS_RPS`` is a cap on the load put on Moodle,
 not a per-caller allowance. ``acquire`` waits instead of failing. Clock and sleep are
 injectable so tests never sleep for real.
 """

@@ -13,10 +13,10 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Literal
 
-from vektra_assess.moodle.client import MoodleWsClient, SiteRef
-from vektra_assess.moodle.readers._support import fetch, reader
-from vektra_assess.moodle.readers.enrol import read_user_courses
-from vektra_assess.moodle.result import Readable, Reading, Unreadable, UnreadableReason
+from vektra_lms_moodle.client import MoodleWsClient, SiteRef
+from vektra_lms_moodle.readers._support import fetch, reader
+from vektra_lms_moodle.readers.enrol import read_user_courses
+from vektra_lms_moodle.result import Readable, Reading, Unreadable, UnreadableReason
 
 ActivityKind = Literal["quiz", "assign"]
 

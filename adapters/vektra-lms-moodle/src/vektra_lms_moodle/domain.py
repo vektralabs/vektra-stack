@@ -14,7 +14,7 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from enum import StrEnum
 
-from vektra_assess.moodle.result import Reading
+from vektra_lms_moodle.result import Reading
 
 # --- site ----------------------------------------------------------------------------------
 

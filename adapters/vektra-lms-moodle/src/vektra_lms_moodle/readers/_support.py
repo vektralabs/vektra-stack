@@ -19,9 +19,9 @@ from typing import Any
 import structlog
 from pydantic import ValidationError
 
-from vektra_assess.moodle.client import MoodleWsClient, SiteRef
-from vektra_assess.moodle.models import SUPPORTED_BRANCHES, branch_of
-from vektra_assess.moodle.result import Readable, Reading, Unreadable, UnreadableReason
+from vektra_lms_moodle.client import MoodleWsClient, SiteRef
+from vektra_lms_moodle.models import SUPPORTED_BRANCHES, branch_of
+from vektra_lms_moodle.result import Readable, Reading, Unreadable, UnreadableReason
 
 log = structlog.get_logger(__name__)
 

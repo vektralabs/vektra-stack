@@ -1,6 +1,6 @@
 """Operator CLI: run the full setup check and the capability probes against a dev site.
 
-    uv run python -m vektra_assess.moodle.spike \\
+    uv run --group lms-moodle python adapters/vektra-lms-moodle/scripts/setup_spike.py \\
         --site http://localhost:8080 --manifest <seed manifest.json> \\
         --token-file <provision.json> --allow-http --allow-cidr 127.0.0.0/8 --resolve-ipv4
 
@@ -38,11 +38,12 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from vektra_assess.config import VektraAssessSettings
-from vektra_assess.moodle.client import MoodleWsClient
-from vektra_assess.moodle.probes import derive_probe_manifest
-from vektra_assess.moodle.provider import MoodleLmsProvider
-from vektra_assess.moodle.tokens import secret_token_provider
 from vektra_assess.setup import CheckOutcome, evaluate, run_setup_check
+from vektra_lms_moodle.client import MoodleWsClient
+from vektra_lms_moodle.config import MoodleSettings
+from vektra_lms_moodle.probes import derive_probe_manifest
+from vektra_lms_moodle.provider import MoodleLmsProvider
+from vektra_lms_moodle.tokens import secret_token_provider
 from vektra_shared.lms import LmsSite
 
 
@@ -70,21 +71,24 @@ def read_token(path: Path, key: str) -> str:
     return doc
 
 
-def build_settings(args: argparse.Namespace) -> VektraAssessSettings:
+def build_settings(
+    args: argparse.Namespace,
+) -> tuple[VektraAssessSettings, MoodleSettings]:
+    """The vertical's settings (the generic items, the worker DSN) and the provider's own."""
     base = VektraAssessSettings()
     update: dict[str, Any] = {}
-    if args.allow_http:
-        update["moodle_allow_http"] = True
-    if args.allow_cidr:
-        update["moodle_allowed_cidrs"] = ",".join(args.allow_cidr)
-    for arg, field in (
-        ("ingest_account", "ingest_account_username"),
-        ("ui_origin", "ui_origin"),
-        ("api_origin", "api_public_origin"),
-    ):
+    for arg, field in (("ui_origin", "ui_origin"), ("api_origin", "api_public_origin")):
         if getattr(args, arg):
             update[field] = getattr(args, arg)
-    return base.model_copy(update=update)
+    moodle = MoodleSettings()
+    m_update: dict[str, Any] = {}
+    if args.allow_http:
+        m_update["moodle_allow_http"] = True
+    if args.allow_cidr:
+        m_update["moodle_allowed_cidrs"] = ",".join(args.allow_cidr)
+    if args.ingest_account:
+        m_update["ingest_account_username"] = args.ingest_account
+    return base.model_copy(update=update), moodle.model_copy(update=m_update)
 
 
 def render_table(outcome: CheckOutcome) -> str:
@@ -124,9 +128,7 @@ def render_json(outcome: CheckOutcome) -> str:
 
 
 def parser() -> argparse.ArgumentParser:
-    ap = argparse.ArgumentParser(
-        prog="python -m vektra_assess.moodle.spike", description=__doc__
-    )
+    ap = argparse.ArgumentParser(prog="setup_spike.py", description=__doc__)
     ap.add_argument(
         "--site", required=True, help="base URL of the Moodle site (never printed)"
     )
@@ -156,7 +158,7 @@ def parser() -> argparse.ArgumentParser:
 
 
 async def _run(args: argparse.Namespace) -> CheckOutcome:
-    settings = build_settings(args)
+    settings, moodle = build_settings(args)
     seed: dict[str, Any] | None = (
         json.loads(args.manifest.read_text()) if args.manifest else None
     )
@@ -172,11 +174,11 @@ async def _run(args: argparse.Namespace) -> CheckOutcome:
             raise UsageError("--token-file is required without a database")
         token = read_token(args.token_file, args.token_key)
         client = MoodleWsClient(
-            settings, token_provider=lambda _s: token, resolver=resolver
+            moodle, token_provider=lambda _s: token, resolver=resolver
         )
         try:
             return await evaluate(
-                MoodleLmsProvider(client, settings),
+                MoodleLmsProvider(client, moodle),
                 LmsSite("spike", base_url),
                 settings,
                 probe_manifest,
@@ -207,13 +209,13 @@ async def _run(args: argparse.Namespace) -> CheckOutcome:
             token = read_token(args.token_file, args.token_key)
             provider: Callable[[str], str | None] = lambda _s: token  # noqa: E731
         else:
-            provider = secret_token_provider(settings.secrets_dir)
-        client = MoodleWsClient(settings, token_provider=provider, resolver=resolver)
+            provider = secret_token_provider(moodle.secrets_dir)
+        client = MoodleWsClient(moodle, token_provider=provider, resolver=resolver)
         try:
             return await run_setup_check(
                 engine,
                 site_id=site_id,
-                provider=MoodleLmsProvider(client, settings),
+                provider=MoodleLmsProvider(client, moodle),
                 settings=settings,
             )
         finally:

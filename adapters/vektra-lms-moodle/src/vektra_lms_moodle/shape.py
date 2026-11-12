@@ -11,7 +11,7 @@ import hashlib
 import json
 from typing import Any
 
-from vektra_assess.moodle.result import ShapeEvidence
+from vektra_lms_moodle.result import ShapeEvidence
 
 
 def shape_signature(value: Any) -> Any:

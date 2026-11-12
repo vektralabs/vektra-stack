@@ -2,16 +2,16 @@
 
 from __future__ import annotations
 
-from vektra_assess.moodle.client import MoodleWsClient, SiteRef
-from vektra_assess.moodle.domain import (
+from vektra_lms_moodle.client import MoodleWsClient, SiteRef
+from vektra_lms_moodle.domain import (
     CourseEnrolment,
     CourseParticipant,
     EnrolmentView,
     GraderList,
     GraderView,
 )
-from vektra_assess.moodle.readers._support import fetch, reader
-from vektra_assess.moodle.result import Readable, Reading, Unreadable, UnreadableReason
+from vektra_lms_moodle.readers._support import fetch, reader
+from vektra_lms_moodle.result import Readable, Reading, Unreadable, UnreadableReason
 
 GRADE_CAPABILITY = "mod/assign:grade"
 #: REQ-077 "activity editors only": who may change the discussion configuration (plan 11)

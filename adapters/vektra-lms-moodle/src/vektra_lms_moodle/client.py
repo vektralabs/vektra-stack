@@ -6,7 +6,7 @@
 - ``follow_redirects=False``: a 3xx is ``Unreadable(redirect)`` and the Location is never
   followed (one request, asserted in a test);
 - the connection is pinned to the validated IP (``vektra_shared.netguard``) and TLS is
-  verified against the original hostname (SNI), with ``VEKTRA_ASSESS_MOODLE_CA_FILE`` or the
+  verified against the original hostname (SNI), with ``VEKTRA_LMS_MOODLE_CA_FILE`` or the
   system store; plain http only with ``VEKTRA_ENV=development`` and ``..._ALLOW_HTTP=true``;
 - the token travels in the POST body (``wstoken``), never in a URL that could be logged;
 - the response is streamed with a byte cap and aborted on overflow;
@@ -34,16 +34,16 @@ from urllib.parse import urlsplit
 import httpx
 import structlog
 
-from vektra_assess.config import VektraAssessSettings
-from vektra_assess.moodle.breaker import BreakerRegistry, BreakerState
-from vektra_assess.moodle.errors import (
+from vektra_lms_moodle.breaker import BreakerRegistry, BreakerState
+from vektra_lms_moodle.config import MoodleSettings
+from vektra_lms_moodle.errors import (
     error_code,
     is_error_envelope,
     unreadable_from_envelope,
 )
-from vektra_assess.moodle.ratelimit import AsyncTokenBucket
-from vektra_assess.moodle.result import Readable, Reading, Unreadable, UnreadableReason
-from vektra_assess.moodle.shape import evidence_for
+from vektra_lms_moodle.ratelimit import AsyncTokenBucket
+from vektra_lms_moodle.result import Readable, Reading, Unreadable, UnreadableReason
+from vektra_lms_moodle.shape import evidence_for
 from vektra_shared.netguard import (
     EgressDenied,
     ResolutionFailed,
@@ -132,7 +132,7 @@ def _is_tls_error(exc: BaseException) -> bool:
 class MoodleWsClient:
     def __init__(
         self,
-        settings: VektraAssessSettings,
+        settings: MoodleSettings,
         *,
         token_provider: Callable[[str], str | None],
         breakers: BreakerRegistry | None = None,

@@ -7,8 +7,8 @@ do not call the site: there is no function to call.
 
 from __future__ import annotations
 
-from vektra_assess.moodle.client import SiteRef
-from vektra_assess.moodle.result import Reading, Unreadable, UnreadableReason
+from vektra_lms_moodle.client import SiteRef
+from vektra_lms_moodle.result import Reading, Unreadable, UnreadableReason
 
 
 async def read_module_visibility_for_user(

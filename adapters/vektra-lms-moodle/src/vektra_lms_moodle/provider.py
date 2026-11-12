@@ -12,7 +12,7 @@ the neutral types of ``vektra_shared.lms``, in one place:
   question text and response and the ones that carry what Moodle hides (BR-011, D4);
 - the re-resolution refusal is ``NOT_IN_USER_COURSES``.
 
-It stays inside ``vektra_assess.moodle`` in this phase; plan 2a-4 moves it to
+It stays inside ``vektra_lms_moodle`` in this phase; plan 2a-4 moves it to
 ``adapters/vektra-lms-moodle/``. The vertical reaches it only through the entry point
 ``vektra.lms_providers: moodle`` and the Protocol.
 """
@@ -25,18 +25,18 @@ from typing import Any, Literal
 
 import structlog
 
-from vektra_assess.config import VektraAssessSettings
-from vektra_assess.moodle import domain as m
-from vektra_assess.moodle import readers as r
-from vektra_assess.moodle.client import MoodleWsClient, SiteRef
-from vektra_assess.moodle.probes import run_probes
-from vektra_assess.moodle.readers.resolve import resolve_in_course
-from vektra_assess.moodle.setup_check import (
+from vektra_lms_moodle import domain as m
+from vektra_lms_moodle import readers as r
+from vektra_lms_moodle.client import MoodleWsClient, SiteRef
+from vektra_lms_moodle.config import MoodleSettings
+from vektra_lms_moodle.probes import run_probes
+from vektra_lms_moodle.readers.resolve import resolve_in_course
+from vektra_lms_moodle.setup_check import (
     SERVICE_ACCOUNT_ITEMS,
     CheckContext,
     run_service_account_items,
 )
-from vektra_assess.moodle.tokens import SECRET_NAME
+from vektra_lms_moodle.tokens import SECRET_NAME
 from vektra_shared.lms import (
     NOT_IN_USER_COURSES,
     ActivityKind,
@@ -480,7 +480,7 @@ class MoodleLmsProvider:
     def __init__(
         self,
         client: MoodleWsClient,
-        settings: VektraAssessSettings,
+        settings: MoodleSettings,
         *,
         clock: Callable[[], int] | None = None,
     ) -> None:
@@ -513,13 +513,13 @@ class MoodleLmsProvider:
         if self._settings.moodle_allow_http and not development:
             return (
                 StartupProblem(
-                    setting="VEKTRA_ASSESS_MOODLE_ALLOW_HTTP",
+                    setting="VEKTRA_LMS_MOODLE_ALLOW_HTTP",
                     detail=(
-                        "VEKTRA_ASSESS_MOODLE_ALLOW_HTTP=true is only honoured with "
+                        "VEKTRA_LMS_MOODLE_ALLOW_HTTP=true is only honoured with "
                         "VEKTRA_ENV=development (this process runs with "
                         f"{self._settings.env_described})"
                     ),
-                    remediation="Unset VEKTRA_ASSESS_MOODLE_ALLOW_HTTP; use https to Moodle.",
+                    remediation="Unset VEKTRA_LMS_MOODLE_ALLOW_HTTP; use https to the Moodle site.",
                 ),
             )
         return ()
@@ -738,10 +738,16 @@ class MoodleLmsProvider:
 
 def build_provider() -> MoodleLmsProvider:
     """The entry point ``vektra.lms_providers: moodle``: the provider reads its own settings
-    and its token keyring (``assess_ws_tokens``, re-read at call time). Nothing connects here."""
-    from vektra_assess.moodle.tokens import secret_token_provider
+    (``VEKTRA_LMS_MOODLE_*``) and its token secret (``assess_ws_tokens``, re-read at call time),
+    and registers its logger prefix for the strict redaction of ``vektra_shared.log_safety``
+    (its loggers are not under ``vektra_assess.*``: without this they would lose it, ADR-0033
+    D8). Nothing connects here."""
+    from vektra_lms_moodle import LOGGER_PREFIX
+    from vektra_lms_moodle.tokens import secret_token_provider
+    from vektra_shared.log_safety import register_strict_logger_prefix
 
-    settings = VektraAssessSettings()
+    register_strict_logger_prefix(LOGGER_PREFIX)
+    settings = MoodleSettings()
     client = MoodleWsClient(
         settings, token_provider=secret_token_provider(settings.secrets_dir)
     )

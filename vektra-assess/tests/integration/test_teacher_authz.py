@@ -33,7 +33,7 @@ async def seed_gate(
         "close_at": 1_900_000_000,
         "team_submission": False,
         "grading_method": "rubric",
-        "moodle_rubric": True,
+        "lms_rubric": True,
         "hint": [COURSE, "assign"],
         **facts,
     }
@@ -92,7 +92,7 @@ async def test_fresh_editor_passes_and_others_are_refused_without_a_refresh(pg) 
     site = await make_site(pg)
     await seed_gate(pg, site, 51)
     ok = await check(pg, site, 51)
-    assert ok.ok and ok.facts["moodle_rubric"] is True
+    assert ok.ok and ok.facts["lms_rubric"] is True
     # a user who is not listed (a grader, say) is not an editor (REQ-077 "activity editors only")
     assert (await check(pg, site, 51, actor=OTHER)).check is TeacherCheck.NOT_AN_EDITOR
     assert await jobs(pg, site) == []

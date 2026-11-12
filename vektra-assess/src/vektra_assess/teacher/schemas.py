@@ -25,7 +25,7 @@ STATE_SET = "impostata"
 STATE_UNSET = "non impostata"
 
 ActivityType = Literal["quiz", "assign"]
-RubricSource = Literal["none", "pasted", "moodle"]
+RubricSource = Literal["none", "pasted", "lms"]
 
 #: schema bounds of the recipients list (the rules allow 1..3 addresses of <= 254 bytes; these
 #: only bound the body: beyond them a request is malformed, below them it gets field errors)
@@ -88,7 +88,7 @@ ReasonStr = Annotated[StrictStr, Field(max_length=MAX_REASON_BODY_CHARS)]
 
 class TeacherAction(BaseModel):
     """The common part of every teacher operation (plan assess-teacher-ops 11b): the acting
-    Moodle user (verified as a fresh grader) and the hints for the worker's refresh."""
+    LMS user (verified as a fresh grader) and the hints for the worker's refresh."""
 
     model_config = ConfigDict(extra="forbid")
 

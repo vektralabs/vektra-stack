@@ -234,7 +234,7 @@ async def test_persist_capture_writes_snapshot_and_exclusion_event_together(
         InProcessParser(),
         OFF,
         Capabilities(),
-        moodle_release=SCENARIO_RELEASE,
+        lms_release=SCENARIO_RELEASE,
         now=1,
     )
     assert isinstance(built, Built)
@@ -339,7 +339,7 @@ async def test_a_regrade_between_capture_and_close_changes_only_the_flag(
         InProcessParser(),
         OFF,
         Capabilities(),
-        moodle_release=SCENARIO_RELEASE,
+        lms_release=SCENARIO_RELEASE,
         now=1,
     )
     assert isinstance(built, Built)

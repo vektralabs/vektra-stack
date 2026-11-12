@@ -21,7 +21,9 @@ from alembic import op
 # revision identifiers
 revision: str = "0001"
 down_revision: str | None = None
-branch_labels: tuple[str, ...] | None = None
+# the platform branch (ADR-0033 D7): `alembic upgrade platform@head` migrates the platform only;
+# the assess branch (vektra-assess/src/vektra_assess/migrations) is applied only where enabled
+branch_labels: tuple[str, ...] | None = ("platform",)
 depends_on: tuple[str, ...] | None = None
 
 

@@ -1,7 +1,7 @@
 """Teacher configuration of one activity (plan assess-teacher-ops, REQ-077, INT-001, ARCH-071).
 
 ``PUT /api/v1/assess/activities/{cmid}/config`` and ``GET`` the same path, ``assess:teacher`` keys
-only (exact scope: an ``admin`` key is 403), bound to their site. The acting Moodle user is
+only (exact scope: an ``admin`` key is 403), bound to their site. The acting LMS user is
 ``actor_userid`` (body) or ``X-Assess-Actor`` (GET), verified as a fresh EDITOR of the activity
 (``api.teachers``); the course and type the plugin sends are hints for the worker's refresh only.
 
@@ -135,7 +135,7 @@ def _facts(gate: TeacherGate) -> v.ActivityFacts:
         close_at=v.epoch_fact(f, "close_at"),
         team_submission=flag("team_submission"),
         grading_method=method if isinstance(method, str) else None,
-        moodle_rubric=flag("moodle_rubric"),
+        lms_rubric=flag("lms_rubric"),
         automatic_close_at=v.epoch_fact(f, "automatic_close_at"),
     )
 

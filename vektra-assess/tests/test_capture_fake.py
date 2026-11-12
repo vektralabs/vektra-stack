@@ -87,7 +87,7 @@ async def _quiz(
         parser,
         OFF,
         Capabilities(),
-        moodle_release="1.0",
+        lms_release="1.0",
         now=NOW,
     )
     return out, parser
@@ -101,7 +101,7 @@ async def _assign(fake: FakeLmsProvider) -> tuple[Any, InProcessParser]:
         parser,
         OFF,
         Capabilities(),
-        moodle_release="1.0",
+        lms_release="1.0",
         now=NOW,
     )
     return out, parser

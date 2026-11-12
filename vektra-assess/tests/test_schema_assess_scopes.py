@@ -1,4 +1,4 @@
-"""Migration 0009: assess scopes, scope exclusivity, NOLOGIN roles (plan assess-foundations 4.3).
+"""Assess scopes, scope exclusivity, NOLOGIN roles (plan assess-foundations 4.3; formerly 0009).
 
 Runs against a real Postgres (testcontainers). Marked ``integration`` so the
 package-integration job (``pytest vektra-*/tests -m integration``) runs it; without
@@ -47,7 +47,7 @@ def pg():
     with PostgresContainer("pgvector/pgvector:pg16") as c:
         sync_url = c.get_connection_url()
         async_url = sync_url.replace("postgresql+psycopg2://", "postgresql+asyncpg://")
-        res = _alembic(async_url, "upgrade", "head")
+        res = _alembic(async_url, "upgrade", "heads")
         assert res.returncode == 0, res.stderr
         yield async_url
 
@@ -102,31 +102,37 @@ async def test_roles_exist_with_attributes(pg):
         pg,
         "SELECT rolname, rolcanlogin, rolsuper, rolcreaterole, rolcreatedb, "
         "rolbypassrls, rolinherit FROM pg_roles "
-        "WHERE rolname IN ('vektra_assess_api', 'vektra_assess_worker') ORDER BY rolname",
+        "WHERE rolname LIKE 'vektra\\_assess\\_%' ORDER BY rolname",
     )
-    assert [r[0] for r in rows] == ["vektra_assess_api", "vektra_assess_worker"]
+    assert [r[0] for r in rows] == [
+        "vektra_assess_api",
+        "vektra_assess_definer",
+        "vektra_assess_worker",
+    ]
     for r in rows:
         assert tuple(r[1:]) == (False, False, False, False, False, False), r
 
 
 async def test_upgrade_is_idempotent_over_existing_roles(pg):
-    # Roles pre-created (init.sql path): a re-run from 0008 must not fail on them.
+    # Roles left by the downgrade (cluster-level) or pre-created by an administrator: a re-run
+    # of the assess branch must not fail on them.
     await _fetch(pg, "DELETE FROM api_keys WHERE scopes && :a", {"a": ASSESS})
-    down = _alembic(pg, "downgrade", "0008")
+    down = _alembic(pg, "downgrade", "assess@base")
     assert down.returncode == 0, down.stderr
-    up = _alembic(pg, "upgrade", "head")
+    up = _alembic(pg, "upgrade", "heads")
     assert up.returncode == 0, up.stderr
 
 
 async def test_downgrade_refused_while_assess_keys_exist(pg):
     await _insert_key(pg, ["assess:teacher"], "blocker")
-    before = (await _fetch(pg, "SELECT version_num FROM alembic_version"))[0][0]
-    res = _alembic(pg, "downgrade", "0008")
+    versions = "SELECT version_num FROM alembic_version ORDER BY 1"
+    before = await _fetch(pg, versions)
+    assert [r[0] for r in before] == ["a0001"]  # 0008 is implied by its dependency
+    res = _alembic(pg, "downgrade", "assess@base")
     assert res.returncode != 0
     assert "downgrade refused" in res.stderr and "1 API key" in res.stderr
-    # the refusal rolls the whole (transactional) downgrade back, later revisions included
-    rows = await _fetch(pg, "SELECT version_num FROM alembic_version")
-    assert rows[0][0] == before
+    # the refusal rolls the whole (transactional) downgrade back
+    assert await _fetch(pg, versions) == before
     rows = await _fetch(
         pg, "SELECT count(*) FROM api_keys WHERE key_hash = 'hash-blocker'"
     )

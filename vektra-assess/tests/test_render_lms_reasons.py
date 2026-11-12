@@ -45,7 +45,7 @@ async def _stored(decision: GateDecision) -> dict[str, Any]:
     return json.loads(params["i"])  # type: ignore[no-any-return]
 
 
-async def test_a_full_evaluation_stores_its_moodle_reasons_only() -> None:
+async def test_a_full_evaluation_stores_its_lms_reasons_only() -> None:
     d = evaluate_start_gates(
         GateInputs(
             now=10,
@@ -66,7 +66,7 @@ async def test_a_full_evaluation_stores_its_moodle_reasons_only() -> None:
     )
     assert Code.ALREADY_DISCUSSED in d.reasons and Code.END_DATE_PASSED in d.reasons
     got = await _stored(d)
-    assert got["moodle_reasons"] == [
+    assert got["lms_reasons"] == [
         "not_released"
     ]  # the DB-side codes are re-checked live
     ok = evaluate_start_gates(
@@ -85,7 +85,7 @@ async def test_a_full_evaluation_stores_its_moodle_reasons_only() -> None:
             privacy_configured=True,
         )
     )
-    assert (await _stored(ok))["moodle_reasons"] == []
+    assert (await _stored(ok))["lms_reasons"] == []
 
 
 async def test_a_short_cut_evaluation_stores_no_moodle_half() -> None:
@@ -94,7 +94,7 @@ async def test_a_short_cut_evaluation_stores_no_moodle_half() -> None:
         (Code.NOT_ENABLED, ButtonState.NOT_ENABLED),
         (Code.SESSION_OPEN, ButtonState.ACTIVE),
     ):
-        assert "moodle_reasons" not in await _stored(GateDecision(code, state))
+        assert "lms_reasons" not in await _stored(GateDecision(code, state))
 
 
 def test_db_side_codes_are_the_ones_vektra_decides_alone() -> None:

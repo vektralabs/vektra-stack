@@ -1,7 +1,7 @@
 -- Assess role provisioning, run by the one-shot vektra-assess-db-init service
 -- (docker-compose.assess.yml, plan assess-foundations 7.1) as the superuser.
 --
--- Idempotent: creates the roles if neither init.sql nor migration 0009 has yet, then
+-- Idempotent: creates the roles if the assess migration branch has not yet, then
 -- (re)sets LOGIN and the passwords from the secret files. Re-run it to rotate a
 -- password. The passwords are read by psql from /run/secrets and never appear in a
 -- migration, in .env or on a command line; postgres runs with log_statement=none.

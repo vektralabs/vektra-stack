@@ -9,7 +9,7 @@ only re-exports them and builds the assess envelopes. Owning plans:
 .s2s/plans/20261101-154950-assess-privacy-retention (026-028).
 
 Every message and remediation here is fixed text plus content-free codes: no envelope ever
-carries a student's text, a Moodle value or a row of another student.
+carries a student's text, a value read from the LMS or a row of another student.
 """
 
 from __future__ import annotations
@@ -171,7 +171,7 @@ def token_invalid() -> ErrorResponse:
         category=ErrorCategory.PERMANENT,
         code=ERR_ASSESS_005,
         message="The discussion token is missing, invalid or no longer valid.",
-        remediation="Reload the page in Moodle to get a new token.",
+        remediation="Reload the course page to get a new token.",
     )
 
 
@@ -204,7 +204,7 @@ def session_not_found() -> ErrorResponse:
         category=ErrorCategory.PERMANENT,
         code=ERR_ASSESS_008,
         message="Discussion session not found.",
-        remediation="Reload the page in Moodle; a new token names your own session.",
+        remediation="Reload the course page; a new token names your own session.",
     )
 
 
@@ -285,7 +285,7 @@ def start_refused(reason: str) -> ErrorResponse:
         category=ErrorCategory.PERMANENT,
         code=ERR_ASSESS_015,
         message="The discussion cannot be started now.",
-        remediation="Reload the page in Moodle to see why; nothing was consumed.",
+        remediation="Reload the course page to see why; nothing was consumed.",
         details={"reason": reason},
     )
 
@@ -294,8 +294,8 @@ def plugin_too_old() -> ErrorResponse:
     return ErrorResponse(
         category=ErrorCategory.PERMANENT,
         code=ERR_ASSESS_016,
-        message="The Moodle plugin version is below the minimum this service accepts.",
-        remediation="Upgrade local_vektradiscuss on the Moodle site.",
+        message="The LMS plugin version is below the minimum this service accepts.",
+        remediation="Upgrade the LMS plugin on the site.",
     )
 
 
@@ -339,7 +339,7 @@ def download_token_invalid() -> ErrorResponse:
         category=ErrorCategory.PERMANENT,
         code=ERR_ASSESS_018,
         message="The download token is missing, invalid, expired or already used.",
-        remediation="Request a new download from Moodle.",
+        remediation="Request a new download from the course page.",
     )
 
 
@@ -349,7 +349,7 @@ def resend_recipient_forbidden() -> ErrorResponse:
         code=ERR_ASSESS_019,
         message="A resend cannot name a recipient.",
         remediation=(
-            "Recipients are the course's graders, re-resolved from Moodle (REQ-082): send "
+            "Recipients are the course's graders, re-resolved from the LMS (REQ-082): send "
             "the request without any recipient field."
         ),
     )
@@ -378,8 +378,8 @@ def teacher_unverified(*, stale: bool, role: str = "grader") -> ErrorResponse:
         remediation=(
             "A fresh check has been queued: retry in a few seconds."
             if stale
-            else f"Moodle does not list this user as {what} of the activity's course; "
-            "a retry will not succeed until that changes in Moodle."
+            else f"The LMS does not list this user as {what} of the activity's course; "
+            "a retry will not succeed until that changes in the LMS."
         ),
         details={"reason": f"{role}_check_stale" if stale else f"not_{refused}"},
     )

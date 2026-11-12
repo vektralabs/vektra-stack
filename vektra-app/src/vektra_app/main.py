@@ -33,6 +33,7 @@ from vektra_app import __version__
 from vektra_app.assess_llm import step_13_assess_llm_check
 from vektra_app.assess_wiring import (
     include_assess_router,
+    migration_branches,
     start_assess_background,
     step_12_assess_check,
     stop_assess_background,
@@ -547,7 +548,12 @@ async def _run_startup(app: FastAPI) -> None:
             "database_connectivity",
             lambda: check_database_connectivity(settings.database_url),
         ),
-        ("database_schema", lambda: check_database_schema(settings.database_url)),
+        (
+            "database_schema",
+            lambda: check_database_schema(
+                settings.database_url, branches=migration_branches()
+            ),
+        ),
         ("pgvector_extension", lambda: _step_4_pgvector_check()),
         (
             "provider_registration",

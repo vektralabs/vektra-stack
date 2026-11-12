@@ -197,7 +197,7 @@ def cfg(**kw: Any) -> Any:
 
 def render(age: float = 1.0, **inputs: Any) -> Any:
     return SimpleNamespace(
-        inputs={"moodle_reasons": [], "attested_at": None, **inputs}, age_s=age
+        inputs={"lms_reasons": [], "attested_at": None, **inputs}, age_s=age
     )
 
 
@@ -421,7 +421,7 @@ def test_a_stale_render_queues_a_refresh_and_asks_to_retry(
 def test_the_lms_half_of_the_render_refuses(
     world: Any, monkeypatch: pytest.MonkeyPatch, reasons: list[str], gate: str
 ) -> None:
-    w = world(reset_script(gate_row=render(moodle_reasons=reasons)))
+    w = world(reset_script(gate_row=render(lms_reasons=reasons)))
     status, detail = refused(reset(monkeypatch))
     assert status == 409 and details(detail)["gate"] == gate
     assert w.renders == []

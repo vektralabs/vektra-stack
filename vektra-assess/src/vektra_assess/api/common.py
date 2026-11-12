@@ -53,7 +53,7 @@ def iso_time(value: Any) -> str | None:
         try:
             return datetime.fromtimestamp(value, UTC).isoformat()
         except (OverflowError, ValueError, OSError):
-            return None  # beyond datetime's range (a Moodle value): absent, never a 500
+            return None  # beyond datetime's range (an LMS value): absent, never a 500
     return None
 
 

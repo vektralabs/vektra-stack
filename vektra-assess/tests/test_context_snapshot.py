@@ -31,7 +31,7 @@ def make(text: str = "risposta", **kw: object) -> Snapshot:
     return Snapshot(
         header=SnapshotHeader(
             activity_kind=ActivityKind.QUIZ,
-            moodle_release="5.2",
+            lms_release="5.2",
             attempt_number=2,
             attempt_count=4,
             grade_method=GradeMethod.HIGHEST,

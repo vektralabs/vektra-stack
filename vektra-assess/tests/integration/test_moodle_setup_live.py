@@ -255,7 +255,7 @@ def test_the_spike_cli_persists_through_the_worker_code_path(
     async def seed() -> None:
         await pg.run(
             "super",
-            "INSERT INTO assess_sites (id, moodle_site_uuid, base_url) VALUES (:i, :u, :b)",
+            "INSERT INTO assess_sites (id, lms_site_uuid, base_url) VALUES (:i, :u, :b)",
             {"i": site, "u": str(site), "b": url},
         )
 
@@ -273,7 +273,7 @@ def test_the_spike_cli_persists_through_the_worker_code_path(
         assert len(rows) == len(FLAGS)
         rep = await pg.run(
             "super",
-            "SELECT status, moodle_release FROM assess_setup_check_reports WHERE site_id=:s",
+            "SELECT status, lms_release FROM assess_setup_check_reports WHERE site_id=:s",
             {"s": site},
         )
         assert [r[0] for r in rep] == ["done"]

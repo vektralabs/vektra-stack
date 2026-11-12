@@ -213,7 +213,7 @@ async def run_case(case: Case) -> Outcome:
         q = m["quizzes"]["types"]
         result = await capture_quiz(
             QuizTarget(m["courseid"], q["id"], q["cmid"], uid(case.version, "stu1")),
-            readers, parser, teacher, caps, moodle_release=m["release"], now=now,
+            readers, parser, teacher, caps, lms_release=m["release"], now=now,
         )  # fmt: skip
         finalize_quiz(case)
         case.required.update({c: ("bundle",) for c in _visible_qtext()})
@@ -281,7 +281,7 @@ async def _assign_case(
             case.forbidden[c] = ("unreleased_feedback", case.shape)
     result = await capture_assign(
         AssignTarget(m["courseid"], a["id"], a["cmid"], uid(case.version, "stu1")),
-        readers, parser, teacher, caps, moodle_release=m["release"], now=now,
+        readers, parser, teacher, caps, lms_release=m["release"], now=now,
     )  # fmt: skip
     if case.shape == "files" and isinstance(result, Built):
         files = await _intake(case.version, replay, m)

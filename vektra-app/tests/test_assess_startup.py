@@ -562,7 +562,7 @@ class _Rows:
         self.origins = origins
 
     def connect(self):  # type: ignore[no-untyped-def]
-        # (id, moodle_origin, base_url) per enabled site: the column set, base_url irrelevant
+        # (id, lms_origin, base_url) per enabled site: the column set, base_url irrelevant
         rows = [
             (f"site-{i}", o, "https://ignored.example/moodle")
             for i, o in enumerate(self.origins)
@@ -599,34 +599,34 @@ class _Rows:
             "production",
             "https://m.example",
             ["https://m.example"],
-            "ui_origin_equals_moodle_origin",
+            "ui_origin_equals_lms_origin",
         ),
         # case and the default port are one origin (review #2: one normalisation)
         (
             "production",
             "HTTPS://M.Example:443",
             ["https://m.example"],
-            "ui_origin_equals_moodle_origin",
+            "ui_origin_equals_lms_origin",
         ),
         (
             "production",
             "https://m.example",
             ["HTTPS://M.EXAMPLE:443"],
-            "ui_origin_equals_moodle_origin",
+            "ui_origin_equals_lms_origin",
         ),
         # CodeRabbit 4501070007: an unusable stored origin refuses startup, never skipped
         (
             "production",
             "https://ui.example",
             ["https://m.example/path"],
-            "moodle_origin_invalid",
+            "lms_origin_invalid",
         ),
         ("development", "http://localhost:8000", ["http://127.0.0.1:8080"], None),
         (
             "development",
             "http://localhost:8000",
             ["http://localhost:8000"],
-            "ui_origin_equals_moodle_origin",
+            "ui_origin_equals_lms_origin",
         ),
     ],
 )
@@ -714,7 +714,7 @@ async def test_a_site_without_a_usable_origin_is_named_with_its_own_remedy(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """CodeRabbit 4501246170: the site's problem names the site and points at
-    assess_sites.moodle_origin (or disabling the site), not at the UI origin."""
+    assess_sites.lms_origin (or disabling the site), not at the UI origin."""
     from vektra_assess.config import VektraAssessSettings
 
     monkeypatch.setenv("VEKTRA_ENV", "production")
@@ -725,9 +725,9 @@ async def test_a_site_without_a_usable_origin_is_named_with_its_own_remedy(
             VektraAssessSettings(),
         )
     err = refused.value
-    assert "site-1" in err.detail and "moodle_origin_invalid" in err.detail
+    assert "site-1" in err.detail and "lms_origin_invalid" in err.detail
     assert "VEKTRA_ASSESS_UI_ORIGIN" not in err.detail
-    assert "assess_sites.moodle_origin" in err.remediation
+    assert "assess_sites.lms_origin" in err.remediation
     assert "disable" in err.remediation
 
 
@@ -743,9 +743,7 @@ async def test_a_ui_origin_problem_keeps_the_ui_origin_message(
             _Rows(["https://m.example"]), VektraAssessSettings()
         )
     err = refused.value
-    assert (
-        err.detail == "VEKTRA_ASSESS_UI_ORIGIN refused: ui_origin_equals_moodle_origin"
-    )
+    assert err.detail == "VEKTRA_ASSESS_UI_ORIGIN refused: ui_origin_equals_lms_origin"
     assert "own https origin" in err.remediation
 
 
@@ -764,7 +762,7 @@ async def test_a_site_on_http_is_named_with_its_own_remedy(
             VektraAssessSettings(),
         )
     err = refused.value
-    assert err.detail == "assess site site-1 refused: moodle_origin_not_https"
+    assert err.detail == "assess site site-1 refused: lms_origin_not_https"
     assert "https" in err.remediation and "disable" in err.remediation
     assert "VEKTRA_ASSESS_UI_ORIGIN" not in err.remediation
 

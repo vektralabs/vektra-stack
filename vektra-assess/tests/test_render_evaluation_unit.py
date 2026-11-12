@@ -1,6 +1,6 @@
 """The render evaluation's short cuts and side reads without a database (plans 10, 11b).
 
-``test_render_moodle_reasons.py`` pins what ``store_render`` writes; these pin what feeds it:
+``test_render_lms_reasons.py`` pins what ``store_render`` writes; these pin what feeds it:
 the configuration row's short cuts, the REQ-091 date handed to the reset check, a failing
 source read failing closed, the grader and recipient reads, and the job handler end to end.
 """

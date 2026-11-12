@@ -13,7 +13,7 @@ function app() {
   const root = document.createElement("main");
   document.body.replaceChildren(root);
   const a = new App(
-    { site: "s", moodleOrigin: "https://m.example", apiBase: "/api/v1/assess" },
+    { site: "s", parentOrigin: "https://m.example", apiBase: "/api/v1/assess" },
     new Bridge(win, "https://m.example"),
     root,
     (async () => new Response("{}", { status: 200 })) as unknown as typeof fetch,
@@ -75,7 +75,7 @@ describe("REQ-103 flag", () => {
     const root = document.createElement("main");
     document.body.replaceChildren(root);
     const a = new App(
-      { site: "s", moodleOrigin: "https://m.example", apiBase: "/api" },
+      { site: "s", parentOrigin: "https://m.example", apiBase: "/api" },
       new Bridge(
         { parent: { postMessage: () => {} }, addEventListener: () => {} },
         "https://m.example",
@@ -133,7 +133,7 @@ describe("resume without sid and the download-token timeout", () => {
     const root = document.createElement("main");
     document.body.replaceChildren(root);
     const a = new App(
-      { site: "s", moodleOrigin: "https://m.example", apiBase: "/api" },
+      { site: "s", parentOrigin: "https://m.example", apiBase: "/api" },
       new Bridge(win, "https://m.example"),
       root,
       fetchImpl,
@@ -226,7 +226,7 @@ describe("review #5: outage_end and a pending reply", () => {
     const root = document.createElement("main");
     document.body.replaceChildren(root);
     const a = new App(
-      { site: "s", moodleOrigin: "https://m.example", apiBase: "/api" },
+      { site: "s", parentOrigin: "https://m.example", apiBase: "/api" },
       new Bridge({ parent: { postMessage: () => {} }, addEventListener: () => {} }, "https://m.example"),
       root,
       (async () => Response.json({})) as unknown as typeof fetch,
@@ -268,7 +268,7 @@ describe("review #10: Fine and flag failures", () => {
     const root = document.createElement("main");
     document.body.replaceChildren(root);
     const a = new App(
-      { site: "s", moodleOrigin: "https://m.example", apiBase: "/api" },
+      { site: "s", parentOrigin: "https://m.example", apiBase: "/api" },
       new Bridge({ parent: { postMessage: () => {} }, addEventListener: () => {} }, "https://m.example"),
       root,
       fetchImpl,
@@ -356,7 +356,7 @@ function harness() {
   const root = document.createElement("main");
   document.body.replaceChildren(root);
   const a = new App(
-    { site: "s", moodleOrigin: "https://m.example", apiBase: "/api" },
+    { site: "s", parentOrigin: "https://m.example", apiBase: "/api" },
     new Bridge({ parent: { postMessage: () => {} }, addEventListener: () => {} }, "https://m.example"),
     root,
     fetchImpl,
@@ -659,7 +659,7 @@ describe("the composer limit (4501070009)", () => {
     const cfg = document.createElement("script");
     cfg.id = "cfg";
     cfg.type = "application/json";
-    cfg.textContent = JSON.stringify({ site: "s", moodleOrigin: "https://m.example", apiBase: "/api", maxMessageChars: 3500 });
+    cfg.textContent = JSON.stringify({ site: "s", parentOrigin: "https://m.example", apiBase: "/api", maxMessageChars: 3500 });
     document.body.append(cfg);
     const read = readConfig(document);
     const a = new App(
@@ -697,7 +697,7 @@ describe("the composer limit counts code points like the server (4501070009)", (
     const root = document.createElement("main");
     document.body.replaceChildren(root);
     const a = new App(
-      { site: "s", moodleOrigin: "https://m.example", apiBase: "/api", maxMessageChars: max },
+      { site: "s", parentOrigin: "https://m.example", apiBase: "/api", maxMessageChars: max },
       new Bridge({ parent: { postMessage: () => {} }, addEventListener: () => {} }, "https://m.example"),
       root,
       (async (url: string, init: RequestInit) => {
@@ -793,7 +793,7 @@ describe("the close learnt from a 409, on a real stream (4501067255 follow-up)",
     const root = document.createElement("main");
     document.body.replaceChildren(root);
     const a = new App(
-      { site: "s", moodleOrigin: "https://m.example", apiBase: "/api" },
+      { site: "s", parentOrigin: "https://m.example", apiBase: "/api" },
       new Bridge(
         { parent: { postMessage: (m: unknown) => posted.push(m as never) }, addEventListener: () => {} },
         "https://m.example",

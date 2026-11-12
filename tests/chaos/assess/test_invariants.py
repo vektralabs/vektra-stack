@@ -64,7 +64,7 @@ async def session(
     site = extra.get("site") or uuid.uuid4()
     sid = uuid.uuid4()
     stmts = [
-        "INSERT INTO assess_sites (id, moodle_site_uuid, base_url) VALUES (:site, :site_u, "
+        "INSERT INTO assess_sites (id, lms_site_uuid, base_url) VALUES (:site, :site_u, "
         "'https://m.example') ON CONFLICT DO NOTHING",
         "INSERT INTO assess_sessions (id, site_id, cmid, student_userid, session_no, state, "
         "close_reason, epoch, starting_expires_at) VALUES (:sid, :site, 1, :student, :no, :state, "

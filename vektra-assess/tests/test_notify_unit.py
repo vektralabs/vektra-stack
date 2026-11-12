@@ -94,7 +94,7 @@ async def test_a_service_failure_job_is_re_read_from_its_session() -> None:
             {
                 "site_id": str(SITE),
                 "reason": "unreadable",
-                "kind": "moodle_unreachable",
+                "kind": "lms_unreachable",
             },
             None,
         ),
@@ -103,13 +103,13 @@ async def test_a_service_failure_job_is_re_read_from_its_session() -> None:
             {
                 "site_id": str(SITE),
                 "reason": "Robert'); DROP",
-                "kind": "moodle_unreachable",
+                "kind": "lms_unreachable",
             },
             None,
         ),
         (
             JobKind.OPERATOR_NOTIFY,
-            {"site_id": str(SITE), "reason": 5, "kind": "moodle_unreachable"},
+            {"site_id": str(SITE), "reason": 5, "kind": "lms_unreachable"},
             None,
         ),
         # CodeRabbit 4513956282: a trailing newline is not a code (it would reach the body)
@@ -118,7 +118,7 @@ async def test_a_service_failure_job_is_re_read_from_its_session() -> None:
             {
                 "site_id": str(SITE),
                 "reason": "unreadable\n",
-                "kind": "moodle_unreachable",
+                "kind": "lms_unreachable",
             },
             None,
         ),
@@ -174,9 +174,9 @@ async def test_the_producers_argument_shapes_are_read() -> None:
     lms = await n.read_event(
         Conn(),
         JobKind.OPERATOR_NOTIFY,
-        {"site_id": str(SITE), "reason": "unreadable", "kind": "moodle_unreachable"},
+        {"site_id": str(SITE), "reason": "unreadable", "kind": "lms_unreachable"},
     )
-    assert lms == n.Event("moodle_unreachable", SITE, reason="unreadable")
+    assert lms == n.Event("lms_unreachable", SITE, reason="unreadable")
 
 
 def _mail(kind: JobKind, e: n.Event) -> Any:
@@ -201,7 +201,7 @@ def test_the_teacher_service_failure_email_names_ids_only() -> None:
     )
     msg = _mail(JobKind.TEACHER_NOTIFY, e)
     body = msg.get_content()
-    assert "attivita': 12" in body and "(id Moodle): 345" in body and "#2" in body
+    assert "attivita': 12" in body and "(id LMS): 345" in body and "#2" in body
     assert msg["Subject"].startswith("Discussione chiusa per un guasto del servizio")
     assert msg["Auto-Submitted"] == "auto-generated"
     assert msg["Message-ID"] == "<abc@vektra.example.org>"
@@ -218,14 +218,14 @@ def test_the_teacher_rollback_email_and_the_operator_ones() -> None:
     assert "345" not in str(ops["Subject"])
     lms = _mail(
         JobKind.OPERATOR_NOTIFY,
-        n.Event("moodle_unreachable", SITE, reason="unreadable"),
+        n.Event("lms_unreachable", SITE, reason="unreadable"),
     )
     assert "motivo: unreadable" in lms.get_content()
 
 
 def test_there_is_no_text_for_an_event_a_kind_never_carries() -> None:
     with pytest.raises(ValueError, match="no text"):
-        _mail(JobKind.TEACHER_NOTIFY, n.Event("moodle_unreachable", SITE, reason="x"))
+        _mail(JobKind.TEACHER_NOTIFY, n.Event("lms_unreachable", SITE, reason="x"))
 
 
 def test_a_header_value_cannot_inject_a_header() -> None:

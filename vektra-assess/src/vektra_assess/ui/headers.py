@@ -1,6 +1,6 @@
 """Response headers of the discussion UI route and its assets (ARCH-076, plan 9).
 
-The page may be framed by exactly one origin, the site's Moodle origin, read from the site record
+The page may be framed by exactly one origin, the site's LMS origin, read from the site record
 on every request (no cache). Everything else on the page is ``'self'``; trusted types forbid any
 HTML sink. There is no ``X-Frame-Options`` here: CSP ``frame-ancestors`` governs, and the API
 keeps ``X-Frame-Options: DENY`` on every other route (``vektra_app.main``).

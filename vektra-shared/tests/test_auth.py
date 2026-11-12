@@ -289,7 +289,7 @@ class TestScopeSetError:
                 assert msg is not None and "ck_api_keys_assess_scope_exclusive" in msg
 
     def test_model_constraints_mirror_the_vocabulary(self):
-        """vektra_admin's ORM CHECKs name exactly ALL_SCOPES (migration 0009 mirror)."""
+        """vektra_admin's ORM CHECKs name exactly ALL_SCOPES (the assess base revision mirror)."""
         import re
         from pathlib import Path
 
@@ -298,7 +298,8 @@ class TestScopeSetError:
         root = Path(__file__).resolve().parents[2]
         for src in (
             root / "vektra-admin/src/vektra_admin/models.py",
-            root / "migrations/versions/0009_assess_scopes_roles.py",
+            root
+            / "vektra-assess/src/vektra_assess/migrations/versions/a0001_assess_base.py",
         ):
             text = src.read_text(encoding="utf-8")
             found = set(re.findall(r"'((?:admin|ingest|query|assess:[a-z-]+))'", text))

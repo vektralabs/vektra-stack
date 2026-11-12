@@ -77,7 +77,7 @@ async def ui_not_same_origin(ctx: CheckContext) -> Outcome:
         return unverifiable("ui_origin_unset")
     try:
         if same_site(ui, ctx.site.base_url):
-            return missing("same_site_as_moodle")
+            return missing("same_site_as_lms")
         api = ctx.settings.api_public_origin
         if not api:
             return unverifiable("api_origin_unset")
@@ -95,7 +95,7 @@ async def ui_origin_distinct(ctx: CheckContext) -> Outcome:
     from vektra_assess.ui.origins import site_origin_or_problem, ui_origin_problem
 
     # the same origin the UI router puts in frame-ancestors: the column, else base_url's
-    framing, invalid = site_origin_or_problem(ctx.moodle_origin, ctx.site.base_url)
+    framing, invalid = site_origin_or_problem(ctx.lms_origin, ctx.site.base_url)
     if invalid:
         return missing(invalid)
     problem = ui_origin_problem(
@@ -109,9 +109,9 @@ async def ui_origin_distinct(ctx: CheckContext) -> Outcome:
     # base_url: either one same-site fails the item
     ui = str(ctx.settings.ui_origin)
     if framing and same_site(ui, framing):
-        return missing("same_site_as_moodle_origin")
+        return missing("same_site_as_lms_origin")
     if same_site(ui, ctx.site.base_url):
-        return missing("same_site_as_moodle")
+        return missing("same_site_as_lms")
     return ok()
 
 

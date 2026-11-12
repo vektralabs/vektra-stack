@@ -44,7 +44,7 @@ def _lattice() -> list[PolicyInputs]:
     out = []
     for sol, src, review, html, rub, vis, rel in itertools.product(
         [False, True],
-        ["none", "pasted", "moodle"],
+        ["none", "pasted", "lms"],
         REVIEWS,
         STATES,
         STATES,

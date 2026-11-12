@@ -1,7 +1,7 @@
-"""Schema revisions 0010-0013 (plan assess-data-crypto 1.6).
+"""The assess tables of the assess base revision (plan assess-data-crypto 1.6, plan 2a-3).
 
-upgrade head -> downgrade to 0009 -> upgrade head on an empty schema; the table list is
-exactly the expected one; every ORM mirror matches the migrated columns; downgrade refuses
+upgrade heads -> downgrade assess@base -> upgrade heads on an empty schema; the table list is
+exactly the expected one; every ORM mirror matches the migrated columns; the downgrade refuses
 while an ``assess_sessions`` row exists. Real Postgres (testcontainers), ``integration``.
 """
 
@@ -40,7 +40,7 @@ def pg():
 
     with PostgresContainer("pgvector/pgvector:pg16") as c:
         url = c.get_connection_url().replace("psycopg2", "asyncpg")
-        res = _alembic(url, "upgrade", "head")
+        res = _alembic(url, "upgrade", "heads")
         assert res.returncode == 0, res.stderr
         yield url
 
@@ -95,16 +95,16 @@ async def test_orm_columns_match_the_database(pg):
 
 
 async def test_downgrade_roundtrip_on_empty_schema_and_refusal(pg):
-    res = _alembic(pg, "downgrade", "0009")
+    res = _alembic(pg, "downgrade", "assess@base")
     assert res.returncode == 0, res.stderr
     assert await _tables(pg) == set()
-    res = _alembic(pg, "upgrade", "head")
+    res = _alembic(pg, "upgrade", "heads")
     assert res.returncode == 0, res.stderr
     assert await _tables(pg)
 
     await _fetch(
         pg,
-        "INSERT INTO assess_sites (id, moodle_site_uuid, base_url) "
+        "INSERT INTO assess_sites (id, lms_site_uuid, base_url) "
         "VALUES ('00000000-0000-0000-0000-000000000001', 's', 'https://m')",
     )
     # a STARTING session needs no opening turn
@@ -113,11 +113,11 @@ async def test_downgrade_roundtrip_on_empty_schema_and_refusal(pg):
         "INSERT INTO assess_sessions (site_id, cmid, student_userid, state) "
         "VALUES ('00000000-0000-0000-0000-000000000001', 1, 1, 'STARTING')",
     )
-    res = _alembic(pg, "downgrade", "0009")
+    res = _alembic(pg, "downgrade", "assess@base")
     assert res.returncode != 0
     assert "downgrade refused" in res.stderr
     assert (await _fetch(pg, "SELECT count(*) FROM assess_sessions"))[0][0] == 1
     await _fetch(pg, "DELETE FROM assess_sessions")
     await _fetch(pg, "DELETE FROM assess_sites")
-    assert _alembic(pg, "downgrade", "0009").returncode == 0
-    assert _alembic(pg, "upgrade", "head").returncode == 0
+    assert _alembic(pg, "downgrade", "assess@base").returncode == 0
+    assert _alembic(pg, "upgrade", "heads").returncode == 0

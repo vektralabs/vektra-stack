@@ -5,11 +5,11 @@ hint) evaluate the SAME ``evaluate_start_gates`` the pre-flight uses, on fresh r
 
 - ``assess_render_state``: the advisory REQ-068 state and the content-free reason code;
 - ``assess_gate_inputs``: ``{"code", "state", "opens_at", "session_no_next"}``, plus (plan 11b)
-  ``moodle_reasons``: every failing gate code that needs Moodle facts (``gates.DB_SIDE``
-  excluded), present only when the Moodle half was actually evaluated, with ``attested_at`` (the
+  ``lms_reasons``: every failing gate code that needs LMS facts (``gates.DB_SIDE``
+  excluded), present only when the LMS half was actually evaluated, with ``attested_at`` (the
   REQ-091 date it was evaluated with), which a teacher reset (REQ-087) re-checks against while
   that date is unchanged; plus (plan 10)
-  ``graders`` (the course's grader user ids, for the API's fresh grader check) when Moodle could
+  ``graders`` (the course's grader user ids, for the API's fresh grader check) when the LMS could
   be read, and ``recipients`` (``{role: "recipient", name: "m***@domain"}``: the transcript
   recipients of the sealed teacher config, local part masked, REQ-082 as amended) when the config
   could be opened. The API never sees a full address. ``opens_at``
@@ -78,7 +78,7 @@ _UPSERT_STATE = text(
     "DO UPDATE SET status = EXCLUDED.status, reason_code = EXCLUDED.reason_code, "
     "computed_at = now()"
 )
-#: ``refreshed_at`` is the database clock read BEFORE the Moodle reads (``_CLOCK``), as the
+#: ``refreshed_at`` is the database clock read BEFORE the LMS reads (``_CLOCK``), as the
 #: teacher_gate job does: a slow read never makes its facts look fresher than they are (a reset
 #: and the grader checks compare it with the same clock)
 _CLOCK = text("SELECT clock_timestamp()")
@@ -138,7 +138,7 @@ async def evaluate_render(
     if act is None:
         return GateDecision(Code.NOT_ENABLED, ButtonState.NOT_ENABLED), None
     if seen is not None:
-        # the REQ-091 date this evaluation used: a reset takes the Moodle half only while the
+        # the REQ-091 date this evaluation used: a reset takes the LMS half only while the
         # date is still the same
         seen["attested_at"] = act.attested_at
     target = StartTarget(
@@ -175,7 +175,7 @@ async def read_graders(deps: RenderDeps, target: StartTarget) -> GradersRead | N
     """The course's graders (who may download and resend), for the activity's REAL type (a
     quiz's cmid is resolved among the course's quizzes). Read even when the activity is disabled
     or a session is open: a teacher still downloads earlier transcripts. None when no source is
-    configured or Moodle could not be read."""
+    configured or the LMS could not be read."""
     if deps.graders is None:
         return None
     try:
@@ -222,11 +222,9 @@ async def store_render(
         "session_no_next": decision.session_no_next,
     }
     # the full evaluation ran (not the disabled / open-session short cut): an OK decision, or a
-    # failing one with its reasons. The Moodle-side ones are what a reset re-checks (REQ-087).
+    # failing one with its reasons. The LMS-side ones are what a reset re-checks (REQ-087).
     if decision.code is Code.OK or decision.reasons:
-        inputs["moodle_reasons"] = [
-            c.value for c in decision.reasons if c not in DB_SIDE
-        ]
+        inputs["lms_reasons"] = [c.value for c in decision.reasons if c not in DB_SIDE]
         inputs["attested_at"] = attested_at
     if graders is not None:
         # user ids for the grader check (plan 10 authz)

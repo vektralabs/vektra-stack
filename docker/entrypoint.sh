@@ -15,10 +15,33 @@ set -e
 # always passes CMD as $1, so a CMD would permanently win over the env var.
 CMD_TARGET="${1:-${CMD_TARGET:-server}}"
 
+# VEKTRA_ASSESS_ENABLED as the settings read it (a pydantic bool): 1, true, t, yes, y, on, in any
+# case. Anything else, unset included, is disabled.
+assess_enabled() {
+  case "$(printf '%s' "${VEKTRA_ASSESS_ENABLED:-false}" | tr '[:upper:]' '[:lower:]')" in
+    1|true|t|yes|y|on) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# Two Alembic branches (ADR-0033 D7). The platform is always migrated. The assess schema (its
+# tables, the three vektra_assess_* roles, the SECURITY DEFINER functions, and with them the
+# CREATEROLE requirement) only where assess is enabled: a deployment that never enables it gets
+# none of them.
+run_migrations() {
+  echo "Running database migrations (platform)..."
+  alembic upgrade platform@head
+  if assess_enabled; then
+    echo "Running database migrations (assess)..."
+    alembic upgrade assess@head
+  else
+    echo "Assess is disabled (VEKTRA_ASSESS_ENABLED is not true): its schema is not migrated."
+  fi
+}
+
 case "$CMD_TARGET" in
   server)
-    echo "Running database migrations..."
-    alembic upgrade head
+    run_migrations
 
     echo "Starting Vektra API server..."
     # main() validates (ARCH-057) before calling uvicorn, so a misconfiguration
@@ -29,8 +52,7 @@ case "$CMD_TARGET" in
     ;;
 
   migrate)
-    echo "Running database migrations..."
-    exec alembic upgrade head
+    run_migrations
     ;;
 
   # Assess processes (ARCH-066). Each has its own target and never runs

@@ -37,7 +37,7 @@ async def make_site(pg) -> uuid.UUID:
     site = uuid.uuid4()
     await pg.run(
         "super",
-        "INSERT INTO assess_sites (id, moodle_site_uuid, base_url) VALUES (:i, :u, 'https://m')",
+        "INSERT INTO assess_sites (id, lms_site_uuid, base_url) VALUES (:i, :u, 'https://m')",
         {"i": site, "u": str(site)},
     )
     return site
@@ -220,7 +220,7 @@ async def _test_get_report_is_content_free_and_site_scoped(world, pg):
     ).json()["report_id"]
     await pg.run(
         "worker",
-        "UPDATE assess_setup_check_reports SET status='done', moodle_release='5.2.4+', "
+        "UPDATE assess_setup_check_reports SET status='done', lms_release='5.2.4+', "
         "items = CAST(:i AS jsonb), finished_at=now() WHERE id=:r",
         {
             "r": rid,
@@ -232,7 +232,7 @@ async def _test_get_report_is_content_free_and_site_scoped(world, pg):
     )
     assert r.status_code == 200
     body = r.json()
-    assert body["status"] == "done" and body["moodle_release"] == "5.2.4+"
+    assert body["status"] == "done" and body["lms_release"] == "5.2.4+"
     assert body["items"] == [
         {"name": "token_works", "result": "OK", "reason_code": None}
     ]

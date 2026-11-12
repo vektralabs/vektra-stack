@@ -63,7 +63,7 @@ async def _quiz(branch: str, name: str, user: str, teacher: TeacherConfigView) -
     q = m["quizzes"][name]
     out = await capture_quiz(
         QuizTarget(m["courseid"], q["id"], q["cmid"], uid(branch, user)),
-        readers, InProcessParser(), teacher, Capabilities(), moodle_release=m["release"], now=NOW,
+        readers, InProcessParser(), teacher, Capabilities(), lms_release=m["release"], now=NOW,
     )  # fmt: skip
     assert isinstance(out, Built), (branch, name, user, out)
     return out
@@ -76,7 +76,7 @@ async def _assign(
     a = m["assigns"][name]
     out = await capture_assign(
         AssignTarget(m["courseid"], a["id"], a["cmid"], uid(branch, user)),
-        readers, InProcessParser(), teacher, Capabilities(), moodle_release=m["release"], now=NOW,
+        readers, InProcessParser(), teacher, Capabilities(), lms_release=m["release"], now=NOW,
     )  # fmt: skip
     assert isinstance(out, Built), (branch, name, user, out)
     return out

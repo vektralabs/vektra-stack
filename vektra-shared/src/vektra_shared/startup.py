@@ -63,23 +63,34 @@ async def check_database_connectivity(database_url: str) -> None:
 
 
 async def check_database_schema(
-    database_url: str, migrations_path: str = "migrations"
+    database_url: str,
+    alembic_ini: str = "alembic.ini",
+    *,
+    branches: tuple[str, ...] = ("platform",),
 ) -> None:
-    """ARCH-057 step 3: verify Alembic schema is at current head.
+    """ARCH-057 step 3: verify that every required Alembic branch is at its head.
 
-    Raises StartupValidationError if the deployed schema is behind the
-    expected migration head, meaning `alembic upgrade head` is needed.
+    The migrations are two branches (ADR-0033 D7): ``platform``, always required, and
+    ``assess``, required only where assess is enabled (the caller passes it). A required head
+    is applied when it is a current revision or one a current revision depends on (Alembic
+    records only ``a0001`` once the assess base, which depends on ``0008``, is applied). A
+    known branch that is not required may be present too: a deployment that turned assess off
+    keeps its schema. A required head that is not applied, or a revision this release does not
+    know, fails the step.
     """
+    remediation = "Run: " + " && ".join(f"alembic upgrade {b}@head" for b in branches)
     try:
         from alembic.config import Config
         from alembic.runtime.migration import MigrationContext
         from alembic.script import ScriptDirectory
         from sqlalchemy.ext.asyncio import create_async_engine
 
-        alembic_cfg = Config()
-        alembic_cfg.set_main_option("script_location", migrations_path)
-        script = ScriptDirectory.from_config(alembic_cfg)
-        heads = {rev.revision for rev in script.get_revisions("heads")}
+        script = ScriptDirectory.from_config(Config(alembic_ini))
+        expected: set[str] = set()
+        for branch in branches:
+            head = script.get_revision(f"{branch}@head")
+            assert head is not None
+            expected.add(head.revision)
 
         engine = create_async_engine(database_url)
 
@@ -95,17 +106,30 @@ async def check_database_schema(
             raise StartupValidationError(
                 step="database_schema",
                 detail="No Alembic revisions applied (database is uninitialized).",
-                remediation="Run: alembic upgrade head",
+                remediation=remediation,
             )
-        if current != heads:
-            pending = heads - current
+        unknown: set[str] = set()
+        for rev in current:
+            try:
+                script.get_revision(rev)
+            except Exception:
+                unknown.add(rev)
+        applied = (
+            set()
+            if unknown
+            else {r.revision for r in script.iterate_revisions(tuple(current), "base")}
+        )
+        missing = expected - applied
+        if missing or unknown:
             raise StartupValidationError(
                 step="database_schema",
                 detail=(
-                    f"Schema is at revision(s) {current!r}, "
-                    f"but head is {heads!r}. Pending: {pending!r}."
+                    f"Schema is at revision(s) {sorted(current)!r}, but the required "
+                    f"head(s) are {sorted(expected)!r} (branches {list(branches)!r}). "
+                    f"Pending: {sorted(missing)!r}; unknown to this release: "
+                    f"{sorted(unknown)!r}."
                 ),
-                remediation="Run: alembic upgrade head",
+                remediation=remediation,
             )
     except StartupValidationError:
         raise
@@ -114,7 +138,7 @@ async def check_database_schema(
             step="database_schema",
             detail=str(exc),
             remediation=(
-                "Ensure Alembic is installed and migrations/ directory is present. "
-                "Run: alembic upgrade head"
+                "Ensure Alembic is installed and alembic.ini with the migrations/ directory "
+                "is present. " + remediation
             ),
         ) from exc

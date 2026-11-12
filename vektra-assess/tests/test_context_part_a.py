@@ -54,7 +54,7 @@ def test_there_are_at_least_fifty_cases_and_names_are_unique() -> None:
     names = [c.name for c in CASES]
     assert len(names) >= 50 and len(set(names)) == len(names)
     kinds = {
-        (c.snapshot.header.moodle_release[:3], c.snapshot.header.activity_kind.value)
+        (c.snapshot.header.lms_release[:3], c.snapshot.header.activity_kind.value)
         for c in CASES
     }
     assert len(kinds) == 4, kinds  # 4.3/5.2 x quiz/assignment

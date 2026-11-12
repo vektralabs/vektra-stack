@@ -1,7 +1,7 @@
-"""Origins of the discussion UI and of the Moodle sites (ARCH-076, plan 9).
+"""Origins of the discussion UI and of the LMS sites (ARCH-076, plan 9).
 
-The iframe is safe only because it runs on an origin distinct from Moodle's: the plugin sets
-``allow-same-origin`` on the sandbox, which would hand the Moodle page's script the iframe's DOM
+The iframe is safe only because it runs on an origin distinct from the LMS's: the plugin sets
+``allow-same-origin`` on the sandbox, which would hand the LMS page's script the iframe's DOM
 (and its token) if the two origins were the same.
 
 ``bare_origin`` is THE normalisation: revision 0033's backfill, the UI router, the API startup
@@ -76,36 +76,36 @@ def url_origin(url: str) -> str | None:
         return None
 
 
-def site_origin(moodle_origin: str | None, base_url: str | None) -> str | None:
-    """A site's Moodle origin: its ``moodle_origin`` column, else the origin of its
+def site_origin(lms_origin: str | None, base_url: str | None) -> str | None:
+    """A site's LMS origin: its ``lms_origin`` column, else the origin of its
     ``base_url``; normalised, or None when neither is a usable origin."""
-    if moodle_origin:
+    if lms_origin:
         try:
-            return bare_origin(moodle_origin)
+            return bare_origin(lms_origin)
         except ValueError:
             return None
     return url_origin(base_url) if base_url else None
 
 
 def site_origin_or_problem(
-    moodle_origin: str | None, base_url: str | None
+    lms_origin: str | None, base_url: str | None
 ) -> tuple[str | None, str | None]:
-    """``(origin, None)``, or ``(None, "moodle_origin_invalid")`` when the site has no usable
-    origin (a stored ``moodle_origin`` that is not a bare origin, or no column and a
+    """``(origin, None)``, or ``(None, "lms_origin_invalid")`` when the site has no usable
+    origin (a stored ``lms_origin`` that is not a bare origin, or no column and a
     ``base_url`` without one): reported by startup and the setup check, never skipped
     (the page answers 404 for such a site)."""
-    origin = site_origin(moodle_origin, base_url)
-    return (origin, None) if origin else (None, "moodle_origin_invalid")
+    origin = site_origin(lms_origin, base_url)
+    return (origin, None) if origin else (None, "lms_origin_invalid")
 
 
 #: the enabled sites' two origin columns (``site_origin`` decides in Python, not in SQL)
 SITE_ORIGINS_SQL = (
-    "SELECT id, moodle_origin, base_url FROM assess_sites WHERE disabled_at IS NULL"
+    "SELECT id, lms_origin, base_url FROM assess_sites WHERE disabled_at IS NULL"
 )
 
 
 def ui_origin_problem(
-    ui_origin: str | None, moodle_origins: Iterable[str], *, development: bool
+    ui_origin: str | None, lms_origins: Iterable[str], *, development: bool
 ) -> str | None:
     """Why this UI origin is not acceptable (a reason code), or None when it is."""
     if not ui_origin:
@@ -116,13 +116,13 @@ def ui_origin_problem(
         return "ui_origin_invalid"
     if not ui.startswith("https://") and not development:
         return "ui_origin_not_https"
-    for raw in moodle_origins:
+    for raw in lms_origins:
         try:
-            moodle = bare_origin(raw)
+            lms = bare_origin(raw)
         except ValueError:
             continue
-        if not moodle.startswith("https://") and not development:
-            return "moodle_origin_not_https"
-        if moodle == ui:
-            return "ui_origin_equals_moodle_origin"
+        if not lms.startswith("https://") and not development:
+            return "lms_origin_not_https"
+        if lms == ui:
+            return "ui_origin_equals_lms_origin"
     return None

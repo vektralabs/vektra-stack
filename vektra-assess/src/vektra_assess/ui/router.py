@@ -1,6 +1,6 @@
 """``GET /api/v1/assess/ui`` and its assets (ARCH-076, INT-001; plan 9).
 
-The page is public by design: it carries no data and no credential, only the site's Moodle
+The page is public by design: it carries no data and no credential, only the site's LMS
 origin (the one origin allowed to frame it and to talk to it by ``postMessage``) in a JSON data
 block that is never executed. ``site`` is the site's public id (``assess_sites.id``), never a
 credential; an unknown, malformed or disabled site is 404 and may be framed by nobody. Tokens
@@ -43,7 +43,7 @@ TEMPLATES = Environment(
 )
 
 _SITE = text(
-    "SELECT id, base_url, moodle_origin, disabled_at FROM assess_sites "
+    "SELECT id, base_url, lms_origin, disabled_at FROM assess_sites "
     "WHERE id = CAST(:s AS uuid)"
 )
 
@@ -53,7 +53,7 @@ def _not_found(what: str) -> ErrorResponse:
         category=ErrorCategory.PERMANENT,
         code=ERR_ASSESS_003,
         message=f"Discussion {what} not found.",
-        remediation="Open the discussion from the activity page in Moodle.",
+        remediation="Open the discussion from the activity page of the course.",
     )
 
 
@@ -180,9 +180,9 @@ async def _read_site_origin(request: Request, site: str) -> str | None:
         row = (await conn.execute(_SITE, {"s": site})).first()
     if row is None or row.disabled_at is not None:
         return None
-    # the site's own Moodle origin (revision 0033); a row registered without one falls back to
+    # the site's own LMS origin (``lms_origin``); a row registered without one falls back to
     # the origin of its base_url; both through the one normalisation (ui.origins)
-    return site_origin(row.moodle_origin, row.base_url)
+    return site_origin(row.lms_origin, row.base_url)
 
 
 def request_origin(request: Request) -> str | None:
@@ -195,7 +195,7 @@ def request_origin(request: Request) -> str | None:
 
 def on_ui_origin(request: Request) -> bool:
     """Review #1: the page answers on ``VEKTRA_ASSESS_UI_ORIGIN`` only. Served on another host
-    (the API's own origin, a Moodle origin) the plugin's ``allow-same-origin`` sandbox would
+    (the API's own origin, an LMS origin) the plugin's ``allow-same-origin`` sandbox would
     no longer separate it from the parent, so it is not served at all."""
     ui = settings_of(request).ui_origin
     return bool(ui) and request_origin(request) == ui
@@ -235,7 +235,7 @@ async def ui_page(request: Request, site: str = "") -> Response:
         cfg_json=_json_block(
             {
                 "site": site,
-                "moodleOrigin": origin,
+                "parentOrigin": origin,
                 "apiBase": "/api/v1/assess",
                 # the composer's limit is the server's
                 "maxMessageChars": settings.max_message_chars,

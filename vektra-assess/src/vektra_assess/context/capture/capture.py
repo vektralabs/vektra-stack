@@ -164,14 +164,14 @@ class TeacherConfigView:
     """
 
     show_solution: bool
-    rubric_source: str  # none | pasted | moodle (the LMS's rubric)
+    rubric_source: str  # none | pasted | lms (the LMS's rubric)
     solution_text: str | None = None
     pasted_rubric: str | None = None
 
     def __post_init__(self) -> None:
         if self.solution_text is not None and not self.show_solution:
             raise ValueError("solution_text is populated only when show_solution is ON")
-        if self.rubric_source not in ("none", "pasted", "moodle"):
+        if self.rubric_source not in ("none", "pasted", "lms"):
             raise ValueError("unknown rubric source")
 
 
@@ -316,7 +316,7 @@ async def capture_quiz(
     teacher: TeacherConfigView,
     caps: Capabilities,
     *,
-    moodle_release: str,
+    lms_release: str,
     now: int | None = None,
 ) -> CaptureResult:
     t_now = int(time.time()) if now is None else now
@@ -440,7 +440,7 @@ async def capture_quiz(
     snapshot = Snapshot(
         header=SnapshotHeader(
             activity_kind=ActivityKind.QUIZ,
-            moodle_release=moodle_release,
+            lms_release=lms_release,
             attempt_number=selected.attempt_number,
             attempt_count=selected.attempt_count,
             grade_method=GradeMethod(method.value),
@@ -494,7 +494,7 @@ async def capture_assign(
     teacher: TeacherConfigView,
     caps: Capabilities,
     *,
-    moodle_release: str,
+    lms_release: str,
     limits: CaptureLimits = CaptureLimits(),
     now: int | None = None,
 ) -> CaptureResult:
@@ -627,7 +627,7 @@ async def capture_assign(
     snapshot = Snapshot(
         header=SnapshotHeader(
             activity_kind=ActivityKind.ASSIGN,
-            moodle_release=moodle_release,
+            lms_release=lms_release,
             attempt_number=1,
             attempt_count=1,
             grade_method=None,

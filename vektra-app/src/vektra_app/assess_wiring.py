@@ -47,6 +47,17 @@ def load_assess_settings() -> VektraAssessSettings:
         ) from None
 
 
+def migration_branches() -> tuple[str, ...]:
+    """The Alembic branches the schema step requires at head (ADR-0033 D7): the platform
+    always, the assess branch only when assess is enabled. A broken assess configuration
+    requires the platform only; step 12 reports the error."""
+    try:
+        enabled = VektraAssessSettings().enabled
+    except ValidationError:
+        enabled = False
+    return ("platform", "assess") if enabled else ("platform",)
+
+
 def include_assess_router(app: FastAPI) -> bool:
     """Mount the assess router only when enabled. Returns whether it was mounted."""
     try:
@@ -219,7 +230,7 @@ def start_metrics_refresher(app: FastAPI, engine: Any) -> None:
 
 async def check_ui_origin(engine: Any, settings: VektraAssessSettings) -> None:
     """Plan 9 (ARCH-076): refuse to start when ``VEKTRA_ASSESS_UI_ORIGIN`` is unset outside
-    development, not https outside development, or equal to a registered site's Moodle origin
+    development, not https outside development, or equal to a registered site's LMS origin
     (the iframe's ``allow-same-origin`` sandbox is safe only across distinct origins). In
     development an unset origin starts; the UI page then answers 503 until it is set."""
     if not settings.ui_origin and settings.is_development:
@@ -235,25 +246,25 @@ async def check_ui_origin(engine: Any, settings: VektraAssessSettings) -> None:
     async with engine.connect() as conn:
         rows = (await conn.execute(text(SITE_ORIGINS_SQL))).all()
     origins: list[str] = []
-    for site_id, moodle_origin, base_url in rows:
-        origin, site_problem = site_origin_or_problem(moodle_origin, base_url)
+    for site_id, lms_origin, base_url in rows:
+        origin, site_problem = site_origin_or_problem(lms_origin, base_url)
         if site_problem is not None:
             # the SITE is misconfigured, not the UI origin
             raise StartupValidationError(
                 step=STEP,
                 detail=f"assess site {site_id} refused: {site_problem}",
                 remediation=(
-                    "Set assess_sites.moodle_origin of that site to its bare Moodle origin "
+                    "Set assess_sites.lms_origin of that site to its bare LMS origin "
                     "(https://host[:port]), or disable the site (assess_sites.disabled_at)."
                 ),
             )
         if origin and not settings.is_development and not origin.startswith("https://"):
-            # also the SITE's problem: its Moodle origin is not https
+            # also the SITE's problem: its LMS origin is not https
             raise StartupValidationError(
                 step=STEP,
-                detail=f"assess site {site_id} refused: moodle_origin_not_https",
+                detail=f"assess site {site_id} refused: lms_origin_not_https",
                 remediation=(
-                    "Serve that Moodle site over https and set assess_sites.moodle_origin to "
+                    "Serve that LMS site over https and set assess_sites.lms_origin to "
                     "its https origin, or disable the site (assess_sites.disabled_at)."
                 ),
             )
@@ -267,7 +278,7 @@ async def check_ui_origin(engine: Any, settings: VektraAssessSettings) -> None:
             step=STEP,
             detail=f"VEKTRA_ASSESS_UI_ORIGIN refused: {problem}",
             remediation=(
-                "Serve the discussion UI on its own https origin, distinct from every Moodle "
+                "Serve the discussion UI on its own https origin, distinct from every LMS "
                 "site's origin (docs/reference/configuration.md)."
             ),
         )

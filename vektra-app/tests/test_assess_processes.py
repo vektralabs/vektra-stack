@@ -395,20 +395,51 @@ async def test_worker_checks_against_postgres(
 ENTRYPOINT = Path(__file__).resolve().parents[2] / "docker" / "entrypoint.sh"
 
 
-def _entry(tmp_path: Path, target: str) -> tuple[int, str]:
+def _entry(tmp_path: Path, target: str, assess: str | None = None) -> tuple[int, str]:
     """Run the entrypoint with stub python/alembic that log their argv."""
     bindir = tmp_path / "bin"
     bindir.mkdir(exist_ok=True)
     log = tmp_path / "calls.log"
+    log.unlink(missing_ok=True)
     for tool in ("python", "alembic"):
         stub = bindir / tool
         stub.write_text(f'#!/bin/sh\necho "{tool} $*" >> "{log}"\n')
         stub.chmod(0o755)
     env = {"PATH": f"{bindir}:/usr/bin:/bin"}
+    if assess is not None:
+        env["VEKTRA_ASSESS_ENABLED"] = assess
     res = subprocess.run(
         ["sh", str(ENTRYPOINT), target], env=env, capture_output=True, text=True
     )
     return res.returncode, (log.read_text() if log.exists() else "") + res.stderr
+
+
+@pytest.mark.parametrize("assess", [None, "false", "0", "no", "", "maybe"])
+@pytest.mark.parametrize("target", ["server", "migrate"])
+def test_disabled_assess_migrates_the_platform_branch_only(
+    tmp_path: Path, target: str, assess: str | None
+) -> None:
+    """ADR-0033 D7: with assess off, no assess revision runs (no table, role or function, and
+    no CREATEROLE needed); the server then starts as before."""
+    code, calls = _entry(tmp_path, target, assess)
+    assert code == 0
+    lines = [line for line in calls.splitlines() if line.startswith("alembic")]
+    assert lines == ["alembic upgrade platform@head"]
+    assert "assess@head" not in calls
+    assert ("python -m vektra_app.main" in calls) == (target == "server")
+
+
+@pytest.mark.parametrize("assess", ["true", "TRUE", "1", "yes", "on"])
+@pytest.mark.parametrize("target", ["server", "migrate"])
+def test_enabled_assess_migrates_its_branch_after_the_platform(
+    tmp_path: Path, target: str, assess: str
+) -> None:
+    code, calls = _entry(tmp_path, target, assess)
+    assert code == 0
+    lines = [line for line in calls.splitlines() if line.startswith("alembic")]
+    assert lines == ["alembic upgrade platform@head", "alembic upgrade assess@head"]
+    if target == "server":  # migrations first, then the server
+        assert calls.splitlines()[-1] == "python -m vektra_app.main"
 
 
 @pytest.mark.parametrize(

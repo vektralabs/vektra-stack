@@ -42,7 +42,7 @@ async def make_site(pg: Any) -> uuid.UUID:
     site = uuid.uuid4()
     await pg.run(
         "super",
-        "INSERT INTO assess_sites (id, moodle_site_uuid, base_url, release) "
+        "INSERT INTO assess_sites (id, lms_site_uuid, base_url, release) "
         "VALUES (:i, :u, 'https://m.example', '4.3.1 (Build: 20231009)')",
         {"i": site, "u": str(site)},
     )

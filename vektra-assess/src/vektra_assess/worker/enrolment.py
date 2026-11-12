@@ -8,7 +8,7 @@ student of the activity's course (the plan-4 readers through the ``StartSource``
 - ``not_enrolled`` (unenrolled, suspended, or the student role lost): the session is closed
   ``access_revoked`` through the close function (epoch bump, hand-off delete, transcript job).
 - ``unreadable``: recorded only. The API's gate step 6 accepts a turn only on an ``enrolled`` row
-  at most ``VEKTRA_ASSESS_ENROLMENT_FRESHNESS_S`` old, so an unreadable Moodle, like a stopped
+  at most ``VEKTRA_ASSESS_ENROLMENT_FRESHNESS_S`` old, so an unreadable LMS, like a stopped
   worker, rejects turns (fail closed) without closing anything.
 
 Older rows of a session are trimmed (the newest is always kept).
@@ -45,7 +45,7 @@ _SESSION = text(
     "s.state, c.activity_type, c.flags FROM assess_sessions s JOIN assess_activity_config c "
     "ON c.site_id = s.site_id AND c.cmid = s.cmid WHERE s.id = :sid"
 )
-#: dated when the Moodle read STARTED (database clock), not when its answer is written: a
+#: dated when the LMS read STARTED (database clock), not when its answer is written: a
 #: slow read must not make the observation look fresher
 _RECORD = text(
     "INSERT INTO assess_enrolment_checks (session_id, result, checked_at) "

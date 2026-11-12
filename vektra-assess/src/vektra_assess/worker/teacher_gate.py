@@ -1,6 +1,6 @@
 """The activity-level facts a teacher request is verified against (plan assess-teacher-ops 11a).
 
-The API cannot ask Moodle (only the worker holds the WS token). A ``teacher_gate`` job (args:
+The API cannot ask the LMS (only the worker holds the provider's credential). A ``teacher_gate`` job (args:
 site id, cmid, course id hint, activity type hint) resolves the cmid INSIDE the hinted course
 (``resolve_in_course``: a cmid of another course is never found there) and upserts
 ``assess_teacher_gate(site_id, cmid)`` with:
@@ -9,15 +9,15 @@ site id, cmid, course id hint, activity type hint) resolves the cmid INSIDE the 
   and the API refuses the actor; a wrong hint never verifies anybody); ``hint``: the
   ``[courseid, type]`` this row answers;
 - ``courseid``, ``activity_type``;
-- ``editors``: user ids holding ``moodle/course:manageactivities`` in the course (None when
+- ``editors``: user ids holding the LMS's activity-editor capability in the course (None when
   unreadable: the API fails closed); ``graders``: user ids holding ``mod/assign:grade`` (11b:
   the session list, reset, terminate, extra time, opening fallback);
 - for a quiz, ``override_holder`` (the participant whose user override sets the latest close,
   when the overrides are readable) and ``override_viewers`` (``mod/quiz:manageoverrides``): the
   REQ-076 gate panel names the holder only to a viewer; never the override's reason;
 - the REQ-077 enable facts: ``close_at`` (quiz ``timeclose`` / assignment ``cutoffdate``, 0 = none
-  configured: BR-007), ``team_submission``, ``grading_method``, ``moodle_rubric`` (a rubric is
-  defined for the Moodle-rubric source); each None when unreadable.
+  configured: BR-007), ``team_submission``, ``grading_method``, ``lms_rubric`` (a rubric is
+  defined for the LMS-rubric source); each None when unreadable.
 
 Nothing else: no names, no addresses, no content. The API accepts the row only while it is at
 most ``VEKTRA_ASSESS_TEACHER_GATE_MAX_AGE_S`` old, otherwise it queues this job and refuses.
@@ -46,7 +46,7 @@ class TeacherGateSource(Protocol):
     ) -> dict[str, Any]: ...
 
 
-# ``refreshed_at`` is the database clock read BEFORE the Moodle reads (the API compares it with
+# ``refreshed_at`` is the database clock read BEFORE the LMS reads (the API compares it with
 # the same clock): a slow read never makes its list look fresher than it is
 _CLOCK = text("SELECT clock_timestamp()")
 _UPSERT = text(

@@ -16,7 +16,7 @@ from vektra_shared.lms import Readable, Unreadable
 
 @dataclass(frozen=True)
 class GradeReading:
-    """The grade as Moodle shows it to the student now (from the release-gated reader)."""
+    """The grade as the LMS shows it to the student now (from the release-gated reader)."""
 
     released: bool
     grade: str | None  # canonical decimal string (points)

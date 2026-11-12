@@ -7,7 +7,7 @@ hatch that could build or widen one without that path is closed: ``model_constru
 deepcopy and pickling all raise. import-linter cannot see call sites, so an AST guard test scans
 the repository for constructions outside this package (allowlist: empty).
 
-Fields are a strict subset of the snapshot: no Moodle id, no free-form dict, no retrieval field (RAG
+Fields are a strict subset of the snapshot: no LMS id, no free-form dict, no retrieval field (RAG
 is OFF in v1, NFR-015: a future retrieval field comes with its own canary cells).
 """
 

@@ -1,14 +1,14 @@
 """Teacher operations on an activity's sessions (plan assess-teacher-ops 11b, INT-001).
 
 Every route here takes an ``assess:teacher`` key (exact scope: an ``admin`` key is 403) bound to
-its site, names the acting Moodle user in the body, and verifies them as a fresh GRADER of the
+its site, names the acting LMS user in the body, and verifies them as a fresh GRADER of the
 activity (``api.teachers.verify_teacher``): absent or stale facts refuse with a refresh queued, a
-user Moodle does not list refuses, both audited. ``{cmid}``, ``{sid}`` and ``{userid}`` are
+user the LMS does not list refuses, both audited. ``{cmid}``, ``{sid}`` and ``{userid}`` are
 resolved server-side inside the key's site and the path's activity: a session of another
 activity or site is a 404, whoever asks.
 
 - ``POST /activities/{cmid}/sessions/{sid}/reset`` (REQ-087): the student's LATEST session must
-  be CLOSED and not reset yet; the START gates are re-run (the database half live, the Moodle half
+  be CLOSED and not reset yet; the START gates are re-run (the database half live, the LMS half
   from the student's fresh render evaluation); one ``assess_reset_grants`` row per (student,
   activity, session number), the reason encrypted under the transcript KEK. No student notice:
   REQ-092 is out of v1 (its flag is refused at startup).
@@ -248,21 +248,21 @@ async def reset_session(
         privacy_ok = bool(await privacy.is_configured(conn, site)) or allowed_unset
         db_now = int((await conn.execute(_CLOCK)).scalar_one())
 
-        def gate_code(moodle_reasons: list[str]) -> str | None:
+        def gate_code(lms_reasons: list[str]) -> str | None:
             return v.reset_gate(
                 now=db_now,
                 enabled=bool(cfg.enabled),
                 cap_set=cfg.cap_minutes is not None,
                 end_at=cfg.end_at,
                 privacy_configured=privacy_ok,
-                moodle_reasons=moodle_reasons,
+                lms_reasons=lms_reasons,
             )
 
         def refuse_gate(code: str) -> _Refused:
             extra = {"field": "available_until"} if code == "end_date_passed" else {}
             return _Refused(fail(reset_refused("gate", gate=code, **extra)))
 
-        # the database half first, live: a disabled activity is never rendered with its Moodle
+        # the database half first, live: a disabled activity is never rendered with its LMS
         # half (the render short-circuits), so waiting for one would never end (review 11b-1)
         code = gate_code([])
         if code is not None:
@@ -274,17 +274,17 @@ async def reset_session(
             and render.age_s is not None
             and float(render.age_s) <= settings.teacher_gate_max_age_s
             and isinstance(inputs, dict)
-            and isinstance(inputs.get("moodle_reasons"), list)
+            and isinstance(inputs.get("lms_reasons"), list)
             # evaluated with the REQ-091 date in force now (a moved date changes gate (d))
             and inputs.get("attested_at") == cfg.attested_at
         )
         if not fresh:
-            # the Moodle half is evaluated by the worker: ask for it and let the teacher retry
+            # the LMS half is evaluated by the worker: ask for it and let the teacher retry
             from vektra_assess.api.state import queue_render_check
 
             await queue_render_check(conn, site, student, c, body.courseid)
             raise _Refused(fail(reset_refused("gate_inputs_stale")))
-        code = gate_code([str(x) for x in inputs["moodle_reasons"]])  # type: ignore[index]
+        code = gate_code([str(x) for x in inputs["lms_reasons"]])  # type: ignore[index]
         if code is not None:
             raise refuse_gate(code)
         # the LOCKED row's close reason: the worker may have closed the session between the

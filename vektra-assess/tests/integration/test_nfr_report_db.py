@@ -103,7 +103,7 @@ async def test_the_report_reads_exactly_the_planted_rows(pg) -> None:  # type: i
     site = uuid.uuid4()
     stmts: list[tuple[str, dict]] = [  # type: ignore[type-arg]
         (
-            "INSERT INTO assess_sites (id, moodle_site_uuid, base_url) VALUES (:s, :u, "
+            "INSERT INTO assess_sites (id, lms_site_uuid, base_url) VALUES (:s, :u, "
             "'https://lms.example')",
             {"s": site, "u": str(site)},
         )

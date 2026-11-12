@@ -120,7 +120,7 @@ async def _quiz(
         parser,
         teacher,
         Capabilities(),
-        moodle_release=m["release"],
+        lms_release=m["release"],
         now=1_800_000_000,
     )
     assert not replay.unmatched, replay.unmatched
@@ -243,7 +243,7 @@ async def _assign(branch: str, name: str, user: str = "stu1") -> Any:
         InProcessParser(),
         OFF,
         Capabilities(),
-        moodle_release=m["release"],
+        lms_release=m["release"],
         now=1_800_000_000,
     )
     assert not replay.unmatched, replay.unmatched
@@ -500,7 +500,7 @@ async def test_a_rubric_edited_after_grading_fails_closed(branch: str) -> None:
     replay.mutate = drop_levels
     out = await capture_assign(
         AssignTarget(m["courseid"], a["id"], a["cmid"], uid(branch, "stu1")),
-        readers, InProcessParser(), OFF, Capabilities(), moodle_release=m["release"],
+        readers, InProcessParser(), OFF, Capabilities(), lms_release=m["release"],
     )  # fmt: skip
     assert out == CaptureNotEligible(NotEligibleReason.UNREADABLE)
 
@@ -512,7 +512,7 @@ async def test_only_the_selected_attempt_is_read_twice_and_reads_stop_early(
     q = m["quizzes"]["gm_highest"]
     out = await capture_quiz(
         QuizTarget(m["courseid"], q["id"], q["cmid"], uid(branch, "stu1")),
-        readers, InProcessParser(), OFF, Capabilities(), moodle_release=m["release"], now=1_800_000_000,
+        readers, InProcessParser(), OFF, Capabilities(), lms_release=m["release"], now=1_800_000_000,
     )  # fmt: skip
     assert isinstance(out, Built)
     reviews = [p for f, p in replay.calls if f == "mod_quiz_get_attempt_review"]
@@ -523,7 +523,7 @@ async def test_only_the_selected_attempt_is_read_twice_and_reads_stop_early(
     e = m["quizzes"]["essay"]
     await capture_quiz(
         QuizTarget(m["courseid"], e["id"], e["cmid"], uid(branch, "stu2")),
-        readers2, InProcessParser(), OFF, Capabilities(), moodle_release=m["release"],
+        readers2, InProcessParser(), OFF, Capabilities(), lms_release=m["release"],
     )  # fmt: skip
     assert [f for f, _ in replay2.calls].count(
         "mod_quiz_get_attempt_review"
@@ -544,7 +544,7 @@ async def test_review_options_closed_follows_the_quiz_close_date(branch: str) ->
             InProcessParser(),
             OFF,
             Capabilities(),
-            moodle_release=m["release"],
+            lms_release=m["release"],
             now=now,
         )
         assert isinstance(out, Built)
@@ -564,7 +564,7 @@ async def test_review_options_closed_follows_the_quiz_close_date(branch: str) ->
         InProcessParser(),
         OFF,
         Capabilities(),
-        moodle_release=m["release"],
+        lms_release=m["release"],
         now=2_000_000_000,
     )
     assert isinstance(out, Built) and out.snapshot.header.review_options_closed is False
@@ -592,7 +592,7 @@ async def test_online_text_counts_against_the_total_budget_and_a_cut_names_no_pa
     limits = CaptureLimits(total_text_chars=1000)
     built = await capture_assign(
         AssignTarget(m["courseid"], a["id"], a["cmid"], uid(branch, "stu1")),
-        readers, InProcessParser(), OFF, Capabilities(), moodle_release=m["release"], limits=limits,
+        readers, InProcessParser(), OFF, Capabilities(), lms_release=m["release"], limits=limits,
     )  # fmt: skip
     assert isinstance(built, Built) and built.snapshot.submission is not None
     used = len(built.snapshot.submission.onlinetext or "")
@@ -605,7 +605,7 @@ async def test_online_text_never_exceeds_the_total_budget(branch: str) -> None:
     limits = CaptureLimits(total_text_chars=5, onlinetext_chars=50_000)
     built = await capture_assign(
         AssignTarget(m["courseid"], a["id"], a["cmid"], uid(branch, "stu1")),
-        readers, InProcessParser(), OFF, Capabilities(), moodle_release=m["release"], limits=limits,
+        readers, InProcessParser(), OFF, Capabilities(), lms_release=m["release"], limits=limits,
     )  # fmt: skip
     assert isinstance(built, Built) and built.snapshot.submission is not None
     sub = built.snapshot.submission
@@ -633,7 +633,7 @@ async def test_an_unreadable_online_text_is_flagged_not_dropped(
     a = m["assigns"]["simple"]
     built = await capture_assign(
         AssignTarget(m["courseid"], a["id"], a["cmid"], uid(branch, "stu1")),
-        readers, Broken(), OFF, Capabilities(), moodle_release=m["release"],
+        readers, Broken(), OFF, Capabilities(), lms_release=m["release"],
     )  # fmt: skip
     assert isinstance(built, Built)
     sub = built.snapshot.submission
@@ -685,7 +685,7 @@ async def _quiz_with(branch: str, parser: InProcessParser) -> Any:
     )
     out = await capture_quiz(
         target, readers, parser, OFF, Capabilities(),
-        moodle_release=m["release"], now=1_800_000_000,
+        lms_release=m["release"], now=1_800_000_000,
     )  # fmt: skip
     assert not replay.unmatched, replay.unmatched
     assert isinstance(out, Built), out

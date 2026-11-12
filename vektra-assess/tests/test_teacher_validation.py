@@ -111,11 +111,14 @@ def test_empty_pasted_rubric_with_source_pasted_is_refused() -> None:
 
 
 def test_rubric_source_per_activity_type() -> None:
-    assert v.check_rubric_source("moodle", "assign") == []
-    assert codes(v.check_rubric_source("moodle", "quiz")) == [
+    assert v.check_rubric_source("lms", "assign") == []
+    assert codes(v.check_rubric_source("lms", "quiz")) == [
         ("rubric_source", "not_for_activity_type")
     ]
     assert v.check_rubric_source("pasted", "quiz") == []
+    # ADR-0033 D5 (OD-3): the LMS's rubric is "lms"; the old product name is no source, with
+    # no alias (no plugin sends it yet)
+    assert v.check_rubric_source("moodle", "assign") != []
 
 
 def test_rag_on_is_a_field_error_with_its_reason() -> None:
@@ -203,12 +206,12 @@ def test_a_recipient_outside_the_allowlist_names_the_allowed_domains() -> None:
 # --- enable refusals (REQ-077) -------------------------------------------------------------------
 
 GOOD = v.Proposed(
-    enabled=True, cap_minutes=30, rubric_source="moodle", pasted_rubric_set=False,
+    enabled=True, cap_minutes=30, rubric_source="lms", pasted_rubric_set=False,
     recipients_count=1,
 )  # fmt: skip
 FACTS = v.ActivityFacts(
     "assign", close_at=1_900_000_000, team_submission=False, grading_method="rubric",
-    moodle_rubric=True,
+    lms_rubric=True,
 )  # fmt: skip
 
 
@@ -235,7 +238,7 @@ def test_a_complete_activity_may_be_enabled_and_disable_is_never_refused() -> No
         ),
         (v.ActivityFacts("assign", 1, True, "rubric", True), "team_submission"),
         (v.ActivityFacts("assign", 1, False, "guide", False), "marking_guide"),
-        (v.ActivityFacts("assign", None, None, None, None), "moodle_facts_unreadable"),
+        (v.ActivityFacts("assign", None, None, None, None), "lms_facts_unreadable"),
     ],
 )
 def test_enable_is_refused_for_each_moodle_fact(
@@ -254,7 +257,7 @@ def test_enable_is_refused_for_each_configuration_gap() -> None:
     assert ("enabled", "privacy_unset") in refusals(privacy_configured=False)
     assert ("enabled", "setup_check_red") in refusals(setup_green=False)
     no_rubric = v.ActivityFacts("assign", 1, False, "simple", False)
-    assert refusals(GOOD, no_rubric) == [("rubric_source", "moodle_rubric_missing")]
+    assert refusals(GOOD, no_rubric) == [("rubric_source", "lms_rubric_missing")]
     assert refusals(v.Proposed(True, None, "none", False, 1)) == [
         ("cap_minutes", "required")
     ]
@@ -270,7 +273,7 @@ def test_a_save_of_an_enabled_activity_rechecks_only_what_it_can_break() -> None
     kw = {"privacy_configured": False, "setup_green": False, "turning_on": False}
     assert codes(v.enable_refusals(GOOD, stale_facts, **kw)) == []
     assert codes(
-        v.enable_refusals(v.Proposed(True, 30, "moodle", False, 0), stale_facts, **kw)
+        v.enable_refusals(v.Proposed(True, 30, "lms", False, 0), stale_facts, **kw)
     ) == [("transcript_recipients", "empty")]
 
 
@@ -282,19 +285,17 @@ def test_null_on_an_always_valued_setting_is_named() -> None:
 
 
 @pytest.mark.parametrize("kind", ["quiz", "assign"])
-@pytest.mark.parametrize("stored", [None, "none", "pasted", "moodle", "html", 3])
+@pytest.mark.parametrize("stored", [None, "none", "pasted", "lms", "moodle", 3])
 def test_the_api_and_the_capture_read_the_same_rubric_source(
     kind: str, stored: object
 ) -> None:
     """Review 9: one function decides the effective rubric source, for the config view and for
-    the snapshot capture; a quiz never reads "moodle" (REQ-077)."""
+    the snapshot capture; a quiz never reads "lms" (REQ-077); the old value "moodle" is no source any more."""
     from vektra_assess.worker import start_source
 
     flags = {} if stored is None else {"rubric_source": stored}
     want = (
-        stored
-        if stored in v.SOURCES[kind]
-        else ("moodle" if kind == "assign" else "none")
+        stored if stored in v.SOURCES[kind] else ("lms" if kind == "assign" else "none")
     )
     assert v.rubric_source_of(flags, kind) == want
     view = start_source.teacher_view(flags, kind, None, "griglia incollata")
@@ -359,7 +360,7 @@ def _gate(**over: object) -> str | None:
         "cap_set": True,
         "end_at": None,
         "privacy_configured": True,
-        "moodle_reasons": [],
+        "lms_reasons": [],
         **over,
     }
     return v.reset_gate(**args)  # type: ignore[arg-type]
@@ -374,12 +375,12 @@ def test_reset_gate_rechecks_the_database_half_live_and_the_moodle_half_as_rende
     assert _gate(end_at=1_000) == "end_date_passed"  # at the end date: refused
     assert _gate(end_at=1_001) is None  # the date moved later: accepted
     assert _gate(privacy_configured=False) == "privacy_not_configured"
-    assert _gate(moodle_reasons=["not_released"]) == "not_released"
+    assert _gate(lms_reasons=["not_released"]) == "not_released"
     # the session gate is what the reset lifts: a stored "already discussed" is not a refusal
-    assert _gate(moodle_reasons=["already_discussed", "session_open"]) is None
-    assert _gate(moodle_reasons=["bogus"]) == "unreadable"  # fail closed
+    assert _gate(lms_reasons=["already_discussed", "session_open"]) is None
+    assert _gate(lms_reasons=["bogus"]) == "unreadable"  # fail closed
     # order: the end date before any Moodle reason
-    assert _gate(end_at=10, moodle_reasons=["not_released"]) == "end_date_passed"
+    assert _gate(end_at=10, lms_reasons=["not_released"]) == "end_date_passed"
 
 
 def test_extra_time_is_stored_in_seconds_of_the_current_cap() -> None:

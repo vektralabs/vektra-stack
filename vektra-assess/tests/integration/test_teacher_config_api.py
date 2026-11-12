@@ -105,7 +105,7 @@ async def test_a_new_activity_reads_safe_defaults(pg, pair) -> None:  # type: ig
             "non impostata"
         }
         assert got["transcript_recipients_state"] == "non impostata"
-        assert got["rubric_source"] == "moodle" and got["active_sessions"] == 0
+        assert got["rubric_source"] == "lms" and got["active_sessions"] == 0
         assert got["opening"]["source"] == "activity_close"
         assert r.headers["cache-control"] == "no-store"
     finally:

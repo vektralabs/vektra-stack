@@ -86,8 +86,8 @@ class CheckContext:
     settings: VektraAssessSettings
     manifest: Mapping[str, Any] | None
     info: Reading[LmsSiteInfo]
-    # the site's ``moodle_origin`` column (revision 0033): the origin that frames the UI
-    moodle_origin: str | None = None
+    # the site's ``lms_origin`` column (revision 0033): the origin that frames the UI
+    lms_origin: str | None = None
     provider: LmsProvider | None = None
 
     def __post_init__(self) -> None:

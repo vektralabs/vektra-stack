@@ -5,7 +5,7 @@ serialization path is what makes the exact request bytes testable here (NFR-017 
 
 The bundle is rendered as one user-role context message with a stable, labelled layout. Every
 value is data, not instructions: the content block is delimited, and the system message of plan 7
-says so. Snapshot-local labels only; no Moodle id exists in a bundle to leak.
+says so. Snapshot-local labels only; no LMS id exists in a bundle to leak.
 """
 
 from __future__ import annotations

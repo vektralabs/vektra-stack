@@ -86,7 +86,8 @@ def db_url():
         env["VEKTRA_DATABASE_URL"] = async_url
 
         result = subprocess.run(
-            ["uv", "run", "alembic", "upgrade", "head"],
+            # both branches: the assess scopes and the reserved namespace are tested here
+            ["uv", "run", "alembic", "upgrade", "heads"],
             capture_output=True,
             text=True,
             cwd=project_root,

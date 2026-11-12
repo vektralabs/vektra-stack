@@ -22,7 +22,7 @@ Then ONE transaction:
    ``assess_start`` audit event with the privacy-notice version.
 
 202 returns the session id and a session-bound token. The worker pre-flight is authoritative: it
-re-validates everything and commits or rolls back. Nothing on this path reads Moodle or content.
+re-validates everything and commits or rolls back. Nothing on this path reads the LMS or content.
 """
 
 from __future__ import annotations
@@ -97,7 +97,7 @@ _RENDER = text(
     "FROM assess_render_state WHERE site_id = :s AND student_userid = :u AND cmid = :c"
 )
 #: the render codes that refuse a Start before anything is written: definitive negative states
-#: of a Moodle-side or teacher-set gate. Everything else (``unreadable``, ``close_unreadable``, a
+#: of a LMS-side or teacher-set gate. Everything else (``unreadable``, ``close_unreadable``, a
 #: NULL code, a code this release does not know, and the codes the Start transaction re-checks on
 #: its own rows) goes on to the pre-flight, which re-reads and decides (review fix 8).
 _REFUSING = frozenset(
@@ -242,7 +242,7 @@ async def _advisory(request: Request, conn: AsyncConnection, claims: PreClaims) 
         and float(render.age_s) <= settings.render_fresh_s
         and render.reason_code in _REFUSING
     ):
-        # a FRESH negative render state of a Moodle-side gate: refused before anything is
+        # a FRESH negative render state of a LMS-side gate: refused before anything is
         # written; stale or missing goes on to the pre-flight, which re-reads (authoritative)
         await _refuse(
             request,

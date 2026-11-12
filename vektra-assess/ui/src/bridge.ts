@@ -1,7 +1,7 @@
 // postMessage contract v1 with the plugin (docs/reference/api.md, "Assess UI"). A message is
-// acted on only when it comes from the configured Moodle origin AND from the parent window,
+// acted on only when it comes from the configured parent (LMS) origin AND from the parent window,
 // with v === 1 and a known type; everything else is ignored. Messages are posted with the
-// explicit Moodle origin as targetOrigin, never "*".
+// explicit parent origin as targetOrigin, never "*".
 
 export type InboundMessage =
   | { v: 1; type: "vektra-assess-token"; token: string; mode: "start" | "resume"; sid?: string }
@@ -47,15 +47,15 @@ export interface BridgeWindow {
 export class Bridge {
   constructor(
     private readonly win: BridgeWindow,
-    private readonly moodleOrigin: string,
+    private readonly parentOrigin: string,
   ) {
-    if (!moodleOrigin || moodleOrigin === "*") throw new Error("an explicit origin is required");
+    if (!parentOrigin || parentOrigin === "*") throw new Error("an explicit origin is required");
   }
 
   /** Listen for the parent's messages; ``onMessage`` sees validated messages only. */
   listen(onMessage: (m: InboundMessage) => void): void {
     this.win.addEventListener("message", (ev: MessageEvent) => {
-      if (ev.origin !== this.moodleOrigin) return;
+      if (ev.origin !== this.parentOrigin) return;
       if (ev.source !== (this.win.parent as unknown)) return;
       const m = parseInbound(ev.data);
       if (m) onMessage(m);
@@ -63,7 +63,7 @@ export class Bridge {
   }
 
   send(message: OutboundMessage): void {
-    this.win.parent.postMessage(message, this.moodleOrigin);
+    this.win.parent.postMessage(message, this.parentOrigin);
   }
 
   /** Report the content height to the parent whenever it changes. */

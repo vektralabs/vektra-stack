@@ -70,7 +70,7 @@ async def test_the_list_shows_sessions_resets_extra_time_and_the_gate_panel(
         )
         sid1 = seeded[9001][0]
         await close(worker, sid1, "service_failure")
-        await seed_render(pg, w.site, 9001, cmid, moodle_reasons=[])
+        await seed_render(pg, w.site, 9001, cmid, lms_reasons=[])
         r = await w.client.post(
             f"/api/v1/assess/activities/{cmid}/sessions/{sid1}/reset",
             json=body(reason="interruzione di rete"),
@@ -302,7 +302,7 @@ async def test_reasons_follow_the_transcript_kek_rotation(pg, worker) -> None:  
         await seed_teacher_gate(pg, w.site, cmid)
         sid = seeded[9201][0]
         await close(worker, sid)
-        await seed_render(pg, w.site, 9201, cmid, moodle_reasons=[])
+        await seed_render(pg, w.site, 9201, cmid, lms_reasons=[])
         assert (
             await w.client.post(
                 f"/api/v1/assess/activities/{cmid}/sessions/{sid}/reset",
@@ -442,7 +442,7 @@ async def test_an_unreadable_reason_does_not_take_the_list_down(pg, worker) -> N
         for student in (9401, 9402):
             sid = seeded[student][0]
             await close(worker, sid)
-            await seed_render(pg, w.site, student, cmid, moodle_reasons=[])
+            await seed_render(pg, w.site, student, cmid, lms_reasons=[])
             r = await w.client.post(
                 f"/api/v1/assess/activities/{cmid}/sessions/{sid}/reset",
                 json=body(reason=f"motivo {student}"),

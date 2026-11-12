@@ -206,7 +206,7 @@ async def test_reseal_teacher_configs_and_rewrap_transcript_deks(pg):
     site = uuid.uuid4()
     await pg.run(
         "super",
-        "INSERT INTO assess_sites (id, moodle_site_uuid, base_url) VALUES (:i, :u, 'https://m')",
+        "INSERT INTO assess_sites (id, lms_site_uuid, base_url) VALUES (:i, :u, 'https://m')",
         {"i": site, "u": str(site)},
     )
     old_pub, old_priv = x_ring("w1")

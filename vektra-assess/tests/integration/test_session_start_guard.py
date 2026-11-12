@@ -233,9 +233,7 @@ async def test_concurrent_starts_on_a_half_open_breaker_let_one_through(
         )
 
 
-async def test_moodle_unreachable_alerts_the_operator_once_per_window(
-    pg, worker
-) -> None:  # type: ignore[no-untyped-def]
+async def test_lms_unreachable_alerts_the_operator_once_per_window(pg, worker) -> None:  # type: ignore[no-untyped-def]
     """REQ-071: a pre-flight rolled back because Moodle could not be read queues ONE
     content-free operator_notify per site per 15-minute window, in the rollback transaction;
     a rollback for a negated gate queues nothing."""
@@ -272,7 +270,7 @@ async def test_moodle_unreachable_alerts_the_operator_once_per_window(
             {
                 "site_id": str(w.site),
                 "reason": "unreadable",
-                "kind": "moodle_unreachable",
+                "kind": "lms_unreachable",
             }
         ]
 

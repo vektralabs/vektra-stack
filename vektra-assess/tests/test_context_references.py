@@ -92,9 +92,7 @@ def test_not_found_gives_the_fixed_text_with_the_valid_list() -> None:
 )
 def test_moodle_id_shapes_are_rejected(ref: str) -> None:
     res = resolve_reference(_quiz(), ref)
-    assert res == Rejected("moodle_id") and res.audit_data() == {
-        "reason_code": "moodle_id"
-    }
+    assert res == Rejected("lms_id") and res.audit_data() == {"reason_code": "lms_id"}
 
 
 def test_picker_with_an_out_of_snapshot_label_is_rejected() -> None:

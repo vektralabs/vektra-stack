@@ -550,7 +550,7 @@ async def test_the_discussion_ui_in_a_browser_across_two_origins(
     ):
         await w.pg.run(
             "super",
-            "UPDATE assess_sites SET release = :r, moodle_origin = :o WHERE id = :s",
+            "UPDATE assess_sites SET release = :r, lms_origin = :o WHERE id = :s",
             {
                 "r": SCENARIO_RELEASE,
                 "o": f"http://127.0.0.1:{ports['stub']}",

@@ -1,7 +1,7 @@
 """Render one transcript (REQ-074, BR-016, NFR-016): system header + escaped turns + digest.
 
 ``build_doc`` turns the facts the generator gathered (session rows, the decrypted snapshot and
-turns, the Moodle facts read at close) into a ``TranscriptDoc`` of plain strings; ``render``
+turns, the LMS facts read at close) into a ``TranscriptDoc`` of plain strings; ``render``
 fills the Jinja2 template with ``autoescape=True`` and ``StrictUndefined`` and returns UTF-8
 bytes. The header comes ONLY from session and snapshot rows and from Vektra-shipped strings,
 never from model output; the snapshot's solution, pasted rubric, prompts and reset reasons are
@@ -293,7 +293,7 @@ def build_doc(inp: TranscriptInput) -> TranscriptDoc:
     entries = [
         Entry("Corso", course),
         Entry("Attività", f"{kind} (id {inp.cmid})"),
-        Entry("Studente (id Moodle)", str(inp.student_userid)),
+        Entry("Studente (id LMS)", str(inp.student_userid)),
         Entry("Sessione", f"Sessione #{inp.session_no} di {inp.sessions_total}"),
         Entry("Contesto sessioni precedenti", "sì" if inp.previous_context else "no"),
         Entry("Tentativo", attempt),

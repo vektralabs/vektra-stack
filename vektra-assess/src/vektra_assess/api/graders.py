@@ -1,6 +1,6 @@
 """Is this teacher a grader of this activity, NOW? (plan 10 `authz/graders`; plan 11 reuses it.)
 
-The API cannot ask Moodle (only the worker holds the WS token). It reads the grader user ids the
+The API cannot ask the LMS (only the worker holds the provider's credential). It reads the grader user ids the
 render worker last wrote into ``assess_gate_inputs`` for (site, student, cmid) and accepts them
 only when they are at most ``max_age_s`` old. Absent, stale or not listed: refused (fail closed),
 and when absent or stale a render check is queued so a retry a few seconds later can succeed.

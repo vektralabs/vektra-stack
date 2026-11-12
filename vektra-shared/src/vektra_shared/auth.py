@@ -73,7 +73,9 @@ class KeyStoreProvider(Protocol):
 
 # ---------------------------------------------------------------------------
 # Scope vocabulary (REQ-031, ARCH-067). Mirrored by the database constraints
-# ck_api_keys_scopes and ck_api_keys_assess_scope_exclusive (migration 0009).
+# ck_api_keys_scopes and ck_api_keys_assess_scope_exclusive. The assess scopes exist in the
+# database only where the assess migration branch ran (VEKTRA_ASSESS_ENABLED=true, ADR-0033
+# D7): with assess off ck_api_keys_scopes is the platform's, LEGACY_SCOPES only.
 # ---------------------------------------------------------------------------
 
 LEGACY_SCOPES: frozenset[str] = frozenset({"admin", "ingest", "query"})
@@ -90,11 +92,26 @@ ASSESS_SCOPE_EXCLUSIVE_MESSAGE = (
 )
 
 
-def scope_set_error(scopes: list[str] | set[str]) -> str | None:
+ASSESS_SCOPES_DISABLED_MESSAGE = (
+    "assess:* scopes are not available: assess is disabled on this deployment "
+    "(VEKTRA_ASSESS_ENABLED is not true)."
+)
+
+
+def available_scopes(*, assess_enabled: bool) -> frozenset[str]:
+    """The scopes a key may hold on this deployment: the assess ones only with assess on."""
+    return ALL_SCOPES if assess_enabled else LEGACY_SCOPES
+
+
+def scope_set_error(
+    scopes: list[str] | set[str], *, assess_enabled: bool
+) -> str | None:
     """Return why ``scopes`` cannot be stored on one key, or None if they can.
 
     Same rules as the database constraints, checked before the insert so callers
-    answer 422 with a clear message instead of a 500 from an IntegrityError.
+    answer 422 with a clear message instead of a 500 from an IntegrityError. The
+    caller says whether assess is enabled (``app.state.assess_enabled``): with it off
+    the database refuses every assess scope, so this does too.
     """
     requested = set(scopes)
     if not requested:
@@ -102,6 +119,8 @@ def scope_set_error(scopes: list[str] | set[str]) -> str | None:
     invalid = requested - ALL_SCOPES
     if invalid:
         return f"Invalid scopes: {sorted(invalid)}"
+    if requested & ASSESS_SCOPES and not assess_enabled:
+        return ASSESS_SCOPES_DISABLED_MESSAGE
     if requested & ASSESS_SCOPES and requested & LEGACY_SCOPES:
         return ASSESS_SCOPE_EXCLUSIVE_MESSAGE
     return None

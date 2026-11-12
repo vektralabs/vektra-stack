@@ -14,6 +14,7 @@
       <label><input type="checkbox" name="scopes" value="ingest"> ingest</label>
       <label><input type="checkbox" name="scopes" value="query"> query</label>
     </fieldset>
+    {% if assess_enabled %}
     <fieldset>
       <legend>assess (site-bound)</legend>
       <small>For the LMS discussion plugin. Cannot be combined with admin, ingest or query.</small>
@@ -22,6 +23,7 @@
       <label><input type="checkbox" name="scopes" value="assess:privacy-export"> assess:privacy-export</label>
       <label><input type="checkbox" name="scopes" value="assess:privacy-erase"> assess:privacy-erase</label>
     </fieldset>
+    {% endif %}
     <button type="submit">Create key</button>
   </form>
 </details>

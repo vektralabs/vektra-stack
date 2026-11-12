@@ -127,7 +127,7 @@ async def test_downgrade_refused_while_assess_keys_exist(pg):
     await _insert_key(pg, ["assess:teacher"], "blocker")
     versions = "SELECT version_num FROM alembic_version ORDER BY 1"
     before = await _fetch(pg, versions)
-    assert [r[0] for r in before] == ["a0001"]  # 0008 is implied by its dependency
+    assert [r[0] for r in before] == ["a0001"]  # 0009 is implied by its dependency
     res = _alembic(pg, "downgrade", "assess@base")
     assert res.returncode != 0
     assert "downgrade refused" in res.stderr and "1 API key" in res.stderr

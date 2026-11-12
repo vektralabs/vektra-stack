@@ -78,9 +78,9 @@ async def _admin(url: str, *statements: str, database: str | None = None) -> lis
 
 
 async def _managed_database(
-    server: str, *, roles: bool, membership: bool
+    server: str, *, roles: bool, membership: bool, createrole: bool = False
 ) -> tuple[str, str]:
-    """A database owned by a fresh non-superuser, non-CREATEROLE migration user.
+    """A database owned by a fresh non-superuser migration user (CREATEROLE only if asked).
 
     Returns (the migration user's async URL, the database name). The roles are cluster-level,
     so they are created once and reused; ``roles=False`` is only meaningful on a fresh server,
@@ -91,7 +91,7 @@ async def _managed_database(
     await _admin(
         server,
         f"CREATE ROLE {user} LOGIN PASSWORD '{PASSWORD}' "
-        "NOSUPERUSER NOCREATEROLE NOCREATEDB NOBYPASSRLS",
+        f"NOSUPERUSER {'CREATEROLE' if createrole else 'NOCREATEROLE'} NOCREATEDB NOBYPASSRLS",
         f"CREATE DATABASE {db} OWNER {user}",
     )
     # what a managed service's administrator does for the application: the extensions
@@ -165,13 +165,45 @@ async def test_a_1_without_the_roles_the_upgrade_stops_naming_all_three(
     assert "SET ROLE vektra_assess_definer" in res.stderr
 
 
-async def test_b_without_the_definer_membership_the_upgrade_fails(server: str) -> None:
+async def test_a_2_a_createrole_user_without_pre_created_roles_reaches_head(
+    server: str,
+) -> None:
+    """PG16: a CREATEROLE non-superuser that creates ``vektra_assess_definer`` gets only ADMIN
+    on it, not SET, so ``ALTER FUNCTION ... OWNER TO`` would fail. The revision grants the
+    role it just created to the migration user, and the upgrade reaches both heads. Runs while
+    the roles do not exist yet (after the two tests that need a server without them)."""
+    rows = await _admin(
+        server, "SELECT count(*) FROM pg_roles WHERE rolname LIKE 'vektra\\_assess\\_%'"
+    )
+    assert rows[0][0] == 0, "the precondition: no assess role on the server yet"
+    url, db = await _managed_database(
+        server, roles=False, membership=False, createrole=True
+    )
+    user = make_url(url).username
+    assert user is not None
+    assert await _flags(server, user) == (False, True)
+    res = _alembic(url, "upgrade", "heads")
+    assert res.returncode == 0, res.stderr[-2000:]
+    owners = await _admin(
+        server,
+        "SELECT DISTINCT pg_get_userbyid(proowner) FROM pg_proc "
+        "WHERE prosecdef AND pronamespace = 'public'::regnamespace",
+        database=db,
+    )
+    assert [r[0] for r in owners] == ["vektra_assess_definer"]
+
+
+async def test_b_without_the_definer_membership_the_upgrade_stops_with_the_recipe(
+    server: str,
+) -> None:
+    """Pre-created roles but no membership: the revision checks up front and stops with the
+    recipe, not with the raw ``ALTER FUNCTION`` error."""
     url, _ = await _managed_database(server, roles=True, membership=False)
     res = _alembic(url, "upgrade", "heads")
     assert res.returncode != 0
-    assert 'must be able to SET ROLE "vektra_assess_definer"' in res.stderr, res.stderr[
-        -1500:
-    ]
+    assert "cannot SET ROLE vektra_assess_definer" in res.stderr, res.stderr[-1500:]
+    assert "GRANT vektra_assess_definer TO" in res.stderr
+    assert "must be able to SET ROLE" not in res.stderr  # the raw error never surfaces
 
 
 async def test_c_pre_created_roles_and_the_membership_are_enough_for_head(
@@ -188,8 +220,8 @@ async def test_c_pre_created_roles_and_the_membership_are_enough_for_head(
     current = _alembic(url, "current")
     assert heads.returncode == 0 and current.returncode == 0, current.stderr
     want = sorted(line.split()[0] for line in heads.stdout.splitlines() if line.strip())
-    assert want == ["0008", "a0001"], heads.stdout
-    # the assess base is recorded; 0008, which it depends on, is implied
+    assert want == ["0009", "a0001"], heads.stdout
+    # the assess base is recorded; 0009, which it depends on, is implied
     assert "a0001" in current.stdout, current.stdout
     # the definer functions really are owned by the definer
     owners = await _admin(

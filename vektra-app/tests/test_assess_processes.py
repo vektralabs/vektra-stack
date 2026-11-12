@@ -407,14 +407,22 @@ ENTRYPOINT = Path(__file__).resolve().parents[2] / "docker" / "entrypoint.sh"
 
 
 def _entry(tmp_path: Path, target: str, assess: str | None = None) -> tuple[int, str]:
-    """Run the entrypoint with stub python/alembic that log their argv."""
+    """Run the entrypoint with stub python/alembic that log their argv.
+
+    ``python -m vektra_app.assess_switch`` is NOT stubbed: the entrypoint asks the same
+    helper as the API which branches to migrate, so these tests prove both agree."""
     bindir = tmp_path / "bin"
     bindir.mkdir(exist_ok=True)
     log = tmp_path / "calls.log"
     log.unlink(missing_ok=True)
     for tool in ("python", "alembic"):
         stub = bindir / tool
-        stub.write_text(f'#!/bin/sh\necho "{tool} $*" >> "{log}"\n')
+        real = (
+            f'if [ "$1 $2" = "-m vektra_app.assess_switch" ]; then exec "{sys.executable}" "$@"; fi\n'
+            if tool == "python"
+            else ""
+        )
+        stub.write_text(f'#!/bin/sh\n{real}echo "{tool} $*" >> "{log}"\n')
         stub.chmod(0o755)
     env = {"PATH": f"{bindir}:/usr/bin:/bin"}
     if assess is not None:
@@ -425,7 +433,7 @@ def _entry(tmp_path: Path, target: str, assess: str | None = None) -> tuple[int,
     return res.returncode, (log.read_text() if log.exists() else "") + res.stderr
 
 
-@pytest.mark.parametrize("assess", [None, "false", "0", "no", "", "maybe"])
+@pytest.mark.parametrize("assess", [None, "false", "0", "no", "off", "maybe"])
 @pytest.mark.parametrize("target", ["server", "migrate"])
 def test_disabled_assess_migrates_the_platform_branch_only(
     tmp_path: Path, target: str, assess: str | None
@@ -451,6 +459,31 @@ def test_enabled_assess_migrates_its_branch_after_the_platform(
     assert lines == ["alembic upgrade platform@head", "alembic upgrade assess@head"]
     if target == "server":  # migrations first, then the server
         assert calls.splitlines()[-1] == "python -m vektra_app.main"
+
+
+@pytest.mark.parametrize(
+    "assess",
+    [None, "", "false", "0", "no", "off", "maybe", "true", "TRUE", "1", "yes", "on"],
+)
+def test_the_entrypoint_and_the_api_read_the_switch_the_same_way(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, assess: str | None
+) -> None:
+    """Review of #206: one helper decides (``assess_switch.assess_enabled``): the branches
+    the entrypoint migrates are exactly the ones the API's schema step requires."""
+    from vektra_app import assess_switch
+
+    if assess is None:
+        monkeypatch.delenv("VEKTRA_ASSESS_ENABLED", raising=False)
+    else:
+        monkeypatch.setenv("VEKTRA_ASSESS_ENABLED", assess)
+    want = assess_switch.migration_branches()
+    _, calls = _entry(tmp_path, "migrate", assess)
+    migrated = tuple(
+        line.split()[-1].removesuffix("@head")
+        for line in calls.splitlines()
+        if line.startswith("alembic upgrade")
+    )
+    assert migrated == want
 
 
 @pytest.mark.parametrize(

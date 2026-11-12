@@ -20,6 +20,7 @@ import structlog
 from fastapi import FastAPI
 from pydantic import ValidationError
 
+from vektra_app.assess_switch import assess_enabled
 from vektra_assess.config import VektraAssessSettings
 from vektra_shared.registry import ProviderRegistry
 from vektra_shared.startup import StartupValidationError
@@ -47,25 +48,10 @@ def load_assess_settings() -> VektraAssessSettings:
         ) from None
 
 
-def migration_branches() -> tuple[str, ...]:
-    """The Alembic branches the schema step requires at head (ADR-0033 D7): the platform
-    always, the assess branch only when assess is enabled. A broken assess configuration
-    requires the platform only; step 12 reports the error."""
-    try:
-        enabled = VektraAssessSettings().enabled
-    except ValidationError:
-        enabled = False
-    return ("platform", "assess") if enabled else ("platform",)
-
-
 def include_assess_router(app: FastAPI) -> bool:
-    """Mount the assess router only when enabled. Returns whether it was mounted."""
-    try:
-        enabled = VektraAssessSettings().enabled
-    except ValidationError:
-        # A broken assess config never mounts routes; step 12 reports the error.
-        enabled = False
-    if not enabled:
+    """Mount the assess router only when enabled. Returns whether it was mounted. A broken
+    assess config never mounts routes (``assess_enabled`` is False); step 12 reports it."""
+    if not assess_enabled():
         return False
     from vektra_assess.api.router import router
     from vektra_assess.ui.router import router as ui_router

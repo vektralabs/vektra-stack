@@ -180,17 +180,25 @@ enables assess gets none of its tables, roles or functions, and its migration us
 `CREATEROLE`. The API's startup check requires the assess branch at its head only when assess
 is enabled; a deployment that turns assess off keeps its schema and still starts.
 
+The entrypoint does not parse `VEKTRA_ASSESS_ENABLED` itself: it runs
+`python -m vektra_app.assess_switch`, which prints the branches to migrate with the helper the
+API uses for its routes and its schema step. The column `query_traces.pipeline` is the
+platform's (revision `0009`), so analytics works with assess off.
+
 Enabling assess later is the same: set `VEKTRA_ASSESS_ENABLED=true` and restart the API, whose
 entrypoint then applies the branch. On managed Postgres, the migration user's requirements
 (the three roles pre-created, membership of `vektra_assess_definer`) are those of the
-CHANGELOG upgrade note and apply only from then on.
+CHANGELOG upgrade note and apply only from then on. A migration user with `CREATEROLE` but no superuser may
+instead let the branch create the roles: it grants itself `vektra_assess_definer` (PostgreSQL
+16 gives the creator only `ADMIN` on a new role).
 
 **Development databases migrated by the old chain.** The 36 assess revisions `0009` to `0044` of the
 root chain were squashed into the branch's base revision `a0001`, with neutral column names
 (`lms_site_uuid`, `lms_origin`, `lms_release`). No released version ever shipped them, and no
 assess data is migrated: a development database that holds them is re-created. Drop the
 database (or its volume), then start the stack again; `alembic upgrade` refuses a database
-recorded at `0044` (`Can't locate revision`).
+recorded at `0044` (`Can't locate revision`), and the API refuses to start on it with the same
+advice.
 
 ## Database roles and DSNs
 

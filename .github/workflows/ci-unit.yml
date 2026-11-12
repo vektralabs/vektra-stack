@@ -317,11 +317,69 @@ jobs:
           vektra-shared/tests/test_lms_boundary.py
           -v --tb=short
 
+  # The Moodle LMS provider (ADR-0033 D6, plan 2a-4b.4): not a workspace member, so no change
+  # filter selects it; like test-structure it runs on every PR. It installs the platform plus the
+  # provider (the opt-in group), then runs the provider's tests, the conformance kit on its 4.3 and
+  # 5.2 recordings, and the joint suites (the vertical's capture, canary sinks, IDOR matrix and
+  # setup check over those recordings, on real Postgres). The live suites (-m moodle) need two
+  # Moodle sites: here they skip as BLOCKED, and assess-moodle-contract.yml runs them.
+  test-lms-moodle:
+    name: Test the Moodle LMS provider (adapters/vektra-lms-moodle)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # Runs PR-authored test code; don't leave the token in .git/config
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+      - run: uv sync --dev --frozen --group lms-moodle
+      - name: Provider tests, conformance kit and joint suites
+        env:
+          # the joint suites' fixtures run `uv run alembic`: never sync the provider away mid-run
+          UV_NO_SYNC: "1"
+        run: >
+          uv run pytest adapters/vektra-lms-moodle/tests -v -rs --tb=short
+          --junitxml=lms-moodle.xml
+      # A green job is not evidence on its own (plan Testing Approach): the conformance kit ran
+      # on both recorded releases, and the joint suites on real Postgres ran, not skipped.
+      - name: The conformance kit and the joint suites must have run
+        run: |
+          uv run --no-sync python - <<'PY'
+          import sys
+          import xml.etree.ElementTree as ET
+
+          root = ET.parse("lms-moodle.xml").getroot()
+          cases = list(root.iter("testcase"))
+          def ran(fragment):
+              hit = [c for c in cases if fragment in (c.get("classname") or "")]
+              skipped = [c.get("name") for c in hit if c.find("skipped") is not None]
+              return len(hit), skipped
+          problems = []
+          for fragment, minimum in (
+              ("TestMoodle43Conformance", 5),
+              ("TestMoodle52Conformance", 5),
+              ("integration_moodle.test_setup_check_run", 5),
+              ("integration_moodle.test_idor_moodle", 2),
+              ("integration_moodle.test_snapshot_canary_db", 1),
+              ("test_canary_matrix", 2),
+          ):
+              n, skipped = ran(fragment)
+              print(f"{fragment}: {n} collected, {len(skipped)} skipped")
+              if n < minimum or skipped:
+                  problems.append(f"{fragment}: {n} collected, skipped={skipped}")
+          if problems:
+              sys.exit("; ".join(problems))
+          PY
+
   # Aggregator job used as the single required status check in branch protection.
   # Passes if no upstream job failed (skipped jobs are treated as passing).
   ci-gate:
     name: CI gate
-    needs: [detect-changes, test-shared, test-core, test-ingest, test-index, test-admin, test-analytics, test-learn, test-learn-widget, test-assess-ui, test-assess, test-app, test-structure]
+    needs: [detect-changes, test-shared, test-core, test-ingest, test-index, test-admin, test-analytics, test-learn, test-learn-widget, test-assess-ui, test-assess, test-app, test-structure, test-lms-moodle]
     runs-on: ubuntu-latest
     if: always()
     steps:

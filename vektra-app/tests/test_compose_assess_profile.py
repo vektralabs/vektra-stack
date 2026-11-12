@@ -23,6 +23,10 @@ SERVICE_ROLE = {
     "vektra-assess-parser": "parser",
 }
 SOCKET_VOLUME = "assess_parser_sock"
+#: the credentials the overlay's LMS provider declares (``required_secrets``), which the matrix
+#: does not list (ADR-0033 D5, plan 2a-4b.13); the provider's own suite checks the overlay mounts
+#: exactly these for the worker (adapters/vektra-lms-moodle/tests/test_entry_point.py)
+PROVIDER_SECRETS = {"assess_ws_tokens"}
 
 
 def _render(*files: str, profile: str | None = "assess") -> dict:  # type: ignore[type-arg]
@@ -76,6 +80,8 @@ def test_service_secrets_match_key_matrix(
 ) -> None:  # type: ignore[type-arg]
     mounted = _secrets(rendered["services"][service])
     allowed = {n for n, s in KEY_MATRIX.items() if s.need(role) is not Need.FORBIDDEN}  # type: ignore[arg-type]
+    if role == "worker":  # the worker alone holds the provider's credentials
+        allowed |= PROVIDER_SECRETS
     required = {n for n, s in KEY_MATRIX.items() if s.need(role) is Need.REQUIRED}  # type: ignore[arg-type]
     assert mounted <= allowed, (
         f"{service} mounts forbidden secrets: {sorted(mounted - allowed)}"
@@ -83,6 +89,30 @@ def test_service_secrets_match_key_matrix(
     assert required <= mounted, (
         f"{service} misses required secrets: {sorted(required - mounted)}"
     )
+
+
+def test_the_provider_secrets_are_mounted_by_the_worker_alone(rendered: dict) -> None:  # type: ignore[type-arg]
+    holders = {
+        name
+        for name, svc in rendered["services"].items()
+        if _secrets(svc) & PROVIDER_SECRETS
+    }
+    assert holders == {"vektra-assess-worker"}
+    assert PROVIDER_SECRETS <= _secrets(rendered["services"]["vektra-assess-worker"])
+    assert not PROVIDER_SECRETS & set(KEY_MATRIX)
+
+
+def test_every_assess_service_runs_the_image_with_the_provider(rendered: dict) -> None:  # type: ignore[type-arg]
+    """ADR-0033 D6, OD-6: the platform image holds no LMS provider, so the overlay builds the
+    variant with the Moodle one and every service that runs Vektra code runs it; the base file
+    alone still builds the platform image."""
+    services = rendered["services"]
+    assert services["vektra"]["build"]["args"]["INSTALL_LMS_PROVIDER"] == "moodle"
+    for name in ("vektra", "vektra-assess-worker", "vektra-assess-parser"):
+        assert services[name]["image"] == "vektra-stack-lms-moodle", name
+    base = _render("docker-compose.yml", profile=None)["services"]["vektra"]
+    assert base["image"] == "vektra-stack"
+    assert "INSTALL_LMS_PROVIDER" not in base["build"].get("args", {})
 
 
 def test_db_init_holds_only_role_passwords(rendered: dict) -> None:  # type: ignore[type-arg]
@@ -307,7 +337,10 @@ def test_every_assess_vektra_process_receives_vektra_env() -> None:
     missing = [
         name
         for name, svc in raw["services"].items()
-        if svc.get("image") == "vektra-stack"
+        # the API (``vektra``) reads VEKTRA_ENV from the base file's env_file; the overlay only
+        # names its image variant
+        if str(svc.get("image", "")).startswith("vektra-stack")
+        and name != "vektra"
         and "VEKTRA_ENV" not in (svc.get("environment") or {})
     ]
     assert missing == []

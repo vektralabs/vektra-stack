@@ -1,8 +1,13 @@
 # Publish versioned container images to GHCR on tag push (INFRA-007).
 #
-# Builds both image variants from the existing Dockerfile (standard and
-# INSTALL_UNSTRUCTURED=true "-ocr") and pushes them to
-# ghcr.io/vektralabs/vektra. Tags are still cut manually (release.yml is a
+# Builds the image variants from the existing Dockerfile and pushes them to
+# ghcr.io/vektralabs/vektra:
+#   <version>            the platform, no LMS provider (ADR-0033 D6)
+#   <version>-ocr        INSTALL_UNSTRUCTURED=true
+#   <version>-lms-moodle INSTALL_LMS_PROVIDER=moodle: the platform plus the Moodle LMS provider
+#                        (OD-6). Until phase 2b the provider is built from adapters/ at the tagged
+#                        commit, its version and dependencies pinned by uv.lock; from 2b it is the
+#                        provider's published wheel, pinned by version and hash. Tags are still cut manually (release.yml is a
 # disabled placeholder - see "Phase 1 releases are tagged manually"); this
 # workflow only reacts to the resulting v* tag, it does not create one.
 name: Publish images
@@ -27,9 +32,15 @@ jobs:
           - variant: standard
             install_unstructured: "false"
             tag_suffix: ""
+            install_lms_provider: ""
           - variant: ocr
             install_unstructured: "true"
             tag_suffix: "-ocr"
+            install_lms_provider: ""
+          - variant: lms-moodle
+            install_unstructured: "false"
+            tag_suffix: "-lms-moodle"
+            install_lms_provider: "moodle"
 
     steps:
       - uses: actions/checkout@v7
@@ -69,6 +80,7 @@ jobs:
           context: .
           build-args: |
             INSTALL_UNSTRUCTURED=${{ matrix.install_unstructured }}
+            INSTALL_LMS_PROVIDER=${{ matrix.install_lms_provider }}
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}

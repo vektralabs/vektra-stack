@@ -14,6 +14,12 @@
 # column of KEY_MATRIX (vektra_assess/keys.py) allows, and each process re-checks
 # that at start. tests/test_compose_assess_profile.py asserts both against the
 # rendered `docker compose config`, so this file and the matrix cannot diverge.
+#
+# The LMS provider (ADR-0033 D6, OD-6): the platform image holds none, so this overlay builds
+# the image variant with the Moodle provider (INSTALL_LMS_PROVIDER=moodle, tagged
+# vektra-stack-lms-moodle; the published equivalent is ghcr.io/vektralabs/vektra:<version>-lms-moodle)
+# and every assess service runs it. The provider reads its own VEKTRA_LMS_MOODLE_* settings and
+# its credentials secret, assess_ws_tokens, which only the worker mounts.
 # ==========================================================================
 
 x-secret: &secret
@@ -23,8 +29,12 @@ x-secret: &secret
 
 services:
   # API: signing key, hand-off private key, transcript KEK, teacher-config public
-  # key, its own DB password. Never the KEK, WS tokens, SMTP or the socket volume.
+  # key, its own DB password. Never the KEK, the LMS credentials, SMTP or the socket volume.
   vektra:
+    build:
+      args:
+        INSTALL_LMS_PROVIDER: ${INSTALL_LMS_PROVIDER:-moodle}
+    image: vektra-stack-lms-moodle
     environment:
       VEKTRA_ASSESS_ENABLED: "true"
       VEKTRA_ASSESS_API_DATABASE_URL: postgresql+asyncpg://vektra_assess_api@postgres:5432/vektra
@@ -70,15 +80,15 @@ services:
         condition: service_healthy
     restart: "no"
 
-  # Worker: the only holder of the KEK, WS tokens and SMTP. No listener, no ports.
+  # Worker: the only holder of the KEK, the LMS credentials and SMTP. No listener, no ports.
   vektra-assess-worker:
-    image: vektra-stack
+    image: vektra-stack-lms-moodle
     profiles: [assess]
     environment:
       CMD_TARGET: assess-worker
       VEKTRA_ASSESS_ENABLED: "true"
-      # The LMS provider the worker loads by entry point (ADR-0033). Required: unset, the worker
-      # refuses to start and lists the providers installed in the image.
+      # The LMS provider the worker loads by entry point (ADR-0033): moodle, the one this image
+      # variant installs. Required: unset, the worker refuses to start and lists the installed ones.
       VEKTRA_ASSESS_LMS_PROVIDER: ${VEKTRA_ASSESS_LMS_PROVIDER:-}
       # the operator's environment, as the API reads it from .env: the worker has no env_file,
       # and its development-only switches need an explicit VEKTRA_ENV=development. Empty: unset
@@ -168,7 +178,7 @@ services:
   # read-only root, unprivileged, bounded memory/pids/cpu. Talks only over the socket.
   # Each item is parsed in a fresh child process under rlimits (plan assess-parser).
   vektra-assess-parser:
-    image: vektra-stack
+    image: vektra-stack-lms-moodle
     profiles: [assess]
     network_mode: none
     read_only: true

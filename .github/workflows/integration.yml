@@ -394,11 +394,10 @@ jobs:
           import xml.etree.ElementTree as ET
 
           root = ET.parse("test-results/package-integration.xml").getroot()
-          # the live-Moodle tests (-m moodle) need two Moodle sites and are run by
-          # assess-moodle-contract.yml: here they SKIP by design and do not count
+          # the live-Moodle suites moved with the provider to adapters/vektra-lms-moodle
+          # (ADR-0033 D6; its test-lms-moodle job and assess-moodle-contract.yml run them).
+          # Exempt here: the browser suites, which a dedicated job runs
           LIVE = (
-              "test_moodle_live", "test_moodle_setup_live", "test_context_live",
-              "test_idor_live", "test_req073_live",
               # the browser e2e needs Node and Chromium: the assess-ui-e2e job runs it,
               # with VEKTRA_ASSESS_E2E_REQUIRED=1 (a skip there is a failure); the same job
               # runs the transcript browser checks (plan 10: inertness, axe + Nu checker)
@@ -494,8 +493,10 @@ jobs:
           # runner-owned files (uid 1001) must be handed to the container user.
           sudo chown -R 1000:1000 secrets/assess
 
+      # the assess overlay runs the image variant with the Moodle provider (ADR-0033 D6):
+      # build that one, the platform image holds no LMS provider
       - name: Build the image
-        run: docker compose build
+        run: docker compose -f docker-compose.yml -f docker-compose.assess.yml build vektra
 
       # On a miss the mounted cache is empty, and HF_HOME=/hf-cache would hide the
       # embedding model baked into the image: copy the image's cache in first, so
@@ -503,7 +504,7 @@ jobs:
       - name: Seed the Hugging Face cache from the image
         if: steps.hf-cache.outputs.cache-hit != 'true'
         run: |
-          docker run --rm --user 0 --entrypoint sh -v "$HF_CACHE_DIR:/hf-cache" vektra-stack \
+          docker run --rm --user 0 --entrypoint sh -v "$HF_CACHE_DIR:/hf-cache" vektra-stack-lms-moodle \
             -c 'cp -R /home/vektra/.cache/huggingface/. /hf-cache/ && chmod -R a+rwX /hf-cache'
           ls "$HF_CACHE_DIR/hub"
 

@@ -14,7 +14,14 @@ from pathlib import Path
 import pytest
 
 from vektra_assess import keys
-from vektra_assess.keys import KEY_MATRIX, ROLES, Need, enforce_key_matrix, generate
+from vektra_assess.keys import (
+    KEY_MATRIX,
+    ROLES,
+    Credentials,
+    Need,
+    enforce_key_matrix,
+    generate,
+)
 from vektra_shared.startup import StartupValidationError
 
 FULL_ENV: dict[str, str] = {}
@@ -23,8 +30,13 @@ FULL_ENV: dict[str, str] = {}
 @pytest.fixture
 def full_set(tmp_path: Path) -> Path:
     out = tmp_path / "all"
-    generate(out)
+    generate(out, provider_secrets=(PROVIDER_SECRET,))
     return out
+
+
+#: a secret an LMS provider declares (``LmsProvider.required_secrets``); the name is the
+#: provider's, the matrix does not list it (ADR-0033 D5, plan task 2a-4b.13)
+PROVIDER_SECRET = "assess_lms_tokens"
 
 
 def _subset(src: Path, dst: Path, names: set[str]) -> Path:
@@ -53,10 +65,9 @@ def test_matrix_covers_three_roles_and_parser_holds_nothing() -> None:
     for name, spec in KEY_MATRIX.items():
         assert spec.parser is Need.FORBIDDEN, name
     assert {"api", "worker", "parser"} == set(ROLES)
-    # ARCH-066: the API never holds the KEK, WS tokens or SMTP
+    # ARCH-066: the API never holds the KEK or SMTP (nor the LMS credentials: below)
     for name in (
         "assess_kek",
-        "assess_ws_tokens",
         "assess_smtp",
         "assess_teacher_config_private",
     ):
@@ -139,10 +150,11 @@ def test_forbidden_key_env_var_refused_by_name(
 def test_api_forbidden_half_runs_even_when_only_forbidden_checked(
     full_set: Path, tmp_path: Path
 ) -> None:
-    """Assess disabled: the API holds no required keys, but a WS keyring still refuses."""
-    d = _subset(full_set, tmp_path / "ws", {"assess_ws_tokens"})
+    """Assess disabled: the API holds no required keys, but an LMS credentials file still
+    refuses (the API loads no provider: it refuses every assess_* file it is not granted)."""
+    d = _subset(full_set, tmp_path / "ws", {PROVIDER_SECRET})
     detail = _refusal("api", d, forbidden_only=True)
-    assert "assess_ws_tokens: forbidden for api" in detail
+    assert f"{PROVIDER_SECRET}: forbidden for api" in detail
     assert "required" not in detail
     # and an empty dir passes the forbidden-only half
     assert (
@@ -280,10 +292,11 @@ def test_env_check_matches_exact_names_not_substrings():
 
 
 @pytest.mark.parametrize("role", ["api", "parser"])
-def test_per_site_ws_token_files_are_refused_for_non_workers(
+def test_unknown_assess_files_are_refused_for_non_workers(
     full_set: Path, tmp_path: Path, role: str
 ) -> None:
-    """ARCH-066: any assess_ws_token_<site> file is the worker's alone (glob, not a name)."""
+    """ARCH-066: any assess_* file the matrix does not grant the role (an LMS provider's
+    credentials, a per-site token file) is the worker's alone (by prefix, not by name)."""
     d = (
         _subset(full_set, tmp_path / "p", set())
         if role == "parser"
@@ -354,3 +367,58 @@ async def test_a_dsn_with_a_password_cannot_run_and_is_not_printed(  # type: ign
     out = io.StringIO()
     assert await kv._run("worker", out) == 2
     assert "s3cr3t" not in out.getvalue()
+
+
+# --- the secrets an LMS provider declares (plan task 2a-4b.13, ADR-0033 D5) ------------------
+
+
+def test_the_worker_loads_the_secrets_its_provider_declares(
+    full_set: Path, tmp_path: Path
+) -> None:
+    d = _role_set(full_set, tmp_path, "worker", {PROVIDER_SECRET})
+    loaded = enforce_key_matrix(
+        "worker", secrets_dir=d, environ={}, provider_secrets=(PROVIDER_SECRET,)
+    )
+    assert isinstance(loaded[PROVIDER_SECRET], Credentials)
+    # not declared: not loaded, whatever is mounted
+    assert PROVIDER_SECRET not in enforce_key_matrix(
+        "worker", secrets_dir=d, environ={}
+    )
+
+
+def test_a_declared_secret_that_is_missing_refuses_the_worker(
+    full_set: Path, tmp_path: Path
+) -> None:
+    d = _role_set(full_set, tmp_path, "worker")
+    detail = _refusal("worker", d, provider_secrets=("assess_other_tokens",))
+    assert "assess_other_tokens: required for worker by the LMS provider" in detail
+
+
+def test_a_declared_secret_is_checked_like_every_assess_secret(
+    full_set: Path, tmp_path: Path
+) -> None:
+    d = _role_set(full_set, tmp_path, "worker", {PROVIDER_SECRET})
+    os.chmod(d / PROVIDER_SECRET, 0o644)
+    detail = _refusal("worker", d, provider_secrets=(PROVIDER_SECRET,))
+    assert f"{PROVIDER_SECRET}: mode 0644 is too open" in detail
+
+
+@pytest.mark.parametrize(
+    "name", ["ws_tokens", "assess_kek", "assess_WS", "assess_", "assess_a.b"]
+)
+def test_a_provider_secret_name_must_be_an_unused_assess_name(
+    full_set: Path, tmp_path: Path, name: str
+) -> None:
+    """The prefix is what lets the API and the parser refuse a provider's secret without
+    loading the provider; a matrix name would let a provider claim an assess key."""
+    d = _role_set(full_set, tmp_path, "worker")
+    detail = _refusal("worker", d, provider_secrets=(name,))
+    assert "not a valid LMS provider secret name" in detail
+
+
+def test_the_generator_writes_the_provider_secrets(tmp_path: Path) -> None:
+    written = {p.name for p in generate(tmp_path / "g", provider_secrets=("assess_x",))}
+    assert written == set(KEY_MATRIX) | {"assess_x"}
+    assert (tmp_path / "g" / "assess_x").read_text() == "{}"
+    with pytest.raises(ValueError, match="not a valid LMS provider secret name"):
+        generate(tmp_path / "h", provider_secrets=("assess_kek",))

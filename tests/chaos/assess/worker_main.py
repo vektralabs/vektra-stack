@@ -69,16 +69,31 @@ class _DevEntryPoint:
             sys.path.insert(0, str(tests))
         from support.fake_lms import scenario_provider
 
-        return scenario_provider
+        if self.name == "fake":
+            return scenario_provider
+        return _installed_stand_in
+
+
+def _installed_stand_in() -> Any:
+    """``stub``: the scenario fake WITHOUT the test-double marker, standing in for an installed
+    provider. The platform installs none (ADR-0033 D6), and a production-mode refusal that comes
+    after the provider load (the unbound override outside development) needs one that a
+    production registry accepts. It exists only in this test process."""
+    from support.fake_lms import FakeLmsProvider, scenario_world
+
+    class StandIn(FakeLmsProvider):
+        __vektra_test_double__ = False  # the registry reads the marker on the class
+
+    return StandIn(scenario_world())
 
 
 def LMS_ENTRY_POINTS() -> list[Any]:
-    """The installed providers, plus the development-only ``fake``."""
+    """The installed providers, plus the development-only ``fake`` and ``stub``."""
     from importlib.metadata import entry_points
 
     from vektra_app.lms_providers import GROUP
 
-    return [*entry_points(group=GROUP), _DevEntryPoint("fake")]
+    return [*entry_points(group=GROUP), _DevEntryPoint("fake"), _DevEntryPoint("stub")]
 
 
 async def _stub(*_: object) -> None:

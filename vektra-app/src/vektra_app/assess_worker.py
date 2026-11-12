@@ -250,9 +250,16 @@ async def _checks(lms_entry_points: Any | None = None) -> Checked:
             "VEKTRA_ASSESS_ENABLED is not true: the assess worker does not run on a "
             "deployment where assess is disabled."
         )
-    loaded = enforce_key_matrix("worker", secrets_dir=settings.secrets_dir, step=STEP)
+    # the provider first: the key matrix loads the secrets it declares (plan task 2a-4b.13),
+    # not a name the platform knows
     lms = await _load_lms(settings, lms_entry_points)
     try:
+        loaded = enforce_key_matrix(
+            "worker",
+            secrets_dir=settings.secrets_dir,
+            step=STEP,
+            provider_secrets=lms.required_secrets,
+        )
         return await _checks_with_lms(settings, loaded, lms)
     except BaseException:
         # a later check refused: the provider it loaded is closed, not leaked

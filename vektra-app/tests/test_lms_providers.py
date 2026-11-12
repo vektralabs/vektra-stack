@@ -162,10 +162,16 @@ async def test_a_non_provider_with_an_aclose_is_closed_too() -> None:
     assert made[0].closed
 
 
-def test_the_real_group_is_read_and_lists_the_staged_provider() -> None:
-    """The Moodle provider is staged in vektra-assess until plan 2a-4 moves it to its adapter
-    distribution: the installed group names exactly it."""
-    assert available_lms_providers() == ("moodle",)
+def test_no_platform_distribution_declares_a_provider() -> None:
+    """ADR-0033 D6: providers are separate distributions (``vektra-lms-*``, staged in
+    ``adapters/``). The real group is read, and whatever it lists comes from one of them, never
+    from a platform package: without ``--group lms-moodle`` it lists nothing."""
+    from importlib.metadata import entry_points
+
+    eps = list(entry_points(group=GROUP))
+    assert available_lms_providers() == tuple(sorted({ep.name for ep in eps}))
+    for ep in eps:
+        assert ep.dist is not None and ep.dist.name.startswith("vektra-lms-"), ep
 
 
 async def test_an_aclose_property_that_raises_does_not_replace_the_refusal() -> None:
@@ -283,7 +289,8 @@ def test_the_worker_refuses_to_start_without_a_provider(
     with pytest.raises(StartupValidationError) as e:
         _run_load(assess_worker, settings)
     assert "VEKTRA_ASSESS_LMS_PROVIDER is unset" in e.value.detail
-    assert "moodle" in e.value.detail
+    listed = ", ".join(available_lms_providers()) or "none installed"
+    assert f"available providers: {listed}" in e.value.detail
 
 
 @pytest.mark.parametrize("env", ["production", None])
@@ -347,23 +354,3 @@ def test_a_provider_startup_problem_refuses_the_worker(
     with pytest.raises(StartupValidationError) as e:
         _run_load(assess_worker, settings, _eps(_EP("fake", Problem)))
     assert e.value.detail == "X_SETTING is wrong" and e.value.remediation == "Unset it."
-
-
-@pytest.mark.parametrize("env", ["production", None])
-def test_the_moodle_plain_http_switch_is_refused_by_the_provider(
-    monkeypatch: pytest.MonkeyPatch, env: str | None
-) -> None:
-    """The plain-http switch of the staged Moodle provider still stops the worker outside
-    development, now through ``LmsProvider.startup_problems``."""
-    from vektra_app import assess_worker
-
-    settings = _settings(
-        monkeypatch,
-        VEKTRA_ASSESS_LMS_PROVIDER="moodle",
-        VEKTRA_ASSESS_MOODLE_ALLOW_HTTP="true",
-        VEKTRA_ENV=env,
-    )
-    with pytest.raises(StartupValidationError, match="ALLOW_HTTP"):
-        _run_load(assess_worker, settings)
-    monkeypatch.setenv("VEKTRA_ENV", "development")
-    assert _run_load(assess_worker, _settings(monkeypatch)).name == "moodle"

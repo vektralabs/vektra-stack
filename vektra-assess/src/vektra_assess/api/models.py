@@ -12,7 +12,10 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic_core import PydanticCustomError
+
+from vektra_assess.privacy.config import text_field_error
 
 SessionState = Literal["STARTING", "ACTIVE", "OUTAGE", "CLOSED"]
 
@@ -36,6 +39,23 @@ class MintRequest(_Strict):
     loginas: Any = None
     realuser_id: Any = None
     plugin_version: str = Field(min_length=1, max_length=40)
+    #: plugin request P3: the ``pre_session.privacy.notice_version`` the student saw, echoed so a
+    #: notice that changed meanwhile refuses the mint (and the Start). Absent or null: no check.
+    privacy_notice_version: str | None = None
+
+    @field_validator("privacy_notice_version", mode="before")
+    @classmethod
+    def _notice_version(cls, value: Any) -> Any:
+        """The stored ``notice_version``'s own rule (``privacy.config.text_field_error``); the
+        error type is its code, so the 400 reads ``too_long:privacy_notice_version``."""
+        if value is None:
+            return None
+        error = text_field_error("notice_version", value)
+        if error is not None:
+            raise PydanticCustomError(
+                str(error["code"]), "invalid privacy notice version"
+            )
+        return value
 
     def asserts_not_loginas(self) -> bool:
         """The positive REQ-084 assertion: both fields PRESENT, ``false`` and ``null`` exactly."""

@@ -6,7 +6,7 @@ only re-exports them and builds the assess envelopes. Owning plans:
 .s2s/plans/20261101-154950-assess-session-lifecycle (005-016) and
 .s2s/plans/20261101-154950-assess-transcript-delivery (017-021) and
 .s2s/plans/20261101-154950-assess-teacher-ops (022-025) and
-.s2s/plans/20261101-154950-assess-privacy-retention (026-028).
+.s2s/plans/20261101-154950-assess-privacy-retention (026-029).
 
 Every message and remediation here is fixed text plus content-free codes: no envelope ever
 carries a student's text, a value read from the LMS or a row of another student.
@@ -43,6 +43,7 @@ from vektra_shared.errors import (
     ERR_ASSESS_026,
     ERR_ASSESS_027,
     ERR_ASSESS_028,
+    ERR_ASSESS_029,
     ErrorCategory,
     ErrorResponse,
 )
@@ -76,6 +77,7 @@ __all__ = [
     "ERR_ASSESS_026",
     "ERR_ASSESS_027",
     "ERR_ASSESS_028",
+    "ERR_ASSESS_029",
     "activation_refused",
     "assess_unavailable",
     "bad_request",
@@ -89,6 +91,7 @@ __all__ = [
     "loginas_refused",
     "plugin_too_old",
     "privacy_config_invalid",
+    "privacy_notice_changed",
     "rate_limited",
     "reply_pending",
     "resend_recipient_forbidden",
@@ -486,4 +489,17 @@ def privacy_config_invalid(fields: list[dict[str, object]]) -> ErrorResponse:
         message="The privacy settings were refused.",
         remediation="Correct the listed fields and save again.",
         details={"fields": fields},
+    )
+
+
+def privacy_notice_changed() -> ErrorResponse:
+    """409 (plugin request P3): the privacy-notice version the student was shown is no longer
+    the site's current one. Refused at mint (no token row) and at Start (no session, nothing
+    consumed); the page must be reopened to show the current notice."""
+    return ErrorResponse(
+        category=ErrorCategory.PERMANENT,
+        code=ERR_ASSESS_029,
+        message="The privacy notice changed after the page was opened.",
+        remediation="Reopen the page to read the current notice, then start again.",
+        details={"reason": "privacy_notice_changed"},
     )

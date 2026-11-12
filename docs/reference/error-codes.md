@@ -138,6 +138,7 @@ These codes are used by specific components and are not part of the REQ-011 regi
 | ERR-ASSESS-026 | vektra-assess | 410 | Transcript no longer available: its retention period expired and it was purged (REQ-088). The message is `Trascrizione non più disponibile (periodo di conservazione scaduto)`; nothing of its content remains |
 | ERR-ASSESS-027 | vektra-assess | 503 | Subject erasure not completed (OQ-033): `details.reason` `pending` (the worker has not finished yet: retry with the same request, it is idempotent) or `failed` (the count check after the deletion found rows left: the deletion was rolled back, the operator is alerted; live sessions the erasure closed beforehand, in their own transaction, stay closed). Never a success without an erasure or a `retained` outcome |
 | ERR-ASSESS-028 | vektra-assess | 400 | Privacy configuration refused (REQ-089): `details.fields` lists `{field, code}` per invalid field (`retention_days` outside 1..3650, an empty or over-length text, a URL that is not https). Explicit envelope, never the framework 422 |
+| ERR-ASSESS-029 | vektra-assess | 409 | Privacy notice changed (plugin request P3): the `privacy_notice_version` echoed at mint is not the version the student is shown now, or the site's notice changed between the mint and the Start. `details.reason` is `privacy_notice_changed`. At mint no token row is written; at Start no session is created and the token is not consumed (audited `assess_start_refused`). The page must be reopened to show the current notice |
 
 ### Namespace errors
 

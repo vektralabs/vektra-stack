@@ -14,7 +14,9 @@ Then ONE transaction:
 1. consume the jti: only a row that was minted for exactly this (site, sub, cmid), by a key that is
    still the site's mint key, unexpired and unconsumed (mint-to-Start correlation, ARCH-067);
 2. refuse when the student already had a session for the activity and no reset grant covers a new
-   one (REQ-087: session #N+1 exists only through a reset);
+   one (REQ-087: session #N+1 exists only through a reset); refuse with 409 ``ERR-ASSESS-029``
+   ``privacy_notice_changed`` (audited) when the token carries the notice version presented at
+   mint and the site's current one differs (plugin request P3);
 3. INSERT the STARTING row; the partial unique index on (site, sub, cmid) WHERE state <> 'CLOSED'
    makes a second concurrent Start fail here, which rolls the whole transaction back, so its jti
    is not consumed either;
@@ -44,6 +46,7 @@ from vektra_assess.audit import AssessAuditEvent, write_event
 from vektra_assess.errors import (
     assess_unavailable,
     capacity_reached,
+    privacy_notice_changed,
     rate_limited,
     start_breaker_open,
     start_refused,
@@ -323,10 +326,14 @@ async def start_session(
                 raise _Refused(start_refused("already_discussed"))
             # REQ-089: the notice the student saw is the site's current one; the deployment
             # value stands in only for a site with no settings (development override)
-            notice_version = (
-                await privacy.current_notice_version(conn, claims.site)
-                or settings.privacy_notice_version
+            notice_version = await privacy.shown_notice_version(
+                conn, claims.site, settings.privacy_notice_version
             )
+            # plugin request P3: a token minted with the version the student was shown is
+            # refused when the notice changed since (rolled back: nothing consumed, audited)
+            presented = claims.notice_version
+            if presented is not None and presented != notice_version:
+                raise _Refused(privacy_notice_changed(), "privacy_notice_changed")
             row = (
                 await conn.execute(
                     _INSERT_SESSION,
@@ -360,6 +367,11 @@ async def start_session(
                     "cmid": claims.cmid,
                     "session_no": int(row.session_no),
                     "notice_version": notice_version,
+                    **(
+                        {"presented_notice_version": presented}
+                        if presented is not None
+                        else {}
+                    ),
                 },
             )
     except _Refused as exc:

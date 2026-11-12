@@ -75,29 +75,39 @@ def field_errors(doc: dict[str, Any]) -> list[dict[str, object]]:
                 "range": [RETENTION_MIN_DAYS, RETENTION_MAX_DAYS],
             }
         )
-    for name, (low, high) in TEXT_BOUNDS.items():
-        value = doc.get(name)
-        if value is None:
-            errors.append({"field": name, "code": "required"})
-        elif not isinstance(value, str):
-            errors.append({"field": name, "code": "not_a_string"})
-        elif not value.strip():
-            errors.append({"field": name, "code": "empty"})
-        elif len(value) < low:
-            errors.append({"field": name, "code": "too_short", "min": low})
-        elif len(value) > high:
-            errors.append({"field": name, "code": "too_long", "max": high})
-        elif name == "notice_url" and not value.startswith("https://"):
-            errors.append({"field": name, "code": "not_https"})
-        elif name == "notice_url" and not _has_host(value):
-            errors.append({"field": name, "code": "invalid_url"})
-        elif any(ord(ch) < 32 and ch not in "\n\t" for ch in value):
-            errors.append({"field": name, "code": "control_character"})
+    for name in TEXT_BOUNDS:
+        error = text_field_error(name, doc.get(name))
+        if error is not None:
+            errors.append(error)
     unknown = sorted(set(doc) - set(FIELDS))
     errors.extend(
         {"field": str(name)[:60], "code": "unknown_field"} for name in unknown
     )
     return errors
+
+
+def text_field_error(name: str, value: Any) -> dict[str, object] | None:
+    """``{field, code}`` when one text setting (a ``TEXT_BOUNDS`` name) is invalid or missing,
+    ``None`` when it is valid. The one rule of the stored row, also applied to the notice version
+    a mint echoes (plugin request P3)."""
+    low, high = TEXT_BOUNDS[name]
+    if value is None:
+        return {"field": name, "code": "required"}
+    if not isinstance(value, str):
+        return {"field": name, "code": "not_a_string"}
+    if not value.strip():
+        return {"field": name, "code": "empty"}
+    if len(value) < low:
+        return {"field": name, "code": "too_short", "min": low}
+    if len(value) > high:
+        return {"field": name, "code": "too_long", "max": high}
+    if name == "notice_url" and not value.startswith("https://"):
+        return {"field": name, "code": "not_https"}
+    if name == "notice_url" and not _has_host(value):
+        return {"field": name, "code": "invalid_url"}
+    if any(ord(ch) < 32 and ch not in "\n\t" for ch in value):
+        return {"field": name, "code": "control_character"}
+    return None
 
 
 def _has_host(url: str) -> bool:
@@ -155,6 +165,13 @@ async def current_notice_version(conn: Any, site_id: UUID) -> str | None:
     the site is not configured."""
     settings = await read(conn, site_id)
     return settings.notice_version if settings is not None else None
+
+
+async def shown_notice_version(conn: Any, site_id: UUID, fallback: str) -> str:
+    """The notice version a student is shown before Start: the site's current one, or the
+    deployment value ``fallback`` (``VEKTRA_ASSESS_PRIVACY_NOTICE_VERSION``) that ``GET /state``
+    shows for a site with no settings. The one rule of ``/state``, the mint check and Start."""
+    return await current_notice_version(conn, site_id) or fallback
 
 
 def summary_text(settings: PrivacySettings) -> str:

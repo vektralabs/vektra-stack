@@ -9,7 +9,11 @@ does not apply), and the site is the one that key is bound to in ``assess_site_k
 3. the POSITIVE login-as assertion: both ``loginas: false`` and ``realuser_id: null`` present and
    exactly so. Anything else (absent, ``true``, ``0``, a user id) is audited
    ``assess_loginas_rejected`` and refused with 403; no token row is written;
-4. ``plugin_version`` at least the configured minimum and the site's own (403 ``ERR-ASSESS-016``).
+4. ``plugin_version`` at least the configured minimum and the site's own (403 ``ERR-ASSESS-016``);
+5. when the body carries ``privacy_notice_version`` (plugin request P3), it equals the notice
+   version the student is shown now (the site's, or the deployment stand-in ``GET /state`` shows
+   for a site with no settings): 409 ``ERR-ASSESS-029`` ``privacy_notice_changed`` otherwise, no
+   token row. The version then travels in the token, and Start checks it again.
 
 The mint row (``assess_token_jti``) and the ``assess_token_mint`` audit row are written in one
 transaction; the response is the token and its lifetime only.
@@ -27,7 +31,13 @@ from vektra_assess.api.common import SITE_OF_KEY, engine_of, fail, parse_body
 from vektra_assess.api.deps import settings_of, tokens_of, version_at_least
 from vektra_assess.api.models import MintRequest
 from vektra_assess.audit import AssessAuditEvent, write_event
-from vektra_assess.errors import key_not_bound, loginas_refused, plugin_too_old
+from vektra_assess.errors import (
+    key_not_bound,
+    loginas_refused,
+    plugin_too_old,
+    privacy_notice_changed,
+)
+from vektra_assess.privacy import config as privacy_config
 from vektra_shared.auth import ApiKeyInfo, require_exact_scope
 
 router = APIRouter()
@@ -64,10 +74,21 @@ async def mint_token(
             body.plugin_version, settings.min_plugin_version, site.min_plugin_version
         ):
             refused = plugin_too_old()
+        elif (
+            body.privacy_notice_version is not None
+            and body.privacy_notice_version
+            != await privacy_config.shown_notice_version(
+                conn, site_id, settings.privacy_notice_version
+            )
+        ):
+            refused = privacy_notice_changed()
         else:
             refused = None
             minted = tokens_of(request).mint_presession(
-                sub=body.sub, site=site_id, cmid=body.cmid
+                sub=body.sub,
+                site=site_id,
+                cmid=body.cmid,
+                notice_version=body.privacy_notice_version,
             )
             await conn.execute(
                 _INSERT_JTI,

@@ -244,3 +244,22 @@ def test_an_encoder_clock_ahead_of_the_minting_clock_cannot_stretch_exp(
     ]
     assert exp <= deadline.timestamp() + 60
     assert m.expires_at.timestamp() == exp
+
+
+def test_presession_carries_the_presented_notice_version_only_when_given() -> None:
+    """Plugin request P3: the notice version echoed at mint travels in the pre-session token."""
+    t = tokens()
+    plain = t.mint_presession(sub=42, site=SITE, cmid=7)
+    assert t.verify(plain.token, stage="pre").notice_version is None
+    raw = jwt.decode(plain.token, options={"verify_signature": False})
+    assert "notice_version" not in raw
+    shown = t.mint_presession(sub=42, site=SITE, cmid=7, notice_version="2026-11")
+    assert t.verify(shown.token, stage="pre").notice_version == "2026-11"
+
+
+@pytest.mark.parametrize("bad", [7, "", "x" * 41, ["v1"], "v\x01"])
+def test_a_malformed_notice_version_claim_is_refused(bad: object) -> None:
+    r = ring("k1")
+    tok = _forge(_base(notice_version=bad), r.keys["k1"])
+    with pytest.raises(TokenError):
+        tokens(r).verify(tok, stage="pre")

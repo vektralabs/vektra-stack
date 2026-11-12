@@ -290,3 +290,61 @@ def test_a_busy_pool_answers_pending_on_time() -> None:
     assert time.monotonic() - started < 2
     assert exc.value.status_code == 503
     assert exc.value.detail["error"]["details"] == {"reason": "pending"}
+
+
+@pytest.mark.parametrize(
+    ("value", "code"),
+    [
+        ("v1", None),
+        ("x" * 40, None),
+        ("x" * 41, "too_long"),
+        ("", "empty"),
+        ("  ", "empty"),
+        ("v\x01", "control_character"),
+        (7, "not_a_string"),
+        (None, "required"),
+    ],
+)
+def test_one_text_field_has_the_same_rule_as_the_whole_row(value, code) -> None:  # type: ignore[no-untyped-def]
+    """Plugin request P3: the mint validates the presented notice version with the very rule
+    of the stored one (``text_field_error``), never a copy of it."""
+    one = pc.text_field_error("notice_version", value)
+    assert (one or {}).get("code") == code
+    row = [
+        e
+        for e in pc.field_errors({**GOOD, "notice_version": value})
+        if e["field"] == "notice_version"
+    ]
+    assert row == ([one] if one else [])
+
+
+def test_the_mint_body_validates_the_presented_version() -> None:
+    from pydantic import ValidationError
+
+    from vektra_assess.api.models import MintRequest
+
+    base = {
+        "sub": 1,
+        "cmid": 2,
+        "loginas": False,
+        "realuser_id": None,
+        "plugin_version": "1",
+    }
+    assert MintRequest.model_validate(base).privacy_notice_version is None
+    nulled = MintRequest.model_validate({**base, "privacy_notice_version": None})
+    assert nulled.privacy_notice_version is None
+    shown = MintRequest.model_validate({**base, "privacy_notice_version": "v1"})
+    assert shown.privacy_notice_version == "v1"
+    with pytest.raises(ValidationError) as exc:
+        MintRequest.model_validate({**base, "privacy_notice_version": "x" * 41})
+    first = exc.value.errors()[0]
+    assert first["type"] == "too_long"
+    assert first["loc"] == ("privacy_notice_version",)
+
+
+def test_the_notice_changed_error_is_a_409() -> None:
+    from vektra_assess.errors import privacy_notice_changed
+
+    e = privacy_notice_changed()
+    assert e.code == "ERR-ASSESS-029" and http_status_for(e) == 409
+    assert e.details == {"reason": "privacy_notice_changed"}

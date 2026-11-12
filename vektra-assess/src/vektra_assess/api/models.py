@@ -10,11 +10,15 @@ own decrypted turns, returned to its owner.
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
 SessionState = Literal["STARTING", "ACTIVE", "OUTAGE", "CLOSED"]
+
+#: an LMS activity id as the plugin sends it: a positive integer below 2**53, lax like every
+#: other body int (PHP json_encode may send "501"); one definition for every body that takes one
+Cmid = Annotated[int, Field(gt=0, lt=2**53)]
 
 
 class _Strict(BaseModel):
@@ -31,7 +35,7 @@ class MintRequest(_Strict):
     """
 
     sub: int = Field(gt=0, lt=2**53)
-    cmid: int = Field(gt=0, lt=2**53)
+    cmid: Cmid
     courseid: int | None = Field(default=None, gt=0, lt=2**53)  # a hint, re-resolved
     loginas: Any = None
     realuser_id: Any = None

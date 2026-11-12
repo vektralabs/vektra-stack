@@ -780,15 +780,62 @@ def test_the_test_kit_is_a_dev_dependency_only() -> None:
         REPO_ROOT / "vektra-shared/src/vektra_shared/testing_recorders.py"
     ).exists()
     importers = [
-        p.relative_to(REPO_ROOT).as_posix()
-        for p in REPO_ROOT.glob("vektra-*/src/**/*.py")
-        if re.search(
-            r"^\s*(import|from)\s+(vektra_testkit|vektra_shared\.testing_recorders)\b",
-            p.read_text(errors="replace"),
-            re.M,
-        )
+        f"{p.relative_to(REPO_ROOT).as_posix()}: {name}"
+        for p in sorted(REPO_ROOT.glob("vektra-*/src/**/*.py"))
+        for name in kit_imports(p.read_text(errors="replace"))
     ]
     assert importers == []
+
+
+def kit_imports(source: str) -> list[str]:
+    """The test-kit modules a source imports, read from its AST: every alias of every
+    ``import`` (``import os, vektra_testkit.recorders`` included) and every ``from`` import,
+    by module and by imported name (``from vektra_shared import testing_recorders``, and the
+    relative ``from . import testing_recorders``)."""
+    import ast
+
+    found = []
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, ast.Import):
+            names = [a.name for a in node.names]
+        elif isinstance(node, ast.ImportFrom):
+            module = node.module or ""
+            names = [module] if module else []
+            names += [f"{module}.{a.name}" if module else a.name for a in node.names]
+        else:
+            continue
+        for name in names:
+            parts = name.split(".")
+            if parts[0] == "vektra_testkit" or "testing_recorders" in parts:
+                found.append(name)
+    return found
+
+
+def test_the_kit_import_check_can_say_no() -> None:
+    """Negative control (CodeRabbit 4544866406): every import form of the kit is caught,
+    the multi-import line included, and an unrelated import is not."""
+    source = "\n".join(
+        [
+            "import os, vektra_testkit.recorders",
+            "import json as j, vektra_testkit",
+            "from vektra_testkit.lms_conformance import kit",
+            "from vektra_shared import testing_recorders",
+            "from vektra_shared.testing_recorders import RecordingLLMProvider",
+            "from . import testing_recorders",
+            "import vektra_shared.registry",
+            "from vektra_shared.types import Message",
+        ]
+    )
+    assert kit_imports(source) == [
+        "vektra_testkit.recorders",
+        "vektra_testkit",
+        "vektra_testkit.lms_conformance",
+        "vektra_testkit.lms_conformance.kit",
+        "vektra_shared.testing_recorders",
+        "vektra_shared.testing_recorders",
+        "vektra_shared.testing_recorders.RecordingLLMProvider",
+        "testing_recorders",
+    ]
 
 
 def test_the_dockerfile_never_copies_the_test_kit_source() -> None:

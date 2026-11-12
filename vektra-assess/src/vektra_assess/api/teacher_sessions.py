@@ -27,7 +27,13 @@ from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
 
-from vektra_assess.api.common import engine_of, fail, iso_time, site_of_key
+from vektra_assess.api.common import (
+    engine_of,
+    fail,
+    iso_time,
+    opening_json,
+    site_of_key,
+)
 from vektra_assess.api.deps import settings_of
 from vektra_assess.api.teacher_ops import readable_close_flags
 from vektra_assess.api.teachers import (
@@ -129,17 +135,20 @@ async def _gate_panel(
 ) -> dict[str, Any]:
     facts = gate.facts
     kind = str(facts.get("activity_type"))
-    close_at = v.gate_close(
-        v.epoch_fact(facts, "close_at"), v.epoch_fact(facts, "automatic_close_at")
-    )
     attested = (await conn.execute(_CONFIG, {"s": site, "c": cmid})).scalar()
     fallback = v.fallback_needed(kind, await readable_close_flags(conn, site))
-    # the opening Start actually waits for: the automatic close (participants' overrides and
-    # grace included) when readable; the holder's id stays behind can_view_overrides
-    opening, source = v.opening_view(close_at, attested)
+    # the opening Start actually waits for, by the gate's own rule: the automatic close
+    # (participants' overrides and grace included) when readable, else the REQ-091 fallback;
+    # the holder's id stays behind can_view_overrides
+    view = v.opening_view(
+        v.epoch_fact(facts, "close_at"),
+        attested,
+        automatic_close_at=v.epoch_fact(facts, "automatic_close_at"),
+        grace_s=v.epoch_fact(facts, "grace_s"),
+    )
     holder = facts.get("override_holder")
     panel: dict[str, Any] = {
-        "opening": {"at": iso_time(opening), "source": source},
+        "opening": opening_json(view),
         # REQ-091: the fallback is active; without a teacher date the activity is not available
         "fallback_reason": FALLBACK_REASON if fallback else None,
         "fallback_date_missing": bool(fallback and attested is None),

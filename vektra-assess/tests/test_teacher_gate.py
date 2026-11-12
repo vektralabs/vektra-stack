@@ -134,6 +134,8 @@ async def test_assignment_facts() -> None:
     assert team["graders"] == list(GRADERS)
     # an assignment's participant closes are never listable (OQ-025): no holder, no viewers
     assert team["override_holder"] is None and team["override_viewers"] is None
+    # an assignment has no grace (the Start gate's grace_s=0)
+    assert team["grace_s"] == 0
     assert team["grading_method"] is None  # no grading definition for it: unreadable
     nocut = await src.teacher_facts(SITE, ASSIGN_ACTIVITY, COURSE, "assign")
     assert nocut["close_at"] == 0 and nocut["team_submission"] is False
@@ -164,6 +166,24 @@ async def test_quiz_facts() -> None:
     assert got["override_viewers"] == list(VIEWERS)
     assert not set(got["override_viewers"]) & set(got["graders"])
     assert got["override_holder"] is None  # no override later than the quiz's own close
+    # the grace the Start gate adds on the REQ-091 fallback path (autosubmit mode: none)
+    assert got["grace_s"] == 0
+
+
+async def test_the_quiz_grace_is_a_fact_only_when_readable() -> None:
+    """The teacher opening view adds the grace as the Start gate does (gates.effective_close):
+    the GRACE overdue mode's period, 0 under another mode, None when unreadable."""
+    for grace, expected in (
+        (Readable(GracePolicy(600, OverdueMode.GRACE)), 600),
+        (Readable(GracePolicy(600, OverdueMode.AUTOSUBMIT)), 0),
+        (Unreadable(UnreadableReason.FUNCTION_NOT_IN_SERVICE), None),
+    ):
+        w = _world()
+        q = w.quizzes[(COURSE, QUIZ)]
+        w.quizzes[(COURSE, QUIZ)] = dataclasses.replace(q, grace=grace)
+        _f, src, _ = _source(w)
+        got = await src.teacher_facts(SITE, QUIZ_ACTIVITY, COURSE, "quiz")
+        assert got["grace_s"] == expected
 
 
 def _with_overrides(overrides: Any) -> Any:
@@ -196,7 +216,7 @@ async def test_the_override_holder_is_read_only_where_overrides_are() -> None:
     assert set(got) == {
         "resolved", "courseid", "activity_type", "editors", "graders", "close_at",
         "team_submission", "grading_method", "lms_rubric", "override_holder",
-        "override_viewers", "automatic_close_at",
+        "override_viewers", "automatic_close_at", "grace_s",
     }  # fmt: skip
 
 

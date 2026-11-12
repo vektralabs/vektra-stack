@@ -166,30 +166,54 @@ class GateDecision:
         return self.code is Code.OK
 
 
-def _effective_gate(i: GateInputs) -> tuple[Code, int | None, int | None]:
-    """(code, gate_at, showable date) of BR-006 (d) with BR-007 and REQ-091."""
-    close = i.activity_close_at
+def effective_close(
+    activity_close_at: int | None,
+    *,
+    grace_s: int | None,
+    automatic_close_at: int | None,
+    teacher_opening_at: int | None,
+) -> tuple[Code, int | None]:
+    """The BR-006 (d) rule with BR-007 and REQ-091, on already-derived facts: ``(Code.OK,
+    gate_at)`` or ``(refusal, None)``. ``automatic_close_at`` is the automatic close, None when
+    ANY close input (grace, any participant's override or extension) was unreadable. The Start
+    gate and the teacher pages' opening view (``teacher.validation.opening_view``) both decide
+    through it, so the view can never say "no date needed" while Start refuses."""
+    close = activity_close_at
     if close is None:
         # the activity's own close cannot be read: no gate can be computed, with or without a
         # teacher date (REQ-091: max(activity close, teacher date) needs both)
-        return Code.CLOSE_UNREADABLE, None, None
+        return Code.CLOSE_UNREADABLE, None
     if close <= 0:
-        return Code.NO_CLOSE_DATE, None, None  # BR-007: the fallback never replaces it
+        return Code.NO_CLOSE_DATE, None  # BR-007: the fallback never replaces it
+    if automatic_close_at is not None:
+        return Code.OK, max(automatic_close_at, teacher_opening_at or 0)
+    if teacher_opening_at is None:
+        return Code.CLOSE_UNREADABLE, None  # REQ-091: NOT_AVAILABLE, fail closed
+    return Code.OK, max(close + (grace_s or 0), teacher_opening_at)
+
+
+def _effective_gate(i: GateInputs) -> tuple[Code, int | None, int | None]:
+    """(code, gate_at, showable date) of BR-006 (d) with BR-007 and REQ-091."""
+    close = i.activity_close_at
     grace = i.grace_s
-    readable = grace is not None and i.participant_closes is not None
-    own_effective = close + (grace or 0)
-    if readable:
-        assert grace is not None and i.participant_closes is not None
+    automatic = None
+    if (
+        close is not None
+        and close > 0
+        and grace is not None
+        and i.participant_closes is not None
+    ):
         automatic = max([close, *i.participant_closes]) + grace
-        gate = max(automatic, i.teacher_opening_at or 0)
-    else:
-        if i.teacher_opening_at is None:
-            return (
-                Code.CLOSE_UNREADABLE,
-                None,
-                None,
-            )  # REQ-091: NOT_AVAILABLE, fail closed
-        gate = max(own_effective, i.teacher_opening_at)
+    code, gate = effective_close(
+        close,
+        grace_s=grace,
+        automatic_close_at=automatic,
+        teacher_opening_at=i.teacher_opening_at,
+    )
+    if code is not Code.OK:
+        return code, None, None
+    assert close is not None and gate is not None
+    own_effective = close + (grace or 0)
     showable = {own_effective}
     if i.own_close_at is not None:
         showable.add(i.own_close_at + (grace or 0))

@@ -31,7 +31,14 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import text
 
 from vektra_assess import privacy
-from vektra_assess.api.common import engine_of, fail, iso_time, parse_body, site_of_key
+from vektra_assess.api.common import (
+    engine_of,
+    fail,
+    iso_time,
+    opening_json,
+    parse_body,
+    site_of_key,
+)
 from vektra_assess.api.deps import settings_of
 from vektra_assess.api.teachers import TeacherGate, header_int, path_id, verify_teacher
 from vektra_assess.audit import AssessAuditEvent, write_event
@@ -137,6 +144,7 @@ def _facts(gate: TeacherGate) -> v.ActivityFacts:
         grading_method=method if isinstance(method, str) else None,
         lms_rubric=flag("lms_rubric"),
         automatic_close_at=v.epoch_fact(f, "automatic_close_at"),
+        grace_s=v.epoch_fact(f, "grace_s"),
     )
 
 
@@ -394,7 +402,16 @@ async def _view(conn: Any, site: UUID, cmid: int, gate: TeacherGate) -> dict[str
     flags = dict(row.flags or {}) if row is not None else {}
     attested = row.attested_at if row is not None else None
     end_at = row.end_at if row is not None else None
-    opening, source = v.opening_view(
+    # the opening Start waits for, by the gate's own rule (REQ-091 included)
+    view = v.opening_view(
+        facts.close_at,
+        attested,
+        automatic_close_at=facts.automatic_close_at,
+        grace_s=facts.grace_s,
+    )
+    # the lower bound the end date is validated against (``check_end_date``), also when the
+    # opening itself is not yet decidable
+    floor = v.effective_opening(
         v.gate_close(facts.close_at, facts.automatic_close_at), attested
     )
     rec_set, rec_n = sealed.get(TRANSCRIPT_RECIPIENTS, (False, None))
@@ -415,11 +432,11 @@ async def _view(conn: Any, site: UUID, cmid: int, gate: TeacherGate) -> dict[str
         "pasted_rubric_state": state(sealed.get(PASTED_RUBRIC, (False, None))[0]),
         "transcript_recipients_state": state(rec_set),
         "transcript_recipients_count": int(rec_n or 0) if rec_set else 0,
-        "opening": {"at": iso_time(opening), "source": source},
+        "opening": opening_json(view),
         "warnings": {
             # REQ-077: the effective opening moved past the end date
             "available_until_not_after_opening": bool(
-                end_at and opening and end_at <= opening
+                end_at and floor and end_at <= floor
             ),
             # quiz detail is reduced where the review HTML cannot be filtered (ARCH-070)
             "review_options_hide_content": kind == "quiz" and review != "readable",

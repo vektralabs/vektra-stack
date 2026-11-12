@@ -275,6 +275,7 @@ class LmsStartSource:
             "override_holder": None,
             "override_viewers": None,
             "automatic_close_at": None,
+            "grace_s": None,
         }
         if kind == "quiz":
             editors, graders, close, viewers = await asyncio.gather(
@@ -287,6 +288,8 @@ class LmsStartSource:
                 out["close_at"] = int(close.value.time_close or 0)
                 out["override_holder"] = _override_holder(close.value)
                 out["automatic_close_at"] = _automatic_close(close.value)
+                if isinstance(close.value.grace, Readable):
+                    out["grace_s"] = _grace_s(close.value)
             out["team_submission"] = False
             if isinstance(viewers, Readable):
                 out["override_viewers"] = _ids(viewers.value)
@@ -297,6 +300,7 @@ class LmsStartSource:
                 lms.assignment_settings(ref.course_id, ref.instance_id),
                 lms.grading_definition(cmid),
             )
+            out["grace_s"] = 0  # an assignment has no grace (the gate's grace_s=0)
             if isinstance(settings, Readable):
                 out["close_at"] = int(settings.value.cutoff_date or 0)
                 out["team_submission"] = bool(settings.value.team_submission)

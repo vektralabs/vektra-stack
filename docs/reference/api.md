@@ -341,10 +341,29 @@ the address), `reason`, `opening_at`. Codes: `out_of_range`, `too_long`, `empty`
 View (GET and PUT): `cmid`, `activity_type`, `version`, `configured`, `enabled`, `cap_minutes`,
 `rubric_source`, `show_solution`, `rag_enabled` (always `false`), `available_until`,
 `solution_state` / `pasted_rubric_state` / `transcript_recipients_state` (`impostata` or
-`non impostata`), `transcript_recipients_count`, `opening` (`{"at", "source"}`, source
-`activity_close`, `attested` or `unknown`), `warnings`
+`non impostata`), `transcript_recipients_count`, `opening` (below), `warnings`
 (`available_until_not_after_opening`, `review_options_hide_content`), `active_sessions`
-(ACTIVE + OUTAGE), `updated_at`. A change does not reach a session that has already started
+(ACTIVE + OUTAGE), `updated_at`.
+
+`opening` (the same object in this view and in the session list's `gate`) is
+`{"at", "source", "fallback_required"}`, decided by the Start gate's own BR-006(d) / REQ-091
+rule on the worker's latest activity facts, so it cannot say "no date needed" while `/state`
+answers `close_unreadable`:
+
+| `source` | `at` | `fallback_required` | Meaning |
+|----------|------|---------------------|---------|
+| `activity_close` | the opening | `false` | the activity's close decides: the automatic close (every override and the grace readable), or, on the REQ-091 fallback path, the close plus grace when it is later than the teacher date |
+| `attested` | the opening | `false` | the REQ-091 teacher date decides (or ties the close) |
+| `unreadable` | `null` | `true` | some close input is unreadable (always for an assignment: extensions are not listable; for a quiz, an override or the grace) and no teacher date is set: Start refuses `close_unreadable` until `PUT .../opening-fallback` sets one |
+| `unreadable` | `null` | `false` | the activity's own close / cut-off cannot be read (a teacher date is set, but the gate cannot use it, and `PUT .../opening-fallback` would refuse `close_unreadable`): retry once the LMS answers |
+| `unknown` | `null` | `false` | neither a close nor a teacher date is known, or no close / cut-off is configured (BR-007: a teacher date never replaces it) |
+
+`unreadable` and `fallback_required` were added after 0.8.0 (additive): a client that only
+knows `activity_close` / `attested` / `unknown` must treat any other `source` as "no opening
+date". `warnings.available_until_not_after_opening` keeps comparing the end date with the
+activity's own close (or the teacher date) also while `at` is `null`.
+
+A change does not reach a session that has already started
 (it copied its duration, cap and snapshot at Start), with one exception: the transcript
 recipients are re-read at send time, so a changed `transcript_recipients` applies to transcripts
 not yet delivered, including those of sessions started earlier (REQ-082 as amended).
@@ -353,8 +372,16 @@ not yet delivered, including those of sessions started earlier (REQ-082 as amend
 REQ-091, REQ-092). Same credential and refusals as the configuration, but the acting user must be
 a GRADER of the activity (`mod/assign:grade` in its course, in the worker's fresh facts):
 `403 ERR-ASSESS-021` `not_a_grader` / `grader_check_stale` (a refresh queued, retry), audited
-`assess_teacher_unverified`. Every body carries `actor_userid`, `courseid`, `activity_type` (the
-hints) and is strict (an unknown field is `400 ERR-ASSESS-014`). `{cmid}`, `{sid}` and `{userid}`
+`assess_teacher_unverified`. Every body (the POST and PUT rows below) is a JSON object that
+REQUIRES three common fields besides its own: `actor_userid` (integer >= 1, the acting Moodle
+user, verified as a grader), `courseid` (integer >= 1) and `activity_type` (`quiz` or `assign`),
+the two hints the worker re-resolves the cmid with. Bodies are strict: JSON types are not coerced
+(`"1"` is not an integer, `"true"` is not a boolean) and an unknown field is refused. A body
+that fails the schema is `400 ERR-ASSESS-014` with `details.reason` `<type>:<field>` for the
+first failing field: `missing:courseid`, `missing:activity_type`, `missing:actor_userid`,
+`int_type:courseid`, `greater_than_equal:actor_userid`, `literal_error:activity_type`,
+`bool_type:<field>`, `extra_forbidden:<field>`, and so on (also `malformed_json`,
+`body_not_object`, `body_too_large` above 64 KiB). `{cmid}`, `{sid}` and `{userid}`
 are resolved inside the key's site and the path's activity: a session of another activity or site
 is `404 ERR-ASSESS-008`. No route reads the query string; no preview route exists (REQ-090 is not
 built: use an LMS test-student account and a reset).
@@ -362,10 +389,10 @@ built: use an LMS test-student account and a reset).
 | Method | Path | Body / headers | Success | Errors |
 |--------|------|----------------|---------|--------|
 | GET | `/api/v1/assess/activities/{cmid}/sessions` | headers `X-Assess-Actor`, `X-Assess-Course`, `X-Assess-Activity-Type`, optional `X-Assess-Cursor` (the `next_cursor` of the previous page) | `200` the list below, `Cache-Control: no-store` | `400 ERR-ASSESS-014` (`cmid`, `x_assess_actor`, `cursor`, `teacher_gate_hint`), `403 ERR-ASSESS-007` / `021`, `503 ERR-ASSESS-001` (`transcript_key`) |
-| POST | `/api/v1/assess/activities/{cmid}/sessions/{sid}/reset` | `reason` (1-1000 code points, mandatory), `include_previous_turns` (optional bool; absent = ON only after a `service_failure` close) | `201 {"reset_id", "student_userid", "session_no_next", "include_previous_turns"}` | `400 ERR-ASSESS-022` (`reason`: `required`, `too_long`), `404 ERR-ASSESS-008`, `409 ERR-ASSESS-024` (`details.reason`: `not_closed`, `not_latest`, `already_reset`, `purged`, `gate_inputs_stale` (a render check was queued: retry in a few seconds), or `gate` with `details.gate` the refusing START gate; `end_date_passed` adds `field: available_until`) |
-| POST | `/api/v1/assess/activities/{cmid}/terminate` | `reason` (1-1000), `expected_active_count` (the "N sessioni attive" the teacher confirmed), `also_disable` (bool, default false) | `200 {"termination_id", "closed", "rolled_back", "disabled"}` | `400 ERR-ASSESS-022` (`reason`), `409 ERR-ASSESS-025` (`details.current`: the count now; nothing changed) |
-| PUT | `/api/v1/assess/activities/{cmid}/students/{userid}/extra-time` | exactly one of `minutes` (0-240) / `percent` (0-200), `confirm_over_100` (required above +100 %); no reason field exists | `200 {"student_userid", "extra_seconds", "duration_s"}` | `400 ERR-ASSESS-022` (`extra_time`: `minutes_or_percent`, `out_of_range`, `total_too_long` (cap + extra above 240 min), `confirm_over_100`, `cap_not_configured`, `session_locked` with `state`) |
-| PUT | `/api/v1/assess/activities/{cmid}/opening-fallback` | `opening_at` (ISO 8601 with a time zone), `attestation: true`, `attestation_text_version` (`[A-Za-z0-9._-]{1,32}`, the attestation text the plugin showed) | `200 {"opening_at", "previous", "version"}` | `400 ERR-ASSESS-022` (`attestation`: `required`; `opening_at`: `fallback_not_needed`, `before_close` (with `close_at`), `only_later` (with `current_at`), `not_before_end` (with `available_until`: when an end date is set the fallback must be earlier than it), `no_close_date`, `close_unreadable`, `timezone_required`, `out_of_range`, `activity_not_configured`) |
+| POST | `/api/v1/assess/activities/{cmid}/sessions/{sid}/reset` | required: `actor_userid`, `courseid`, `activity_type` (above), `reason` (string, 1-1000 code points after normalisation and trimming; at most 4,000 characters in the body); optional: `include_previous_turns` (bool; absent or `null` = ON only after a `service_failure` close) | `201 {"reset_id", "student_userid", "session_no_next", "include_previous_turns"}` | `400 ERR-ASSESS-014` (`cmid`, `sid` (not a UUID), the body schema above: `missing:reason`, `string_too_long:reason`, ...), `400 ERR-ASSESS-022` (`reason`: `required` (empty after normalisation), `too_long`), `404 ERR-ASSESS-008`, `409 ERR-ASSESS-024` (`details.reason`: `not_closed`, `not_latest`, `already_reset`, `purged`, `gate_inputs_stale` (a render check was queued: retry in a few seconds), or `gate` with `details.gate` the refusing START gate; `end_date_passed` adds `field: available_until`) |
+| POST | `/api/v1/assess/activities/{cmid}/terminate` | required: `actor_userid`, `courseid`, `activity_type` (above), `reason` (as for reset), `expected_active_count` (integer >= 0, the "N sessioni attive" the teacher confirmed); optional: `also_disable` (bool, default `false`) | `200 {"termination_id", "closed", "rolled_back", "disabled"}` | `400 ERR-ASSESS-014` (`cmid`, the body schema: `missing:expected_active_count`, `greater_than_equal:expected_active_count`, ...), `400 ERR-ASSESS-022` (`reason`: `required`, `too_long`), `409 ERR-ASSESS-025` (`details.current`: the count now; nothing changed) |
+| PUT | `/api/v1/assess/activities/{cmid}/students/{userid}/extra-time` | required: `actor_userid`, `courseid`, `activity_type` (above), and exactly one of `minutes` (integer, 0-240) / `percent` (integer, 0-200) (the other absent or `null`); optional: `confirm_over_100` (bool, default `false`; must be `true` above +100 %); no reason field exists | `200 {"student_userid", "extra_seconds", "duration_s"}` | `400 ERR-ASSESS-014` (`cmid`, `userid`, the body schema), `400 ERR-ASSESS-022` (`extra_time`: `minutes_or_percent`, `out_of_range`, `total_too_long` (cap + extra above 240 min), `confirm_over_100`, `cap_not_configured`, `session_locked` with `state`) |
+| PUT | `/api/v1/assess/activities/{cmid}/opening-fallback` | all required: `actor_userid`, `courseid`, `activity_type` (above), `opening_at` (ISO 8601 date-time with a time zone; a JSON number is read as Unix seconds UTC), `attestation` (bool, must be `true`), `attestation_text_version` (string matching `[A-Za-z0-9._-]{1,32}`, the attestation text the plugin showed; audited) | `200 {"opening_at", "previous", "version"}` | `400 ERR-ASSESS-014` (`cmid`, the body schema: `missing:courseid`, `missing:activity_type`, `missing:opening_at`, `missing:attestation`, `datetime_from_date_parsing:opening_at`, `bool_type:attestation`, `string_pattern_mismatch:attestation_text_version`, ...), `400 ERR-ASSESS-022` (`attestation`: `required` (it is `false`); `opening_at`: `fallback_not_needed`, `before_close` (with `close_at`), `only_later` (with `current_at`), `not_before_end` (with `available_until`: when an end date is set the fallback must be earlier than it), `no_close_date`, `close_unreadable`, `timezone_required`, `out_of_range`, `activity_not_configured`) |
 
 Reset (REQ-087): the student's LATEST session must be CLOSED and not already reset (one reset per
 session, concurrent requests yield one). The START gates are re-run: enabled and configured, the
@@ -408,9 +435,12 @@ granted_by, granted_at, student_notice}], reset_count, extra_seconds}`; `student
 `studente non avvisato via email` (REQ-092 is out of v1). `terminations[{termination_id, reason,
 reason_state, closed, rolled_back, also_disable, by, at}]` (first page only). A reason that
 does not decrypt (a retired key, tampering) is `reason: null`, `reason_state: "unreadable"`
-(alert `assess.teacher.alert` `teacher_reason_unreadable`); the list still renders. `gate`: `opening {at, source}`,
+(alert `assess.teacher.alert` `teacher_reason_unreadable`); the list still renders. `gate`:
+`opening {at, source, fallback_required}` (identical to the configuration view's, see above),
 `fallback_reason` (`Vektra non può verificare proroghe/override per questa attività` when the
-REQ-091 fallback applies, else `null`), `fallback_date_missing`, `active_sessions`, and
+REQ-091 fallback applies, else `null`), `fallback_date_missing` (the fallback applies in the
+capability matrix, so `PUT .../opening-fallback` accepts a date, and none is set; `opening.fallback_required`
+is the gate's own verdict on the latest facts), `active_sessions`, and
 `override_holder` (a quiz participant's user id) only when the actor may manage overrides; never
 an override's reason, a name or an address.
 

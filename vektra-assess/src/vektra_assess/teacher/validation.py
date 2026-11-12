@@ -19,7 +19,7 @@ from typing import Any
 
 from vektra_assess.delivery.address import normalize_address
 from vektra_assess.delivery.recipients import MAX_RECIPIENTS, domain_allowed
-from vektra_assess.gates import DB_SIDE, Code
+from vektra_assess.gates import DB_SIDE, Code, effective_close
 from vektra_assess.teacher.schemas import FieldError
 
 MAX_TEXT_CHARS = 20_000
@@ -143,19 +143,61 @@ def gate_close(close_at: int | None, automatic_close_at: int | None) -> int | No
     return automatic_close_at if automatic_close_at is not None else close_at
 
 
+@dataclass(frozen=True)
+class OpeningView:
+    """The effective opening as the teacher pages show it (``opening`` of the config view and
+    of the session list's gate panel)."""
+
+    at: int | None
+    #: ``attested`` | ``activity_close`` | ``unknown`` | ``unreadable``
+    source: str
+    #: Start refuses ``close_unreadable`` until a REQ-091 opening-fallback date is set
+    fallback_required: bool
+
+
 def opening_view(
-    close_at: int | None, attested_at: int | None
-) -> tuple[int | None, str]:
-    """The effective opening and what decides it, as the teacher pages show it (the config
-    view and the session list's gate panel share this one rule): ``attested`` when the REQ-091
-    date decides (or ties the close), ``activity_close`` when the activity's own close does,
-    ``unknown`` when neither is known."""
-    opening = effective_opening(close_at, attested_at)
-    if opening is None:
-        return None, "unknown"
-    if attested_at is not None and attested_at >= (close_at or 0):
-        return opening, "attested"
-    return opening, "activity_close"
+    close_at: int | None,
+    attested_at: int | None,
+    *,
+    automatic_close_at: int | None,
+    grace_s: int | None = None,
+) -> OpeningView:
+    """The effective opening and what decides it, decided by the Start gate's own rule
+    (``gates.effective_close``) on the worker-written teacher facts, so the teacher pages and
+    ``/state`` cannot disagree. ``close_at``: the activity's own close (0 = none configured,
+    None = unreadable); ``automatic_close_at``: the automatic close, None when any close input
+    (grace, an override or extension) was unreadable; ``grace_s``: the grace, when readable.
+
+    ``attested`` when the REQ-091 date decides (or ties the close), ``activity_close`` when the
+    activity's close (automatic, or own plus grace) does, ``unknown`` when neither a close nor a
+    teacher date is known, or no close is configured (BR-007: a teacher date never replaces
+    it); ``unreadable`` when Start refuses ``close_unreadable``: ``fallback_required`` is then
+    true when a teacher date would open it (the close is known, no date is set), false when the
+    activity's own close cannot be read (a date cannot help)."""
+    code, gate = effective_close(
+        close_at,
+        grace_s=grace_s,
+        automatic_close_at=automatic_close_at,
+        teacher_opening_at=attested_at,
+    )
+    if code is Code.OK:
+        assert close_at is not None and gate is not None
+        base = (
+            automatic_close_at
+            if automatic_close_at is not None
+            else close_at + (grace_s or 0)
+        )
+        source = (
+            "attested"
+            if attested_at is not None and attested_at >= base
+            else "activity_close"
+        )
+        return OpeningView(gate, source, False)
+    if code is Code.CLOSE_UNREADABLE and (
+        close_at is not None or attested_at is not None
+    ):
+        return OpeningView(None, "unreadable", close_at is not None)
+    return OpeningView(None, "unknown", False)
 
 
 def check_end_date(end_at: datetime, opening_at: int | None) -> list[FieldError]:
@@ -425,6 +467,8 @@ class ActivityFacts:
     lms_rubric: bool | None = None
     #: BR-006(d) automatic close when every close input was readable (a quiz on 5.2 while open)
     automatic_close_at: int | None = None
+    #: the grace that delays the close (quiz, when readable; 0 for an assignment)
+    grace_s: int | None = None
 
 
 @dataclass(frozen=True)

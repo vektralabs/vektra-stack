@@ -3,13 +3,37 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from typing import Any
 
 import pytest
 
+from vektra_assess.gates import Code, GateInputs, evaluate_start_gates
 from vektra_assess.teacher import validation as v
 from vektra_assess.teacher.schemas import FieldError, field_errors
 
 UNI_DOMAINS = frozenset({"uni.example"})
+NOW = 2_000_000_000
+CLOSE_AT = NOW - 3600  # the activity closed an hour ago
+
+
+def gate_inputs(kind: str, **over: Any) -> GateInputs:
+    """Start-gate inputs passing every gate but the close (BR-006 (d)) under test."""
+    return GateInputs(
+        now=NOW,
+        activity_kind=kind,  # type: ignore[arg-type]
+        enabled=True,
+        team_submission=False,
+        grading_method="rubric",
+        attempt_in_progress=False,
+        has_submitted_attempt=True,
+        regrade_in_progress=False,
+        fully_graded=True,
+        released=True,
+        owner_verified=True,
+        enrolled=True,
+        privacy_configured=True,
+        **over,
+    )
 
 
 def codes(errors: list[FieldError]) -> list[tuple[str, str]]:
@@ -456,22 +480,88 @@ def test_opening_fallback_bounds_attestation_and_later_only() -> None:
 
 
 @pytest.mark.parametrize(
-    ("close", "attested", "expected"),
+    ("close", "automatic", "grace", "attested", "expected"),
     [
-        (None, None, (None, "unknown")),
-        (0, None, (None, "unknown")),  # no close configured, no teacher date
-        (100, None, (100, "activity_close")),
-        (100, 100, (100, "attested")),  # a tie: the teacher's date decides
-        (100, 200, (200, "attested")),
-        (100, 50, (100, "activity_close")),
-        (None, 70, (70, "attested")),
+        (None, None, None, None, (None, "unknown", False)),
+        (0, None, None, None, (None, "unknown", False)),  # no close, no teacher date
+        # BR-007: a stale teacher date never replaces a missing close
+        (0, None, None, 500, (None, "unknown", False)),
+        # every close input readable (the automatic close): no teacher date needed
+        (100, 150, 0, None, (150, "activity_close", False)),
+        # a tie: the teacher's date decides
+        (100, 150, 0, 150, (150, "attested", False)),
+        (100, 150, 0, 120, (150, "activity_close", False)),
+        (100, 150, 0, 200, (200, "attested", False)),
+        # some close input unreadable (an assignment, or a quiz's overrides / grace): the
+        # REQ-091 fallback; without a teacher date Start refuses close_unreadable
+        (100, None, None, None, (None, "unreadable", True)),
+        (100, None, 30, None, (None, "unreadable", True)),
+        (100, None, None, 100, (100, "attested", False)),
+        (100, None, None, 200, (200, "attested", False)),
+        (100, None, None, 50, (100, "activity_close", False)),
+        (100, None, 30, 110, (130, "activity_close", False)),  # the grace decides
+        # the activity's own close unreadable: no date can be computed, a teacher date
+        # cannot help (the PUT refuses it with close_unreadable)
+        (None, None, None, 70, (None, "unreadable", False)),
     ],
 )
 def test_one_opening_rule_for_the_config_view_and_the_gate_panel(
-    close: int | None, attested: int | None, expected: tuple[int | None, str]
+    close: int | None,
+    automatic: int | None,
+    grace: int | None,
+    attested: int | None,
+    expected: tuple[int | None, str, bool],
 ) -> None:
-    """Review 11b-8: the config view and the session list's gate panel share it."""
-    assert v.opening_view(close, attested) == expected
+    """Review 11b-8: the config view and the session list's gate panel share it; and it is
+    the Start gate's own rule (``gates.effective_close``), so the view never says
+    ``activity_close`` while Start refuses ``close_unreadable``."""
+    view = v.opening_view(close, attested, automatic_close_at=automatic, grace_s=grace)
+    assert (view.at, view.source, view.fallback_required) == expected
+
+
+@pytest.mark.parametrize("kind", ["quiz", "assign"])
+@pytest.mark.parametrize("participants", [(), (CLOSE_AT + 600,), None])
+@pytest.mark.parametrize("grace", [0, 120, None])
+@pytest.mark.parametrize(
+    "attested", [None, CLOSE_AT - 60, CLOSE_AT, CLOSE_AT + 300, CLOSE_AT + 900]
+)
+@pytest.mark.parametrize("close", [CLOSE_AT, 0, None])
+def test_the_view_agrees_with_the_start_gate(
+    kind: str,
+    participants: tuple[int, ...] | None,
+    grace: int | None,
+    attested: int | None,
+    close: int | None,
+) -> None:
+    """The plugin-team report: GET config said ``activity_close`` while ``/state`` said
+    ``not_open/close_unreadable``. Over every combination of the close inputs the view's date is
+    the gate's ``gate_at``, and ``unreadable`` / ``fallback_required`` follow its refusal."""
+    if kind == "assign":
+        grace, participants = 0, None  # extensions are never listable (OQ-025)
+    inputs = gate_inputs(
+        kind,
+        activity_close_at=close,
+        grace_s=grace,
+        participant_closes=participants,
+        teacher_opening_at=attested,
+    )
+    decision = evaluate_start_gates(inputs)
+    # the teacher facts as the worker writes them (start_source.teacher_facts)
+    automatic = (
+        max([close, *participants]) + grace
+        if close and participants is not None and grace is not None
+        else None
+    )
+    view = v.opening_view(close, attested, automatic_close_at=automatic, grace_s=grace)
+    assert view.at == decision.gate_at
+    refused = Code.CLOSE_UNREADABLE in decision.reasons
+    # "unknown" stays "neither known": no readable close and no teacher date
+    assert (view.source == "unreadable") == (
+        refused and (close is not None or attested is not None)
+    )
+    assert view.fallback_required == (refused and close is not None)
+    if not refused and Code.NO_CLOSE_DATE not in decision.reasons:
+        assert view.source in ("attested", "activity_close")
 
 
 def test_a_percentage_is_whole_minutes_rounded_up() -> None:

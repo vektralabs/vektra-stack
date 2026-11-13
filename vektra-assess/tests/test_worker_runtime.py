@@ -205,7 +205,9 @@ async def test_failure_goes_back_to_ready_with_backoff_and_a_fixed_error_code() 
     store = MemStore()
 
     async def boom(ctx: JobContext) -> None:
-        raise ValueError("student 4711 wrote something private")
+        # no digits in the canary: the row holds a jittered float backoff whose repr could
+        # contain any digit string and make a numeric canary match by chance
+        raise ValueError("student-canary-qxz wrote something private")
 
     (jid,) = store.add(JobKind.PURGE)
     rt = _rt(store)
@@ -215,7 +217,7 @@ async def test_failure_goes_back_to_ready_with_backoff_and_a_fixed_error_code() 
     row = store.rows[jid]
     assert (row["state"], row["attempts"], row["code"]) == ("ready", 1, "handler_error")
     assert 2.5 <= row["backoff"] <= 5.0  # first attempt: base 5 s, jitter 0.5-1.0
-    assert "4711" not in repr(row), "exception text must never reach the job row"
+    assert "canary-qxz" not in repr(row), "exception text must never reach the job row"
     assert rt.counters[("failed", JobKind.PURGE)] == 1
 
 

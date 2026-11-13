@@ -6,10 +6,11 @@ open requests past ``VEKTRA_ASSESS_ERASURE_ALERT_AFTER_S`` that have no marker, 
 reported once whatever happens to the job rows (the job retention may prune them), and a batch
 never stalls on requests already reported. The partial index serves exactly that sweep.
 
-No grant changes: the worker already holds ``UPDATE`` on the table (the API holds ``INSERT`` and
-``SELECT`` and never writes the column). Revision id ``a0003`` (``a0002`` is taken by the RLS
-revision of a parallel branch); it chains after the assess head of its base branch and is re-
-pointed after ``a0002`` if that merges first.
+No grant or policy changes, after ``a0002`` (RLS for the API role): the grants are table-level,
+the worker already holds ``UPDATE`` on the table and writes the column (the sweep, the failure
+record, the purge's abandoned requests), and the API, which holds ``INSERT`` and ``SELECT`` under
+``a0002``'s site-bound policy, never writes it. The table stays under that policy; the worker
+passes ``assess_unbound_roles``.
 """
 
 from __future__ import annotations
@@ -17,7 +18,7 @@ from __future__ import annotations
 from alembic import op
 
 revision = "a0003"
-down_revision = "a0001"
+down_revision = "a0002"
 branch_labels = None
 depends_on = None
 

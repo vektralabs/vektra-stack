@@ -40,7 +40,8 @@ ENTRYPOINT = ROOT / "docker" / "entrypoint.sh"
 REGEN = os.environ.get("VEKTRA_REGEN_SCHEMA_GOLDEN") == "1"
 
 #: what the assess head has (the goldens say exactly which; these are the sizes)
-TABLES, ROLES, FUNCTIONS = 37, 3, 17
+#: (a0002, RLS for the API role, adds six SECURITY DEFINER functions)
+TABLES, ROLES, FUNCTIONS = 37, 3, 23
 
 COUNTS = (
     "SELECT (SELECT count(*) FROM pg_tables WHERE schemaname = 'public' "
@@ -164,7 +165,7 @@ async def test_b_with_assess_on_the_entrypoint_migrates_both_branches(
 ) -> None:
     url = await _database(server, "assess_on")
     _entrypoint(url, assess="true")
-    # Alembic records the assess head only: the base depends on 0009, which is implied
+    # Alembic records the assess head only: a0001 and the 0009 it depends on are implied
     assert [r[0] for r in await _sql(url, VERSIONS)] == ["a0003"]
     assert await _counts(url) == (TABLES, ROLES, FUNCTIONS)
     # the startup schema step agrees: both branches at head, and a disabled deployment that
@@ -177,7 +178,9 @@ async def test_b_with_assess_on_the_entrypoint_migrates_both_branches(
 
 
 async def test_c_the_squash_equals_the_old_chain(server: Any) -> None:
-    """Schema and effective privileges, byte for byte, against the goldens of 0044."""
+    """Schema and effective privileges, byte for byte, against the goldens of the assess head:
+    taken from 0044 for the squash, then regenerated once per new revision (a0002: RLS for the
+    API role, whose diff is its policies, functions and grants only)."""
     url = await _database(server, "squash")
     _run(url, "alembic", "upgrade", "0009")
     _run(url, "alembic", "upgrade", "assess@head")

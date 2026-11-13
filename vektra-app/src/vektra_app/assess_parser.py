@@ -51,7 +51,13 @@ FORBIDDEN_MODULES: tuple[str, ...] = (
 # two the entry itself uses for the "holds nothing" proof.
 ALLOWED_ASSESS = ("vektra_assess.parser_protocol", "vektra_assess.parser_sidecar")
 LMS_PROVIDER_PACKAGE_PREFIX = "vektra_lms_"
-ALLOWED_ASSESS_EXACT = ("vektra_assess", "vektra_assess.config", "vektra_assess.keys")
+# ``privacy_text`` is the settings' own stdlib-only text rule (no database, no I/O)
+ALLOWED_ASSESS_EXACT = (
+    "vektra_assess",
+    "vektra_assess.config",
+    "vektra_assess.keys",
+    "vektra_assess.privacy_text",
+)
 
 
 def assert_import_ceiling(loaded: Iterable[str] | None = None) -> None:

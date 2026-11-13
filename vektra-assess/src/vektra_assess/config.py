@@ -20,6 +20,8 @@ from typing import Annotated, Any, Literal, Self
 from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
+from vektra_assess.privacy_text import notice_version_error
+
 # --- pure rules shared with vektra_assess.delivery (plan transcript-delivery 10b) -------------
 # They live HERE, not in vektra_assess.delivery: validating the settings must not import a
 # module outside the parser's import ceiling (the parser sidecar loads this class too).
@@ -483,6 +485,20 @@ class VektraAssessSettings(BaseSettings):
         alias="VEKTRA_ASSESS_PRIVACY_NOTICE_VERSION",
         description="Version of the privacy notice shown before Start; recorded on the session and the start audit event.",
     )
+
+    @field_validator("privacy_notice_version")
+    @classmethod
+    def _notice_version_rule(cls, value: str) -> str:
+        """The stand-in ``GET /state`` shows for a site with no settings meets the rule the
+        plugin's echo is checked with (plugin request P3): never a value the mint would refuse."""
+        code = notice_version_error(value)
+        if code is not None:
+            raise ValueError(
+                f"VEKTRA_ASSESS_PRIVACY_NOTICE_VERSION is invalid ({code}): 1 to 40 "
+                "characters, not blank, no control character other than tab and newline"
+            )
+        return value
+
     privacy_notice_url: str | None = Field(
         None,
         alias="VEKTRA_ASSESS_PRIVACY_NOTICE_URL",

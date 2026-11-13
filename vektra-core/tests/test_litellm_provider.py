@@ -83,6 +83,8 @@ async def test_stream_yields_chunks():
     assert chunks[1].content == " world"
     assert chunks[1].model == "ollama/llama3"
     assert chunks[2].done is True
+    # the finish reason is carried through: "length" with no text is a spent max_tokens
+    assert [c.finish_reason for c in chunks] == [None, None, "stop"]
 
 
 async def test_stream_model_fallback_when_missing():

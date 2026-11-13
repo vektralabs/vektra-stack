@@ -39,8 +39,29 @@ G = 20
 TIMEOUT_S = 0.3  # the outage timeout (no first token within it), scaled down
 
 
+#: the HTTP status a provider error of that name carries in its ``response`` (litellm's classes)
+_STATUS = {
+    "ContextWindowExceededError": 400,
+    "ContentPolicyViolationError": 400,
+    "RateLimitError": 429,
+    "AuthenticationError": 401,
+    "InternalServerError": 500,
+    "ServiceUnavailableError": 503,
+}
+
+
+class _Response:
+    def __init__(self, status_code: int) -> None:
+        self.status_code = status_code
+
+
 class FaultLLM(RecordingLLMProvider):
-    """``mode``: ok | down | hang | slow | <ProviderErrorClassName>."""
+    """``mode``: ok | down | hang | slow | reasoning_only | <ProviderErrorClassName>.
+
+    A named provider error carries a ``response`` with its HTTP status, as litellm's do: the
+    runner classifies it by type name and received status. ``reasoning_only`` is a reasoning
+    model that spends max_tokens before any text (empty chunks, then finish_reason "length").
+    """
 
     def __init__(self) -> None:
         super().__init__([])
@@ -50,8 +71,11 @@ class FaultLLM(RecordingLLMProvider):
     def _fault(self) -> None:
         if self.mode == "down":
             raise ConnectionError("provider down")
-        if self.mode not in ("ok", "hang", "slow"):
-            raise type(self.mode, (Exception,), {})("refused")
+        if self.mode not in ("ok", "hang", "slow", "reasoning_only"):
+            exc = type(self.mode, (Exception,), {})("refused")
+            if self.mode in _STATUS:
+                exc.response = _Response(_STATUS[self.mode])  # type: ignore[attr-defined]
+            raise exc
 
     async def complete(self, messages: Any, model: str, **kw: Any) -> Any:  # type: ignore[override]
         self.n_calls += 1
@@ -70,6 +94,11 @@ class FaultLLM(RecordingLLMProvider):
         async def gen() -> AsyncIterator[CompletionChunk]:
             if mode == "hang":
                 await asyncio.sleep(3600)
+            if mode == "reasoning_only":
+                yield CompletionChunk(content="")
+                yield CompletionChunk(content=" ")  # whitespace is no text either
+                yield CompletionChunk(content="", done=True, finish_reason="length")
+                return
             parts = ["Bene.", " Quale", " scelta", " vuoi spiegare?"]
             for part in parts:
                 if mode == "slow":
@@ -227,11 +256,20 @@ async def test_a_slow_success_is_not_an_outage(pg, worker) -> None:  # type: ign
 
 @pytest.mark.parametrize(
     "refusal",
-    ["ContextWindowExceededError", "RateLimitError", "ContentPolicyViolationError"],
+    [
+        "ContextWindowExceededError",
+        "RateLimitError",  # a 429 stays a refusal, as before the closed causes
+        "ContentPolicyViolationError",
+        "AuthenticationError",  # 401: a wrong key is configuration, not an outage
+        "BudgetExceededError",  # litellm's own spend limit, no HTTP answer
+        "reasoning_only",  # max_tokens spent on reasoning: max_tokens_exhausted
+    ],
 )
 async def test_provider_refusals_never_set_outage_nor_earn_credit(
-    pg, worker, refusal
+    pg, worker, refusal, canary_log_capture
 ) -> None:  # type: ignore[no-untyped-def]
+    import json
+
     async with rigged(pg, worker) as rig:
         rig.llm.mode = refusal
         await rig.say()
@@ -242,6 +280,42 @@ async def test_provider_refusals_never_set_outage_nor_earn_credit(
             0,
             "bot/interrupted",
         )
+    lines = [json.loads(ln) for ln in canary_log_capture.lines()]
+    (line,) = [ln for ln in lines if ln.get("event") == "assess_turn_provider_failure"]
+    assert line["reason_code"] == "provider_refused" and line["level"] == "warning"
+    if refusal == "reasoning_only":
+        assert line["outage_cause"] == "max_tokens_exhausted"
+        assert (
+            line["remediation_code"] == "raise_llm_max_tokens_or_lower_reasoning_effort"
+        )
+        assert line["max_tokens"] == 600 and line["http_status"] is None
+    elif refusal != "BudgetExceededError":
+        assert line["outage_cause"] == "http_4xx"
+        assert line["http_status"] == _STATUS[refusal]
+
+
+@pytest.mark.parametrize(
+    ("mode", "cause", "status"),
+    [
+        ("ServiceUnavailableError", "http_5xx", 503),
+        ("down", "connection_error", None),
+        ("hang", "first_token_timeout", None),
+    ],
+)
+async def test_an_unavailable_provider_is_an_outage_with_its_cause_logged(
+    pg, worker, mode, cause, status, canary_log_capture
+) -> None:  # type: ignore[no-untyped-def]
+    import json
+
+    async with rigged(pg, worker) as rig:
+        rig.llm.mode = mode
+        await rig.say()
+        assert (await rig.row()).state == "OUTAGE"
+    lines = [json.loads(ln) for ln in canary_log_capture.lines()]
+    (line,) = [ln for ln in lines if ln.get("event") == "assess_turn_provider_failure"]
+    assert line["reason_code"] == "provider_unavailable"
+    assert (line["outage_cause"], line["http_status"]) == (cause, status)
+    assert line["remediation_code"] is None
 
 
 async def test_a_refused_query_never_sets_outage(pg, worker) -> None:  # type: ignore[no-untyped-def]

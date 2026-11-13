@@ -1,4 +1,5 @@
-"""Per-process state of the student routes: settings, the token service, the bearer token.
+"""Per-process state of the student routes: settings, the token service, the bearer token. The
+request's site binding (ADR-0033 D9.2) is ``vektra_assess.api.site_binding``.
 
 ``bearer_token`` reads the ``Authorization`` header and nothing else: never the query string,
 never a cookie (ADR-0030). A request carrying ``?token=`` or ``?access_token=`` without the header

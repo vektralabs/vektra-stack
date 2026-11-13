@@ -172,6 +172,24 @@ The model must also have a passing NFR-023 activation for its `prompt_version`
 one the API starts degraded and the pre-flight refuses every discussion. See the
 [API reference](../../reference/api.md#assess-model-activation-nfr-023).
 
+**A reasoning model needs its reasoning turned down, or a larger `VEKTRA_ASSESS_LLM_MAX_TOKENS`.**
+The completion budget (default 600) covers the reasoning and the answer. A reasoning model that
+spends it all on reasoning returns no text, and every Start is rolled back with
+`provider_unavailable`; the worker log line `assess_preflight_provider_outage` then says
+`outage_cause=max_tokens_exhausted` (a discussion turn logs `assess_turn_provider_failure` and is
+refused, not an OUTAGE). Prefer lowering the reasoning: set `VEKTRA_ASSESS_LLM_EXTRA_BODY` to
+`{"reasoning_effort": "low"}` (OpenAI reasoning models) or
+`{"chat_template_kwargs": {"enable_thinking": false}}` (Qwen3 on vLLM). Raising the budget instead
+lengthens the reasoning, which happens before the first token and counts against
+`VEKTRA_ASSESS_OUTAGE_TIMEOUT_S`: see
+[Reasoning models (assess)](../../reference/configuration.md#reasoning-models-assess).
+
+Reading `outage_cause`: `http_5xx`, `connection_error` and the `*_timeout` codes of the HTTP
+client (`read_timeout`, `connect_timeout`, ...) point at the provider or the network. A
+`first_token_timeout` does too, **unless** the model reasons: after a `VEKTRA_ASSESS_LLM_MAX_TOKENS`
+raise with reasoning still on, it usually means the reasoning outlasted the first-token deadline.
+`http_4xx` is the provider answering (a wrong key or model, a rate limit, a rejected request).
+
 ## The assess schema: a migration branch of its own
 
 The assess tables, the three `vektra_assess_*` roles and the `SECURITY DEFINER` functions are
@@ -230,6 +248,88 @@ docker compose -f docker-compose.yml -f docker-compose.assess.yml --profile asse
 then recreate the service that holds that password (`... up -d --force-recreate vektra` or
 `vektra-assess-worker`): Compose bind-mounts the secret file, and a restarted container keeps
 the old file if the replacement wrote a new one.
+
+## Row-level security for the API role
+
+Assess serves several LMS sites from one database. Each route already filters on its site, and
+the database enforces it as well: the assess revision `a0002`
+(`vektra-assess/src/vektra_assess/migrations/versions/a0002_assess_api_rls.py`, ADR-0033 D9.2)
+puts a row-level-security policy for `vektra_assess_api` on the 20 site-scoped tables that role
+reads. The API sets `app.assess_site_id` at the start of every request transaction, from the
+site its credential is bound to (the site in a student or download token, the site of an
+`assess:*` key in `assess_site_keys`, or the site in an admin route's path once it has been
+checked). A transaction of the API role reads and writes only that site's rows. With the setting
+unset or empty, it reads **no rows** and can write none.
+
+- **The worker is not restricted.** `vektra_assess_worker` serves every site by design, and
+  `vektra_assess_definer` (the owner of the `SECURITY DEFINER` functions) has its own
+  unconditional policy, so the definer functions work as before.
+- **The migration user is not restricted.** It owns the tables, and the revision enables RLS
+  without `FORCE`, so the migrations see every row.
+- **Backups and reports need a role that sees every row.** Only a superuser, the tables' owner
+  (the migration user) or a role with `BYPASSRLS` sees every row. For any other role:
+  - **`pg_dump` fails.** Run by a role without these rights, it stops with
+    `query would be affected by row-level security policy for table "assess_sessions"`.
+    (`pg_dump` turns row security off for its session, and PostgreSQL refuses that for such a
+    role.)
+  - **`pg_dump --enable-row-security` is no workaround.** It completes, but dumps only the rows
+    that role's policies show, which for a role with no policy is none. Do not use it for a
+    backup.
+  - **The recipe.** Dump as the migration user, or create a dedicated backup or report role:
+    `CREATE ROLE vektra_backup LOGIN BYPASSRLS PASSWORD '...'`, with `SELECT` on the assess
+    tables. The trade-off: `BYPASSRLS` turns off every policy for that role, so it reads every
+    site's rows. Keep it read-only, give it to backup and reporting only, and never to an
+    application process.
+  - **The NFR report needs such a role too.** `scripts/assess_nfr_report.py` refuses a role
+    that RLS restricts (exit 3, naming the tables), rather than reporting an empty campaign.
+- **The cross-site reads go through definer functions.** A few API reads need no site or cover
+  every site, and each is a `SECURITY DEFINER` function returning ids or counts:
+  `assess_site_of_key` (resolving a key's site, before anything is bound),
+  `assess_live_session_count` (the deployment-wide admission cap), `assess_configured_site_count`
+  (`/health/assess`), `assess_pending_replies` (the API's pending-turn poller, which then binds
+  each answer to its session's site), `assess_transcript_site` (an operator's transcript
+  resend) and `assess_session_exists` (one boolean, so that the audit still records a cross-site
+  session probe as an ownership mismatch; the HTTP answer is the same not-found envelope).
+- **The assess roles must stay `NOBYPASSRLS`.** A role with `BYPASSRLS`, or a superuser, ignores every
+  policy. `vektra-assess-db-init` creates the roles `NOBYPASSRLS`; keep it that way on managed
+  Postgres too.
+- **Connection poolers.** The setting is transaction-local (`set_config(..., true)`), so it works
+  behind a pooler in transaction mode and never carries over to the next transaction on the same
+  connection.
+
+A route that forgot to bind its site gets an empty result, not an error: a 404 or an empty list.
+The test suite treats that as a bug. Every route test runs under a guard that fails when a
+statement reaches a site-scoped table before the site is bound
+(`vektra-assess/tests/support/binding_guard.py`).
+
+To check a deployment, as a superuser or the migration user:
+
+```sql
+-- 20 tables with RLS on and none forced
+SELECT count(*) FILTER (WHERE relrowsecurity), count(*) FILTER (WHERE relforcerowsecurity)
+FROM pg_class WHERE relnamespace = 'public'::regnamespace AND relname LIKE 'assess\_%';
+
+-- the two policies on each table: one for the API role, one for the worker and the definer
+SELECT tablename, policyname, roles FROM pg_policies WHERE tablename LIKE 'assess\_%' ORDER BY 1, 2;
+
+-- no assess role can bypass RLS
+SELECT rolname, rolsuper, rolbypassrls FROM pg_roles WHERE rolname LIKE 'vektra\_assess\_%';
+```
+
+And as `vektra_assess_api` (for example with `psql` and the role's password), unbound, then bound
+to a site:
+
+```sql
+SELECT count(*) FROM assess_sessions;                       -- 0: nothing is bound
+BEGIN;
+SELECT set_config('app.assess_site_id', '<site uuid>', true);
+SELECT count(DISTINCT site_id) FROM assess_sessions;        -- 1 at most: that site only
+ROLLBACK;
+```
+
+The automated proof is `vektra-assess/tests/integration/test_api_rls.py`: it runs a route's
+statement with its `site_id` predicate removed, as the API role bound to site A, and reads 0 rows
+of site B.
 
 ## Connection budget
 
@@ -397,5 +497,12 @@ discussion only while its latest finished report for the current LMS release has
    | `privacy_config` | `PUT /api/v1/assess/sites/{site_id}/privacy` with the DPO's values (REQ-089) |
 
    Each item carries a content-free `reason_code` that names the failing condition.
+
+   **Changing the privacy notice.** Any change to what the student is shown before Start
+   (`retention_days`, `legal_basis_label`, `legal_basis_text`, `notice_url`, `notice_text`) needs a
+   new `notice_version` in the same `PUT`: the same version with different content is refused
+   (`400 ERR-ASSESS-028`, field `notice_version`, code `must_change`). The version is what a Start
+   compares with the one the student saw, so a student who opened the page before the change is
+   asked to reopen it (`409 ERR-ASSESS-029`) instead of starting under a notice they did not read.
 5. Re-run the check after every fix, and after every LMS upgrade: a release change invalidates the
    stored capability flags and blocks Starts until a check passes.

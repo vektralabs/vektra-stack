@@ -18,6 +18,7 @@ from vektra_assess.privacy.config import (
     PrivacySettings,
     current_notice_version,
     is_configured,
+    shown_notice_version,
 )
 
 __all__ = [
@@ -25,4 +26,5 @@ __all__ = [
     "PrivacySettings",
     "current_notice_version",
     "is_configured",
+    "shown_notice_version",
 ]

@@ -29,6 +29,7 @@ from sqlalchemy import text
 
 from vektra_assess.api.material import load_material
 from vektra_assess.api.session_gate import load_row
+from vektra_assess.api.site_binding import reset_site, set_request_site
 from vektra_assess.api.turns import (
     bundle_of,
     cut_after_s,
@@ -36,20 +37,15 @@ from vektra_assess.api.turns import (
     history_of,
 )
 from vektra_assess.llm.types import StudentTurn
-from vektra_assess.turn_markers import reply_claimed_sql
 
 log = structlog.get_logger(__name__)
 
-_PENDING = text(
-    "SELECT id FROM assess_sessions WHERE state = 'ACTIVE' "
-    "AND pending_reply_since IS NOT NULL "
-    "AND pending_reply_since <= now() - make_interval(secs => :age) "
-    "AND deadline_at + make_interval(secs => reply_grace_s) > now() "
-    # a turn another driver is answering (any API process) does not take a place in the
-    # batch: the poll reaches the unclaimed ones
-    "AND NOT " + reply_claimed_sql("id") + " "
-    "ORDER BY pending_reply_since LIMIT :n"
-)
+#: ACTIVE sessions whose student turn has waited ``:age`` s, inside deadline + grace, that no
+#: driver (in any API process) holds the live-reply claim of (``reply_claimed_sql``: claimed turns
+#: take no place in the batch), oldest first. The scan spans every site, which the API role's own
+#: read of ``assess_sessions`` cannot (RLS, ADR-0033 D9.2): a SECURITY DEFINER function (revision
+#: a0002) that returns each session's site, to which its answer is then bound
+_PENDING = text("SELECT id, site_id FROM assess_pending_replies(:age, :n)")
 
 
 @dataclass
@@ -110,10 +106,10 @@ class PendingTurnDriver:
                 await conn.execute(_PENDING, {"age": self.min_age_s, "n": self.batch})
             ).all()
         taken = []
-        for (sid,) in rows:
+        for sid, site in rows:
             if sid in driver.tasks:
                 continue  # this process is already answering it
-            task = asyncio.create_task(self._answer(sid))
+            task = asyncio.create_task(self._answer(sid, site))
             driver.tasks[sid] = task
             self._answers.add(task)
             task.add_done_callback(self._answers.discard)
@@ -121,9 +117,13 @@ class PendingTurnDriver:
             taken.append(sid)
         return taken
 
-    async def _answer(self, sid: UUID) -> None:
+    async def _answer(self, sid: UUID, site: UUID) -> None:
         """Answer one pending turn through the TurnDriver's own reply slot and claim: the slot
-        first, then the claim connection (never a connection while waiting for a slot)."""
+        first, then the claim connection (never a connection while waiting for a slot). The
+        task runs in its own context, bound to the session's site (ADR-0033 D9.2): every
+        transaction of the answer, the reply's included, reads that site only."""
+        reset_site()
+        set_request_site(site)
         driver = driver_for_app(self.app)
         try:
             async with driver.slots, driver._claim(sid) as claimed:

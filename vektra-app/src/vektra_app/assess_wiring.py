@@ -141,6 +141,7 @@ async def step_12_assess_check(
 
     from sqlalchemy.ext.asyncio import create_async_engine
 
+    from vektra_assess.api.site_binding import install_site_binding
     from vektra_assess.config import erasure_mode_problem
     from vektra_assess.crypto.selftest import run_crypto_selftest
     from vektra_assess.db.roles import (
@@ -181,6 +182,9 @@ async def step_12_assess_check(
         max_overflow=API_MAX_OVERFLOW,
         pool_pre_ping=True,
     )
+    # ADR-0033 D9.2: every transaction is bound to the request's assess site at its start (the
+    # routes also install it on first use; here it is on before any request)
+    install_site_binding(engine)
     try:
         await assert_session_role(engine, API_ROLE, step=STEP)
         await check_ui_origin(engine, settings)

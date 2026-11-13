@@ -47,7 +47,8 @@ async def test_twenty_concurrent_starts_leave_exactly_one_open_session(pg):
 
     async def attempt():
         try:
-            await pg.run("api", insert, {"s": site})
+            # bound to the site, as the Start route is (RLS, ADR-0033 D9.2)
+            await pg.run("api", insert, {"s": site}, site=site)
             return "ok"
         except DBAPIError as exc:
             return getattr(exc.orig, "sqlstate", "?")
@@ -259,8 +260,9 @@ async def test_no_plaintext_canary_in_any_table_dump_or_log(pg):
         "INSERT INTO assess_activity_config (site_id, cmid, activity_type) "
         "VALUES (:s, 9, 'quiz')",
         {"s": site},
+        site=site,
     )
-    async with pg.conn("api") as c:
+    async with pg.conn("api", site=site) as c:
         await teacher_config.store_sealed_field(
             c,
             worker_pub,
@@ -525,6 +527,7 @@ async def test_reset_session_is_numbered_by_the_database(pg):
         "INSERT INTO assess_sessions (site_id, cmid, student_userid, state) "
         "VALUES (:s, 31, 41, 'STARTING')",
         {"s": site},
+        site=site,
     )
     assert (
         await one(

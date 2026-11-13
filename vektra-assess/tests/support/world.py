@@ -20,12 +20,15 @@ from fastapi import FastAPI
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
 from vektra_assess.api.router import router
+from vektra_assess.api.site_binding import install_site_binding
 from vektra_assess.config import VektraAssessSettings
 from vektra_assess.crypto.seal import public_from_private
 from vektra_assess.keys import AssessKeyring
 from vektra_shared.auth import ApiKeyInfo
 from vektra_shared.http_errors import register_error_handlers
 from vektra_shared.registry import ProviderRegistry
+
+from .binding_guard import BindingGuard
 
 PLUGIN = "1.0.0"
 
@@ -128,6 +131,16 @@ class World:
     settings: VektraAssessSettings
     extra: dict[str, Any] = field(default_factory=dict)
 
+    def use_api_engine(self, engine: AsyncEngine) -> AsyncEngine:
+        """Swap the app's API engine for ``engine`` the way the world's own one is set up: the
+        site binding installed (as step 12 does) and the runtime binding guard watching it, so
+        a route's unbound read on the replacement fails the test too. The guard detaches at the
+        world's teardown; the caller still disposes the engine it made."""
+        install_site_binding(engine)
+        self.extra["binding_guard"].watch(engine)
+        self.app.state.assess_engine = engine
+        return engine
+
     async def mint(
         self,
         sub: int = 101,
@@ -157,6 +170,16 @@ class World:
 
 _ABSENT = object()
 ABSENT = _ABSENT
+
+
+async def bind(conn: Any, site: uuid.UUID) -> None:
+    """Bind a test's own API-role transaction to ``site``, as a route binds its request
+    (RLS for the API role, ADR-0033 D9.2): unbound, the API role reads no site-scoped row."""
+    from sqlalchemy import text
+
+    await conn.execute(
+        text("SELECT set_config('app.assess_site_id', :s, true)"), {"s": str(site)}
+    )
 
 
 def auth(name: str) -> dict[str, str]:
@@ -200,8 +223,11 @@ async def world(
     registry = ProviderRegistry()
     registry.register("key_store", "default", Keys(dict(keys)))
     app.state.registry = registry
-    engine = create_async_engine(pg.url("api"))
+    # bound per request at each transaction's start, as step 12 installs it in production
+    engine = install_site_binding(create_async_engine(pg.url("api")))
     app.state.assess_engine = engine
+    # D9.2: a route statement on a site-scoped table without the site bound fails the test
+    guard = BindingGuard(engine)
     app.state.assess_settings = cfg
     from vektra_admin.rate_limit import RateLimiter
     from vektra_assess.api.state import LIMITER_NAMES
@@ -223,7 +249,27 @@ async def world(
             transport=httpx.ASGITransport(app=app), base_url="http://t"
         ) as client:
             yield World(
-                pg, client, app, engine, site, other, keys, signing, pub, priv, cfg
+                pg,
+                client,
+                app,
+                engine,
+                site,
+                other,
+                keys,
+                signing,
+                pub,
+                priv,
+                cfg,
+                extra={"binding_guard": guard},
             )
-    finally:
+    except BaseException:
+        guard.remove()
         await engine.dispose()
+        raise
+    guard.remove()
+    await engine.dispose()
+    unbound = guard.take()
+    assert unbound == [], (
+        "an assess route read a site-scoped table before binding its site "
+        f"(ADR-0033 D9.2): {unbound}"
+    )

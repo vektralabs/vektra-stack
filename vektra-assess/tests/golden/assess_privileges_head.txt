@@ -96,6 +96,8 @@ column vektra_assess_api assess_token_jti consumed_at UPDATE
 column vektra_assess_api assess_transcript_download_tokens consumed_at UPDATE
 column vektra_assess_definer assess_outage_incidents credited_s UPDATE
 column vektra_assess_definer assess_outage_incidents ended_at UPDATE
+column vektra_assess_definer assess_privacy_config notice_url SELECT
+column vektra_assess_definer assess_privacy_config site_id SELECT
 column vektra_assess_definer assess_session_keys session_id SELECT
 column vektra_assess_definer assess_sessions close_reason UPDATE
 column vektra_assess_definer assess_sessions closed_at UPDATE
@@ -106,6 +108,12 @@ column vektra_assess_definer assess_sessions last_activity_at UPDATE
 column vektra_assess_definer assess_sessions pending_reply_since UPDATE
 column vektra_assess_definer assess_sessions seq UPDATE
 column vektra_assess_definer assess_sessions state UPDATE
+column vektra_assess_definer assess_site_keys api_key_id SELECT
+column vektra_assess_definer assess_site_keys purpose SELECT
+column vektra_assess_definer assess_site_keys site_id SELECT
+column vektra_assess_definer assess_sites disabled_at SELECT
+column vektra_assess_definer assess_sites id SELECT
+column vektra_assess_definer assess_sites min_plugin_version SELECT
 column vektra_assess_worker assess_activity_config_sealed kid UPDATE
 column vektra_assess_worker assess_activity_config_sealed sealed_blob UPDATE
 column vektra_assess_worker assess_purge_records subject_ref UPDATE
@@ -144,15 +152,21 @@ function vektra_assess_api array_to_vector(real[],integer,boolean)
 function vektra_assess_api assess_append_turn(uuid,integer,integer,text,text,bytea,text,text)
 function vektra_assess_api assess_audit_events_append_only()
 function vektra_assess_api assess_close_session(uuid,integer,text)
+function vektra_assess_api assess_configured_site_count()
 function vektra_assess_api assess_enqueue_resend(uuid,text,integer)
 function vektra_assess_api assess_enter_outage(uuid,integer,timestamp with time zone,text)
+function vektra_assess_api assess_live_session_count()
 function vektra_assess_api assess_metrics_snapshot()
 function vektra_assess_api assess_outage_cap(integer)
 function vektra_assess_api assess_outage_spent(uuid)
+function vektra_assess_api assess_pending_replies(double precision,integer)
 function vektra_assess_api assess_rollback_starting(uuid)
+function vektra_assess_api assess_session_exists(uuid)
 function vektra_assess_api assess_sessions_no_revival()
 function vektra_assess_api assess_sessions_number()
+function vektra_assess_api assess_site_of_key(uuid,text)
 function vektra_assess_api assess_snapshots_immutable()
+function vektra_assess_api assess_transcript_site(uuid)
 function vektra_assess_api avg(halfvec)
 function vektra_assess_api avg(vector)
 function vektra_assess_api binary_quantize(halfvec)
@@ -312,18 +326,24 @@ function vektra_assess_definer assess_append_turn(uuid,integer,integer,text,text
 function vektra_assess_definer assess_audit_events_append_only()
 function vektra_assess_definer assess_audit_sealed_change()
 function vektra_assess_definer assess_close_session(uuid,integer,text)
+function vektra_assess_definer assess_configured_site_count()
 function vektra_assess_definer assess_end_outage(uuid,integer)
 function vektra_assess_definer assess_enqueue_resend(uuid,text,integer)
 function vektra_assess_definer assess_enter_outage(uuid,integer,timestamp with time zone,text)
+function vektra_assess_definer assess_live_session_count()
 function vektra_assess_definer assess_metrics_snapshot()
 function vektra_assess_definer assess_outage_cap(integer)
 function vektra_assess_definer assess_outage_spent(uuid)
+function vektra_assess_definer assess_pending_replies(double precision,integer)
 function vektra_assess_definer assess_rollback_starting(uuid)
+function vektra_assess_definer assess_session_exists(uuid)
 function vektra_assess_definer assess_sessions_drop_handoff_on_close()
 function vektra_assess_definer assess_sessions_no_revival()
 function vektra_assess_definer assess_sessions_number()
 function vektra_assess_definer assess_sessions_require_opening_turn()
+function vektra_assess_definer assess_site_of_key(uuid,text)
 function vektra_assess_definer assess_snapshots_immutable()
+function vektra_assess_definer assess_transcript_site(uuid)
 function vektra_assess_definer avg(halfvec)
 function vektra_assess_definer avg(vector)
 function vektra_assess_definer binary_quantize(halfvec)

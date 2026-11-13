@@ -14,6 +14,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from vektra_assess.privacy_text import notice_version_error
+
 SessionState = Literal["STARTING", "ACTIVE", "OUTAGE", "CLOSED"]
 
 
@@ -36,6 +38,19 @@ class MintRequest(_Strict):
     loginas: Any = None
     realuser_id: Any = None
     plugin_version: str = Field(min_length=1, max_length=40)
+    #: plugin request P3: the ``pre_session.privacy.notice_version`` the student saw, echoed on
+    #: the Start mint and carried in the token; only Start compares it. Typed loosely like the
+    #: login-as fields: the route checks its format AFTER the login-as assertion
+    #: (``notice_version_problem``), so a login-as attempt is always audited first.
+    privacy_notice_version: Any = None
+
+    def notice_version_problem(self) -> str | None:
+        """The 400 reason for a malformed echoed version (``<code>:privacy_notice_version``,
+        the stored ``notice_version``'s own rule), ``None`` when absent, null or valid."""
+        if self.privacy_notice_version is None:
+            return None
+        code = notice_version_error(self.privacy_notice_version)
+        return None if code is None else f"{code}:privacy_notice_version"
 
     def asserts_not_loginas(self) -> bool:
         """The positive REQ-084 assertion: both fields PRESENT, ``false`` and ``null`` exactly."""

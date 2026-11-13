@@ -36,12 +36,22 @@ def _revisions() -> list[Path]:
 
 def test_one_base_revision_on_the_assess_branch() -> None:
     revs = _revisions()
-    assert [p.name for p in revs] == ["a0001_assess_base.py"]
+    assert [p.name for p in revs] == [
+        "a0001_assess_base.py",
+        "a0003_assess_erasure_alerts.py",  # OQ-033: the overdue-erasure alert marker
+    ]
     mod = _load(revs[0], "assess_base")
     assert mod.revision == "a0001"
     assert mod.down_revision is None
     assert mod.branch_labels == ("assess",)
     assert mod.depends_on == "0009"
+    # every later revision is a straight line on the branch, labelled by the base only
+    previous = "a0001"
+    for path in revs[1:]:
+        later = _load(path, f"assess_{path.stem}")
+        assert later.down_revision == previous, path.name
+        assert later.branch_labels is None and later.depends_on is None, path.name
+        previous = later.revision
 
 
 def test_the_assess_branch_names_no_lms() -> None:

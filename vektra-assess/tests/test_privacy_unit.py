@@ -290,3 +290,23 @@ def test_a_busy_pool_answers_pending_on_time() -> None:
     assert time.monotonic() - started < 2
     assert exc.value.status_code == 503
     assert exc.value.detail["error"]["details"] == {"reason": "pending"}
+
+
+def test_the_overdue_threshold_is_never_below_the_in_flight_wait() -> None:
+    """Review finding 7: an erasure legitimately waits up to ``IN_FLIGHT`` for a send that may
+    be on the wire; alerting before that would report a request working as designed."""
+    from pydantic import ValidationError
+
+    from vektra_assess.privacy.purge import IN_FLIGHT
+
+    low = int(IN_FLIGHT.total_seconds())
+    field = VektraAssessSettings.model_fields["erasure_alert_after_s"]
+    assert low in [getattr(m, "ge", None) for m in field.metadata]
+    with pytest.raises(ValidationError):
+        VektraAssessSettings.model_validate(
+            {"VEKTRA_ASSESS_ERASURE_ALERT_AFTER_S": low - 1}
+        )
+    ok = VektraAssessSettings.model_validate(
+        {"VEKTRA_ASSESS_ERASURE_ALERT_AFTER_S": low}
+    )
+    assert ok.erasure_alert_after_s == low

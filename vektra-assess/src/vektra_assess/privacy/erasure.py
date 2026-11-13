@@ -26,12 +26,14 @@ rest (its pre-flight finds nothing and completes). Then, in ONE transaction:
 
 Operator alerts (OQ-033). The LMS cannot leave its own privacy request failed (its
 privacy manager catches a provider's exception and completes the request anyway), so Vektra tells the
-operator: a request recorded ``failed`` queues one ``operator_notify``
-(``erasure_verification_failed``) in the transaction that records it, and the worker's
-``delivery_retry`` tick queues one ``erasure_overdue`` for a request still not completed
-``VEKTRA_ASSESS_ERASURE_ALERT_AFTER_S`` after it was made (``alert_overdue_erasures``). Each is
-deduplicated per request for good (its ``dedupe_key``, checked against every job state). The job
-carries the site, the request id, the scope and a reason code: no user id, subject hash or cmid.
+operator (the names are ``vektra_assess.erasure_alerts``): a request recorded ``failed`` by its
+run queues one ``operator_notify`` (``erasure_verification_failed``) in the transaction that
+records it; the worker's ``delivery_retry`` tick queues one ``erasure_overdue`` for a request
+still not completed ``VEKTRA_ASSESS_ERASURE_ALERT_AFTER_S`` after it was made, and marks it
+(``overdue_alerted_at``, revision a0003) in the same transaction; the daily purge, recording a
+day-old open request ``failed`` (``abandoned``), queues ``erasure_abandoned``. Once per request
+is the request's own state, never a job row (the job retention may prune it). The job carries
+the site, the request id and the scope: no user id, subject hash or cmid.
 
 Teacher-entered recipient addresses are not a subject's data in this model (REQ-082 as amended:
 the teacher types them, nothing maps a student id to an address), so nothing is removed from
@@ -51,6 +53,7 @@ import structlog
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection
 
+from vektra_assess import erasure_alerts as alerts
 from vektra_assess.audit import AssessAuditEvent, write_event
 from vektra_assess.jobs import JobKind, enqueue_job
 from vektra_assess.privacy.purge import (
@@ -117,7 +120,7 @@ _RECORD = text(
 _COMPLETE = text(
     "UPDATE assess_erasure_records SET completed_at = now(), outcome = :o, error_code = :e, "
     "rows_deleted = CAST(:counts AS jsonb), subject_userids = NULL, subject_userid_hash = NULL "
-    "WHERE id = :i"
+    "WHERE id = :i AND completed_at IS NULL"
 )
 #: a transcript copy whose attempt started recently and has no outcome yet: maybe on the wire
 _SENDING = text(
@@ -381,14 +384,21 @@ async def run_erasure(connect: Connect, erasure_id: int) -> str:
     except ErasureVerificationFailed as exc:
         log.error(
             "assess.erasure.alert",
-            alert="erasure_verification_failed",
+            alert=alerts.FAILED,
             erasure_id=int(erasure_id),
             left=str(exc)[:200],
         )
-    # the deletion rolled back: record the failure (and drop the ids it carried) on its own,
-    # with the operator's alert in the same transaction (OQ-033)
+    return await record_failure(connect, erasure_id)
+
+
+async def record_failure(connect: Connect, erasure_id: int) -> str:
+    """The deletion rolled back: record the failure (and drop the ids it carried) on its own,
+    with the operator's alert in the same transaction (OQ-033). A request another run already
+    completed is left as it is and alerts nothing (``done``), like the other two steps."""
     async with connect() as conn, conn.begin():
         rec = (await conn.execute(_RECORD, {"i": erasure_id})).first()
+        if rec is None or rec.completed_at is not None:
+            return "done"
         await conn.execute(
             _COMPLETE,
             {
@@ -398,36 +408,33 @@ async def run_erasure(connect: Connect, erasure_id: int) -> str:
                 "counts": "{}",
             },
         )
-        if rec is not None:
-            await queue_operator_alert(
-                conn, ALERT_FAILED, rec.site_id, int(erasure_id), str(rec.scope)
-            )
+        await queue_operator_alert(
+            conn, alerts.FAILED, rec.site_id, int(erasure_id), str(rec.scope)
+        )
     return "failed"
 
 
-#: the operator alerts' names: the log alert and the ``operator_notify`` job's ``kind``
-ALERT_FAILED = "erasure_verification_failed"
-ALERT_OVERDUE = "erasure_overdue"
-_ALERT_REASON = {ALERT_FAILED: "verification_failed", ALERT_OVERDUE: "not_completed"}
-_ALERTED = text("SELECT 1 FROM assess_jobs WHERE dedupe_key = :k LIMIT 1")
+#: the open requests past the threshold that were not reported yet (the partial index of
+#: revision a0003); locked so two sweeps never report the same request
 _OVERDUE = text(
     "SELECT id, site_id, scope FROM assess_erasure_records WHERE completed_at IS NULL "
-    "AND requested_at < now() - make_interval(secs => :after) ORDER BY id LIMIT :n"
+    "AND overdue_alerted_at IS NULL AND requested_at < now() - make_interval(secs => :after) "
+    "ORDER BY id LIMIT :n FOR UPDATE SKIP LOCKED"
 )
-#: one sweep queues at most this many alerts; the next tick takes the rest
+_MARK_OVERDUE = text(
+    "UPDATE assess_erasure_records SET overdue_alerted_at = now() WHERE id = ANY(:ids)"
+)
+#: one sweep reports at most this many requests; the next tick takes the rest
 OVERDUE_BATCH = 100
 
 
 async def queue_operator_alert(
     conn: AsyncConnection, alert: str, site_id: UUID, erasure_id: int, scope: str
-) -> bool:
-    """One ``operator_notify`` per (alert, request), ever. Returns whether it was queued."""
-    key = f"operator_notify:{alert}:{erasure_id}"
-    # the unique dedupe index covers pending jobs only: an alert already delivered (done)
-    # must not be sent again either
-    if (await conn.execute(_ALERTED, {"k": key})).first() is not None:
-        return False
-    queued = await enqueue_job(
+) -> None:
+    """Queue the ``operator_notify`` of one erasure alert (``erasure_alerts``), in the caller's
+    transaction: ids and codes only. Once per request is the caller's state (the completion of
+    a failed or abandoned request, the overdue marker), never a job row that may be pruned."""
+    await enqueue_job(
         conn,
         JobKind.OPERATOR_NOTIFY,
         {
@@ -435,33 +442,32 @@ async def queue_operator_alert(
             "kind": alert,
             "erasure_id": int(erasure_id),
             "scope": scope,
-            "reason": _ALERT_REASON[alert],
         },
-        dedupe_key=key,
+        dedupe_key=f"operator_notify:{alert}:{erasure_id}",
     )
-    return bool(queued)
 
 
 async def alert_overdue_erasures(connect: Connect, *, after_s: int) -> int:
     """The ``delivery_retry`` tick's sweep: one ``erasure_overdue`` alert per request still not
-    completed ``after_s`` seconds after it was made. Returns the alerts queued now."""
-    queued = 0
+    completed ``after_s`` seconds after it was made, marked on the request in the same
+    transaction. Returns the requests reported now."""
     async with connect() as conn, conn.begin():
         rows = (
             await conn.execute(_OVERDUE, {"after": after_s, "n": OVERDUE_BATCH})
         ).all()
         for row in rows:
-            if await queue_operator_alert(
-                conn, ALERT_OVERDUE, row.site_id, int(row.id), str(row.scope)
-            ):
-                queued += 1
-                log.error(
-                    "assess.erasure.alert",
-                    alert=ALERT_OVERDUE,
-                    erasure_id=int(row.id),
-                    scope=str(row.scope),
-                )
-    return queued
+            await queue_operator_alert(
+                conn, alerts.OVERDUE, row.site_id, int(row.id), str(row.scope)
+            )
+            log.error(
+                "assess.erasure.alert",
+                alert=alerts.OVERDUE,
+                erasure_id=int(row.id),
+                scope=str(row.scope),
+            )
+        if rows:
+            await conn.execute(_MARK_OVERDUE, {"ids": [int(row.id) for row in rows]})
+    return len(rows)
 
 
 def make_erasure_handler(connect: Connect) -> Callable[[Any], Any]:

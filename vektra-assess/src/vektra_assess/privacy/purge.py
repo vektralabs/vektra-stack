@@ -44,6 +44,7 @@ import structlog
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection
 
+from vektra_assess import erasure_alerts as alerts
 from vektra_assess.audit import AssessAuditEvent, write_event
 from vektra_assess.jobs import JobKind, enqueue_job
 from vektra_assess.keys import RESERVED_KID
@@ -352,7 +353,8 @@ _SMTP_TEST_ROWS = text(
 _STALE_ERASURES = text(
     "UPDATE assess_erasure_records SET completed_at = now(), outcome = 'failed', "
     "error_code = 'abandoned', subject_userids = NULL, subject_userid_hash = NULL "
-    "WHERE completed_at IS NULL AND requested_at < now() - interval '1 day'"
+    "WHERE completed_at IS NULL AND requested_at < now() - interval '1 day' "
+    "RETURNING id, site_id, scope"
 )
 _OLD_TOKENS = text(
     "DELETE FROM assess_transcript_download_tokens WHERE expires_at < now() - interval '1 day'"
@@ -456,8 +458,22 @@ async def run_purge(
             report.tokens = max(res.rowcount, 0)
             # an erasure request whose job died never completes: after a day it is recorded failed
             # and the ids it carried are dropped (the plugin's retry makes a new request)
-            res = await conn.execute(_STALE_ERASURES)
-            report.stale_erasures = max(res.rowcount, 0)
+            # The operator hears it (OQ-033): one ``erasure_abandoned`` alert per request,
+            # in this transaction (the completion is the once-per-request state)
+            from vektra_assess.privacy.erasure import queue_operator_alert
+
+            stale = (await conn.execute(_STALE_ERASURES)).all()
+            for rec in stale:
+                await queue_operator_alert(
+                    conn, alerts.ABANDONED, rec.site_id, int(rec.id), str(rec.scope)
+                )
+                log.error(
+                    "assess.erasure.alert",
+                    alert=alerts.ABANDONED,
+                    erasure_id=int(rec.id),
+                    scope=str(rec.scope),
+                )
+            report.stale_erasures = len(stale)
             if report.backlog:
                 # a site with more due than a run's cap: another bounded run soon, as a ``purge``
                 # job, instead of letting content outlive its retention until tomorrow

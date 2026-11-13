@@ -232,10 +232,11 @@ no log files fails rather than passing.
 > `core_privacy\manager::handled_component_class_callback()` catches any Throwable from a
 > provider, notifies the site DPOs and completes the `tool_dataprivacy` request anyway: a
 > failure on the Vektra side never reaches the LMS as a failed request. Vektra alerts the
-> operator instead: `operator_notify` `erasure_verification_failed` when a request is recorded
-> failed, and `erasure_overdue` when one is still open after
-> `VEKTRA_ASSESS_ERASURE_ALERT_AFTER_S` (default 3600 s), each once per request; ids and codes
-> only. The module has no erasure metrics, so none were added (the log alert and the email are
+> operator instead: `operator_notify` `erasure_verification_failed` when a run records a request
+> failed, `erasure_overdue` when one is still open after `VEKTRA_ASSESS_ERASURE_ALERT_AFTER_S`
+> (default 3600 s, at least the 900 s in-flight wait; marker `overdue_alerted_at`, revision
+> `a0003`) and `erasure_abandoned` when the daily purge records a day-old one failed; each once
+> per request, held by the request's own state; ids and codes only. The module has no erasure metrics, so none were added (the log alert and the email are
 > the signals).
 
 - OQ-020 (DPO): retention value, legal basis, notice text, erasure mode and REQ-092 approval are

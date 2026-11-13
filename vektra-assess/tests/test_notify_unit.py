@@ -863,35 +863,34 @@ def _erasure_args(kind: str, **over: Any) -> dict[str, Any]:
     }
 
 
-async def test_the_erasure_alerts_are_read_for_the_operator_only() -> None:
-    failed = await n.read_event(
-        Conn(), JobKind.OPERATOR_NOTIFY, _erasure_args("erasure_verification_failed")
-    )
-    assert failed == n.Event(
-        "erasure_verification_failed",
-        SITE,
-        reason="verification_failed",
-        erasure_id=41,
-        scope="subject",
-    )
-    # overdue is re-read: still open -> the alert; completed since -> a no-op
-    open_row = SimpleNamespace(completed_at=None)
-    overdue = await n.read_event(
-        Conn(open_row),
+@pytest.mark.parametrize("code", ["erasure_verification_failed", "erasure_abandoned"])
+async def test_a_failure_alert_is_read_without_a_re_read(code: str) -> None:
+    conn = Conn()
+    e = await n.read_event(conn, JobKind.OPERATOR_NOTIFY, _erasure_args(code))
+    assert e == n.Event(code, SITE, erasure_id=41, scope="subject")
+    assert conn.calls == 0
+
+
+@pytest.mark.parametrize(
+    ("row", "sent"),
+    [
+        (SimpleNamespace(completed_at=None, outcome=None), True),  # still open
+        (SimpleNamespace(completed_at=WHEN, outcome="failed"), True),  # ended failed
+        (None, True),  # the record is gone: say so rather than nothing
+        (SimpleNamespace(completed_at=WHEN, outcome="erased"), False),  # done since
+    ],
+)
+async def test_an_overdue_alert_is_dropped_only_for_a_successful_request(
+    row: Any, sent: bool
+) -> None:
+    """Review finding 3: only an erasure that completed successfully silences it."""
+    e = await n.read_event(
+        Conn(row),
         JobKind.OPERATOR_NOTIFY,
         _erasure_args("erasure_overdue", scope="activity"),
     )
-    assert overdue == n.Event(
-        "erasure_overdue", SITE, reason="not_completed", erasure_id=41, scope="activity"
-    )
-    done_row = SimpleNamespace(completed_at=WHEN)
-    for row in (done_row, None):
-        assert (
-            await n.read_event(
-                Conn(row), JobKind.OPERATOR_NOTIFY, _erasure_args("erasure_overdue")
-            )
-            is None
-        )
+    want = n.Event("erasure_overdue", SITE, erasure_id=41, scope="activity")
+    assert (e == want) if sent else (e is None)
 
 
 @pytest.mark.parametrize(
@@ -911,29 +910,38 @@ async def test_the_erasure_alerts_are_read_for_the_operator_only() -> None:
             _erasure_args("erasure_verification_failed", scope="all"),
         ),
         (JobKind.OPERATOR_NOTIFY, _erasure_args("erasure_overdue", erasure_id=None)),
+        (JobKind.OPERATOR_NOTIFY, _erasure_args("erasure_other")),
     ],
 )
 async def test_a_malformed_erasure_alert_is_a_no_op(
     kind: JobKind, args: dict[str, Any]
 ) -> None:
-    assert (
-        await n.read_event(Conn(SimpleNamespace(completed_at=None)), kind, args) is None
+    conn = Conn(SimpleNamespace(completed_at=None, outcome=None))
+    assert await n.read_event(conn, kind, args) is None
+
+
+def test_the_erasure_kinds_are_one_definition() -> None:
+    """Review finding 8: notify reads the producer's names, it does not repeat them."""
+    from vektra_assess import erasure_alerts as ea
+
+    assert ea.KINDS == (
+        "erasure_verification_failed",
+        "erasure_overdue",
+        "erasure_abandoned",
     )
+    assert n.ERASURE_KINDS is ea.KINDS
 
 
 def test_the_erasure_emails_carry_ids_and_codes_only() -> None:
-    for code, reason in (
-        ("erasure_verification_failed", "verification_failed"),
-        ("erasure_overdue", "not_completed"),
-    ):
-        e = n.Event(code, SITE, reason=reason, erasure_id=41, scope="activity")
+    for code in ("erasure_verification_failed", "erasure_overdue", "erasure_abandoned"):
+        e = n.Event(code, SITE, erasure_id=41, scope="activity")
         msg = _mail(JobKind.OPERATOR_NOTIFY, e)
         body = msg.get_content()
         assert str(SITE) in body and "41" in body and "activity" in body
-        assert reason in body
+        assert code in body
         assert "41" in str(msg["Subject"])
     with pytest.raises(ValueError, match="no text"):
         _mail(
             JobKind.TEACHER_NOTIFY,
-            n.Event("erasure_overdue", SITE, reason="not_completed", erasure_id=1),
+            n.Event("erasure_overdue", SITE, erasure_id=1, scope="subject"),
         )

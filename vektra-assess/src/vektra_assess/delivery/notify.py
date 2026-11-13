@@ -10,10 +10,12 @@ Producers (unchanged, all in the transaction of the event):
   rollback_cap}``;
 - ``start_guard.alert_lms_unreachable``: ``operator_notify`` with ``{site_id, reason, kind:
   lms_unreachable}`` (one per site per 15 minutes);
-- ``privacy.erasure``: ``operator_notify`` with ``{site_id, kind, erasure_id, scope, reason}``,
-  ``kind`` ``erasure_verification_failed`` (a request that ended failed) or ``erasure_overdue``
-  (a request still not completed after ``VEKTRA_ASSESS_ERASURE_ALERT_AFTER_S``; re-read at
-  send time, a request completed since is a no-op). OQ-033: the LMS cannot fail its own
+- ``privacy.erasure`` and ``privacy.purge``: ``operator_notify`` with ``{site_id, kind,
+  erasure_id, scope}``, ``kind`` one of ``vektra_assess.erasure_alerts.KINDS``:
+  ``erasure_verification_failed`` (the run recorded the request failed), ``erasure_overdue``
+  (still not completed after ``VEKTRA_ASSESS_ERASURE_ALERT_AFTER_S``; re-read at send time and
+  dropped only if the request has since been erased: one that ended failed is still reported) or
+  ``erasure_abandoned`` (recorded failed by the daily purge). OQ-033: the LMS cannot fail its own
   request, so the operator hears it from Vektra.
 
 Recipients: the teacher side is the activity's configured transcript recipients (the sealed
@@ -52,6 +54,7 @@ from uuid import UUID
 import structlog
 from sqlalchemy import text
 
+from vektra_assess import erasure_alerts
 from vektra_assess.audit import AssessAuditEvent, write_event
 from vektra_assess.delivery import message as mail
 from vektra_assess.delivery.attempt import AttemptEvents, count, decide, record
@@ -86,15 +89,8 @@ ROLLBACK_CAP = "rollback_cap"
 #: content is gone by the time the notice runs)
 PURGE_ABANDONED = "delivery_abandoned_on_purge"
 LMS_UNREADABLE = "lms_unreachable"
-#: OQ-033 operator alerts of ``privacy.erasure`` (the same names as its log alerts)
-ERASURE_FAILED = "erasure_verification_failed"
-ERASURE_OVERDUE = "erasure_overdue"
-#: the fixed reason code each erasure alert carries
-ERASURE_REASONS = {
-    ERASURE_FAILED: "verification_failed",
-    ERASURE_OVERDUE: "not_completed",
-}
-ERASURE_SCOPES = ("subject", "activity")
+#: OQ-033 operator alerts (the producer's names, one definition)
+ERASURE_KINDS = erasure_alerts.KINDS
 NO_RECIPIENTS = "no_recipients"
 RECIPIENT_WITHDRAWN = "recipient_withdrawn"
 #: a busy relay is tried again after this long (no attempt was made, nothing to back off from)
@@ -164,7 +160,7 @@ _SESSION = text(
     "SELECT site_id, cmid, student_userid, session_no FROM assess_sessions WHERE id = :s"
 )
 _ERASURE = text(
-    "SELECT completed_at FROM assess_erasure_records WHERE id = :i AND site_id = :s"
+    "SELECT completed_at, outcome FROM assess_erasure_records WHERE id = :i AND site_id = :s"
 )
 
 
@@ -206,22 +202,16 @@ async def read_event(conn: Any, kind: JobKind, args: Mapping[str, Any]) -> Event
     site = _uuid(args.get("site_id"))
     if site is None:
         return None
-    if args.get("kind") in ERASURE_REASONS:
+    if args.get("kind") in ERASURE_KINDS:
         code = str(args["kind"])
         number, scope = _int(args.get("erasure_id")), args.get("scope")
-        if kind is not OPERATOR or number is None or scope not in ERASURE_SCOPES:
+        if kind is not OPERATOR or number is None or scope not in erasure_alerts.SCOPES:
             return None
-        if code == ERASURE_OVERDUE:
+        if code == erasure_alerts.OVERDUE:
             rec = (await conn.execute(_ERASURE, {"i": number, "s": site})).first()
-            if rec is None or rec.completed_at is not None:
-                return None  # completed (or gone) since the sweep: nothing to report
-        return Event(
-            code,
-            site,
-            reason=ERASURE_REASONS[code],
-            erasure_id=number,
-            scope=str(scope),
-        )
+            if rec is not None and rec.outcome == "erased":
+                return None  # erased since the sweep: nothing left to report
+        return Event(code, site, erasure_id=number, scope=str(scope))
     if args.get("kind") == LMS_UNREADABLE:
         if (
             kind is not OPERATOR
@@ -309,23 +299,31 @@ def _text(kind: JobKind, e: Event) -> tuple[str, str]:
             "valido. L'avviso arriva al massimo una volta ogni 15 minuti per sito.\n"
             + _FOOTER,
         )
-    if kind is OPERATOR and e.code in ERASURE_REASONS:
-        failed = e.code == ERASURE_FAILED
+    if kind is OPERATOR and e.code in ERASURE_KINDS:
+        what = {
+            erasure_alerts.FAILED: (
+                "non riuscita",
+                "e' terminata con esito negativo: la verifica dopo la cancellazione ha trovato "
+                "righe rimaste e la cancellazione e' stata annullata.",
+            ),
+            erasure_alerts.OVERDUE: (
+                "non completata",
+                "non e' ancora completata oltre la soglia "
+                "VEKTRA_ASSESS_ERASURE_ALERT_AFTER_S.",
+            ),
+            erasure_alerts.ABANDONED: (
+                "abbandonata",
+                "non si e' completata entro un giorno ed e' stata registrata come non "
+                "riuscita (abandoned): nulla e' stato cancellato.",
+            ),
+        }[e.code]
         return (
-            f"Vektra: cancellazione {'non riuscita' if failed else 'non completata'} - "
-            f"sito {e.site_id} - richiesta {e.erasure_id}",
-            (
-                "Una richiesta di cancellazione dei dati (OQ-033) e' terminata con esito "
-                "negativo: la verifica dopo la cancellazione ha trovato righe rimaste e la "
-                "cancellazione e' stata annullata.\n\n"
-                if failed
-                else "Una richiesta di cancellazione dei dati (OQ-033) non e' ancora "
-                "completata oltre la soglia VEKTRA_ASSESS_ERASURE_ALERT_AFTER_S.\n\n"
-            )
-            + f"  sito: {e.site_id}\n"
+            f"Vektra: cancellazione {what[0]} - sito {e.site_id} - richiesta {e.erasure_id}",
+            f"Una richiesta di cancellazione dei dati (OQ-033) {what[1]}\n\n"
+            f"  sito: {e.site_id}\n"
             f"  richiesta: {e.erasure_id}\n"
             f"  ambito: {e.scope}\n"
-            f"  motivo: {e.reason}\n\n"
+            f"  avviso: {e.code}\n\n"
             "L'LMS ha comunque chiuso la propria richiesta: va gestita qui. Controllare il "
             "registro del worker (assess.erasure.alert) e ripetere la richiesta dall'LMS; "
             "vedere la guida operativa, sezione sugli avvisi di cancellazione.\n"

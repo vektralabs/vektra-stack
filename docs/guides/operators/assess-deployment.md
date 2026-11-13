@@ -293,20 +293,26 @@ example alert rules are in `deploy/prometheus/assess-alerts.yml.example`.
 ## Erasure alerts
 
 An erasure request comes from the LMS's privacy API (OQ-033). The LMS cannot leave its own
-request failed: Moodle's privacy manager catches whatever the plugin's provider raises, tells
+request failed: its privacy manager catches whatever the plugin's provider raises, tells
 the site's DPOs and completes the request anyway. So a request that does not complete on the
 Vektra side would go unnoticed there, and Vektra emails the operator instead
 (`operator_notify`, to `VEKTRA_ASSESS_OPERATOR_EMAIL` through the transcript relay):
 
 | Alert | When | Sent |
 |---|---|---|
-| `erasure_verification_failed` | the worker's count after the deletion found rows left: the deletion was rolled back and the request recorded `failed` (`error_code` `verification_failed`) | once per request, in the transaction that records the failure |
-| `erasure_overdue` | the request is still not completed `VEKTRA_ASSESS_ERASURE_ALERT_AFTER_S` (default 3600 s) after it was made: its job is waiting for work in flight, retrying, or dead | once per request, from the worker's `delivery_retry` tick (every 30 s); a request completed before the email goes out sends nothing |
+| `erasure_verification_failed` | the worker's count after the deletion found rows left: the deletion was rolled back and the request recorded `failed` (`error_code` `verification_failed`) | once per request, in the transaction that records the failure (a run that finds the request already completed by another run records and sends nothing) |
+| `erasure_overdue` | the request is still not completed `VEKTRA_ASSESS_ERASURE_ALERT_AFTER_S` (default 3600 s, at least 900 s) after it was made: its job is waiting for work in flight, retrying, or dead | once per request, from the worker's `delivery_retry` tick (every 30 s), marked on the request (`overdue_alerted_at`) in the same transaction, so pruned job rows never bring a second email. At send time it is dropped only if the request has since been **erased**; a request that ended `failed` is still reported |
+| `erasure_abandoned` | the request is still open a day after it was made: the daily purge records it `failed` (`error_code` `abandoned`) and drops the ids it carried | once per request, in the purge's transaction; the request was already reported overdue |
 
-The email and the job carry the site id, the request id (`assess_erasure_records.id`), the
-scope (`subject` or `activity`) and the reason code: never a user id, the subject's hash or the
-activity. The worker also logs `assess.erasure.alert` with the same `alert` name. The
-alerts need the relay (`VEKTRA_ASSESS_SMTP_*`) and `VEKTRA_ASSESS_OPERATOR_EMAIL`, like every
+The threshold is never below 900 s: an erasure waits up to 15 minutes for a transcript copy that
+may be on the wire, and alerting sooner would report a request working as designed. It is at most
+12 h, under the purge's one day.
+
+The email and the job carry the site id, the request id (`assess_erasure_records.id`) and the
+scope (`subject` or `activity`): never a user id, the subject's hash or the activity. The worker
+also logs `assess.erasure.alert` with the same `alert` name; a failure of the overdue sweep
+itself is logged `assess_erasure_overdue_sweep_failed` and does not stop the rest of the tick.
+The alerts need the relay (`VEKTRA_ASSESS_SMTP_*`) and `VEKTRA_ASSESS_OPERATOR_EMAIL`, like every
 operator notification.
 
 What to do:
@@ -322,8 +328,8 @@ What to do:
 3. `erasure_verification_failed`: nothing was deleted. Read the worker's log line
    (`left=` names the tables), fix the cause, then have the DPO repeat the request from the
    LMS (a new request; the failed one stays recorded).
-4. A request still open after a day is recorded `failed` (`abandoned`) by the daily purge; it
-   has already been reported as overdue.
+4. `erasure_abandoned`: nothing was deleted and the request will not run again. Fix what kept
+   it from running (step 2), then have the DPO repeat the request from the LMS.
 
 ## TLS and the two public origins
 

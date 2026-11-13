@@ -690,14 +690,17 @@ class VektraAssessSettings(BaseSettings):
     )
     erasure_alert_after_s: int = Field(
         3600,
-        ge=300,
+        # never below the purge's IN_FLIGHT (15 min, ``privacy.purge``; the unit test ties the
+        # two): an erasure legitimately waits that long for a transcript copy that may be on the
+        # wire, and alerting sooner would report a request working as designed
+        ge=900,
         le=43_200,
         alias="VEKTRA_ASSESS_ERASURE_ALERT_AFTER_S",
         description=(
             "An erasure request still not completed this many seconds after it was made "
             "queues one operator_notify (erasure_overdue, OQ-033: the LMS cannot fail its own "
-            "request). At most 12 h: the daily purge records a request older than a day as "
-            "failed (abandoned)."
+            "request). At least 900 s, the wait for a transcript copy in flight; at most 12 h: "
+            "the daily purge records a request older than a day as failed (abandoned)."
         ),
     )
     db_backup_retention_days: int | None = Field(

@@ -32,9 +32,10 @@ import os
 import socket
 import sys
 import uuid
-from collections.abc import AsyncIterator, Iterable, Mapping
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterable, Mapping
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
+from datetime import timedelta
 from importlib import metadata
 from typing import Any
 
@@ -548,6 +549,41 @@ def smtp_config(settings: Any, credentials: Any) -> Any:
     )
 
 
+def make_delivery_retry_tick(
+    connect: Any,
+    *,
+    stale_after: timedelta,
+    window: timedelta,
+    smtp_test_lease: timedelta,
+    erasure_alert_after_s: int,
+) -> Callable[[], Awaitable[None]]:
+    """The ``delivery_retry`` tick body. Its steps are looked up at each run (so a test can
+    replace one). The erasure sweep (OQ-033) is isolated: an exception in it is logged and the
+    tick goes on, so the SMTP-test reaper always runs after it."""
+
+    async def delivery_retry() -> None:
+        from vektra_assess.delivery.handler import delivery_retry_tick
+        from vektra_assess.delivery.notify import rescue_dead_chains
+        from vektra_assess.delivery.smtp_test import reap_interrupted_tests
+        from vektra_assess.privacy.erasure import alert_overdue_erasures
+
+        await delivery_retry_tick(connect, stale_after=stale_after, window=window)
+        # plan 12b: a notification chain whose job died gets its next run back, and an SMTP
+        # test whose single-attempt job died ends FAILED interrupted (review #2)
+        await rescue_dead_chains(connect)
+        # OQ-033: an erasure request still open past the threshold alerts the operator once
+        try:
+            await alert_overdue_erasures(connect, after_s=erasure_alert_after_s)
+        except Exception as exc:
+            log.error(
+                "assess_erasure_overdue_sweep_failed",
+                error_class=type(exc).__name__,
+            )
+        await reap_interrupted_tests(connect, stale_after=smtp_test_lease)
+
+    return delivery_retry
+
+
 def _delivery_parts(checked: Checked) -> DeliveryParts:
     """The ``transcript_deliver``, ``teacher_notify`` and ``operator_notify`` handlers and the
     ``delivery_retry`` / ``smtp_probe`` ticks.
@@ -562,19 +598,9 @@ def _delivery_parts(checked: Checked) -> DeliveryParts:
         k in checked.keys for k in needed
     ):
         return DeliveryParts({}, {})
-    from datetime import timedelta
-
     from vektra_assess.delivery.backoff import parse_schedule
-    from vektra_assess.delivery.handler import (
-        DeliveryDeps,
-        delivery_retry_tick,
-        make_deliver_handler,
-    )
-    from vektra_assess.delivery.notify import (
-        NotifyDeps,
-        make_notify_handler,
-        rescue_dead_chains,
-    )
+    from vektra_assess.delivery.handler import DeliveryDeps, make_deliver_handler
+    from vektra_assess.delivery.notify import NotifyDeps, make_notify_handler
     from vektra_assess.delivery.probe import run_probe
     from vektra_assess.delivery.recipients import ConfigRecipients, parse_domains
     from vektra_assess.delivery.smtp import SmtpSender
@@ -628,27 +654,15 @@ def _delivery_parts(checked: Checked) -> DeliveryParts:
     )
     engine = checked.engine
 
-    async def delivery_retry() -> None:
-        await delivery_retry_tick(
-            engine.connect, stale_after=deps.stale_after, window=deps.window
-        )
-        # plan 12b: a notification chain whose job died gets its next run back, and an SMTP test
-        # whose single-attempt job died ends FAILED interrupted (review #2)
-        await rescue_dead_chains(engine.connect)
-        # OQ-033: an erasure request still open past the threshold alerts the operator once
-        from vektra_assess.privacy.erasure import alert_overdue_erasures
-
-        await alert_overdue_erasures(
-            engine.connect, after_s=settings.erasure_alert_after_s
-        )
-        from vektra_assess.delivery.smtp_test import reap_interrupted_tests
-
-        await reap_interrupted_tests(
-            engine.connect,
-            stale_after=timedelta(
-                seconds=policy_all.kinds[JobKind.SMTP_TEST_SEND].lease_s
-            ),
-        )
+    delivery_retry = make_delivery_retry_tick(
+        engine.connect,
+        stale_after=deps.stale_after,
+        window=deps.window,
+        smtp_test_lease=timedelta(
+            seconds=policy_all.kinds[JobKind.SMTP_TEST_SEND].lease_s
+        ),
+        erasure_alert_after_s=settings.erasure_alert_after_s,
+    )
 
     async def smtp_probe() -> None:
         # one whole probe; the tick's own timeout (slots.probe_tick_timeout_s) is longer

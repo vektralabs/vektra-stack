@@ -227,6 +227,19 @@ no log files fails rather than passing.
 
 ## Notes
 
+> **Reset `consumed_at` is derived on read (2026-11-13, branch
+> `fix/assess-reset-grant-consumed-at`).** No code ever wrote `assess_reset_grants.consumed_at`,
+> so the subject export showed every reset unconsumed. The export now derives it
+> (`privacy.subject.reset_consumed_at_sql`): the `committed_at` of the session numbered
+> `session_no + 1` for the same site, cmid and student, NULL while none committed. Writing it in
+> the pre-flight commit transaction was tried and dropped in review: it put a write after the T
+> guard (the guard must stay the last statement before COMMIT, now pinned by
+> `test_no_statement_runs_between_the_t_guard_and_commit`), and a row lock held by the KEK
+> rotation or the purge could carry the commit past T or roll back a valid Start.
+> **Follow-up:** the stored column is unused and always NULL; a later assess schema revision
+> drops it, or at least revokes the worker's `UPDATE (consumed_at)` grant on
+> `assess_reset_grants` (regenerating the goldens).
+
 > **OQ-033, the LMS cannot fail an erasure request (2026-11-13, branch
 > `feat/assess-erasure-operator-alert`).** Moodle's
 > `core_privacy\manager::handled_component_class_callback()` catches any Throwable from a

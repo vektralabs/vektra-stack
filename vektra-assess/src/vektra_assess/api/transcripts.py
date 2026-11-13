@@ -4,7 +4,7 @@
     A site-bound key: ``assess:mint`` for the OWNER (body ``{"sub"}``, must be the transcript's
     student) or ``assess:teacher`` for a GRADER (body ``{"actor_userid"}``, verified as a grader of
     that activity against fresh worker-written facts; stale -> 403 and a refresh is queued). The
-    admin superscope never applies. An optional ``cmid`` (the plugin's page) must be the
+    admin superscope never applies. A required ``cmid`` (the plugin's page) must be the
     transcript's activity (see "Page cmid" below). Returns a single-use download token
     (``aud=transcript``, TTL <= 120 s); its jti is stored hashed at mint.
 
@@ -20,20 +20,19 @@
     A grader (``assess:teacher`` + ``actor_userid``) or an operator (``admin`` key). Nobody can
     name a recipient: any recipient-like field in the body or the query is a 400
     ``ERR-ASSESS-019`` (an explicit envelope, not the 422 path). Round n+1 goes to the
-    recipients of the last round, through ``assess_enqueue_resend``. A grader may send ``cmid``
+    recipients of the last round, through ``assess_enqueue_resend``. A grader must send ``cmid``
     (the plugin's page); the operator may not (an ``admin`` key has no site, and a cmid means
     something only within one): 400 unknown field.
 
 Page cmid (plugin request)
     The plugin checks the capability on its page's cmid, Vektra the grader role on the
-    transcript's activity. With ``cmid``, a transcript (or a purged transcript's tombstone) of
-    another activity is refused with the envelope of an unknown transcript (404
-    ``ERR-ASSESS-017``), before any role check, and audited ``assess_ownership_mismatch_rejected``.
-    This keeps the page from reaching another activity's transcripts; it does not by itself hide
-    whether a transcript exists (without ``cmid`` a grader check still answers 403 where an
-    unknown id answers 404). A grader call without ``cmid`` is logged and counted
-    (``vektra_assess_transcript_cmid_missing_total``) until the plugin's minimum version makes
-    it required.
+    transcript's activity. A transcript (or a purged transcript's tombstone) of another activity
+    than ``cmid`` is refused with the envelope of an unknown transcript (404 ``ERR-ASSESS-017``),
+    before any role check, and audited ``assess_ownership_mismatch_rejected``. This keeps the
+    page from reaching another activity's transcripts. ``cmid`` is required on the download-token
+    mint (owner and grader) and on the grader's resend: every ``local_vektradiscuss`` release
+    from 0.2.0, the minimum accepted at mint, sends it; a call without it is a 400
+    ``ERR-ASSESS-014`` ``missing:cmid``.
 """
 
 from __future__ import annotations
@@ -81,7 +80,6 @@ from vektra_assess.errors import (
 )
 from vektra_assess.jobs import JobKind, enqueue_job
 from vektra_assess.keys import AssessKeyring
-from vektra_assess.metrics import count_transcript_cmid_missing
 from vektra_assess.privacy.subject import subject_ref
 from vektra_assess.tokens import SIGNING_SECRET, TokenError, keyring_from
 from vektra_assess.transcript import store
@@ -114,15 +112,13 @@ class MintBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
     sub: int | None = Field(None, ge=1)
     actor_userid: int | None = Field(None, ge=1)
-    cmid: Cmid | None = (
-        None  # the plugin page's activity (module docstring, "Page cmid")
-    )
+    cmid: Cmid  # the plugin page's activity (module docstring, "Page cmid")
 
 
 class ResendBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
     actor_userid: int | None = Field(None, ge=1)
-    cmid: Cmid | None = None  # grader path only
+    cmid: Cmid | None = None  # grader path only, and required there
 
 
 _TRANSCRIPT = text(
@@ -245,8 +241,6 @@ async def mint_download_token(
         raise fail(bad_request("sub_or_actor_userid"))
     t = _uuid(tid)
     _limit(request, (t, role, requester))
-    if role == "grader" and body.cmid is None:
-        _cmid_missing("download_token", key)
     asker = _asker(role, key, requester, body.cmid)
     async with engine_of(request).begin() as conn:
         site = await site_of_key(conn, key, purpose)
@@ -321,20 +315,20 @@ _TOMBSTONE = text(
 
 
 async def _gone_or_missing(
-    conn: Any, t: UUID, site: Any, role: str, requester: int, cmid: int | None = None
+    conn: Any, t: UUID, site: Any, role: str, requester: int, cmid: int
 ) -> ErrorResponse:
     """410 for the OWNER of a transcript the retention purge removed (REQ-088: the student
     learns it expired; the tombstone's subject must be the requester), 404 for everyone else: a
     grader cannot be verified against a purged session (its facts are gone), and a transcript id
-    must tell nobody else whether it existed. With a page ``cmid``, only a tombstone of that
-    activity is reported as expired."""
+    must tell nobody else whether it existed. Only a tombstone of the page ``cmid``'s activity is
+    reported as expired."""
     if role != "owner":
         return transcript_not_found()
     tomb = (await conn.execute(_TOMBSTONE, {"t": t, "s": site})).first()
     if (
         tomb is not None
         and tomb.subject_ref == subject_ref(site, requester)
-        and (cmid is None or int(tomb.cmid) == cmid)
+        and int(tomb.cmid) == cmid
     ):
         return transcript_expired()
     return transcript_not_found()
@@ -346,18 +340,10 @@ _TOMBSTONE_CMID = text(
 )
 
 
-def _asker(
-    role: str, key: ApiKeyInfo, requester: int, cmid: int | None
-) -> dict[str, Any]:
+def _asker(role: str, key: ApiKeyInfo, requester: int, cmid: int) -> dict[str, Any]:
     """Who asked, for a page-cmid refusal's audit row (like ``DOWNLOAD_TOKEN_MINT``)."""
     who = "sub" if role == "owner" else "actor_userid"
     return {"role": role, "key_id": key.key_id, who: requester, "cmid": cmid}
-
-
-def _cmid_missing(route: str, key: ApiKeyInfo) -> None:
-    """A grader call without the page cmid: logged and counted until it becomes required."""
-    count_transcript_cmid_missing(route)
-    log.info("assess.transcript.cmid_missing", route=route, key_id=key.key_id)
 
 
 async def _other_activity(
@@ -365,16 +351,14 @@ async def _other_activity(
     row: Any,
     t: UUID,
     site: Any,
-    cmid: int | None,
+    cmid: int,
     reason: str,
     asker: dict[str, Any],
 ) -> ErrorResponse | None:
-    """The page-cmid check (module docstring): ``None`` when no cmid was sent, the transcript
-    is unknown here, or it belongs to that activity; otherwise the unknown-transcript envelope,
+    """The page-cmid check (module docstring): ``None`` when the transcript is unknown here or
+    it belongs to that activity; otherwise the unknown-transcript envelope,
     audited. ``row`` is this site's transcript row or ``None``; a purged transcript is matched
     by its tombstone's cmid. The caller raises the refusal after commit (the audit stays)."""
-    if cmid is None:
-        return None
     if row is not None:
         actual, session_id = int(row.cmid), row.id
     else:
@@ -535,7 +519,8 @@ async def resend_transcript(
         # an admin key has no site, and a cmid means something only within one
         raise fail(bad_request("extra_forbidden:cmid"))
     if teacher and body.cmid is None:
-        _cmid_missing("resend", key)
+        # the same reason a model-required field gives on the download-token mint
+        raise fail(bad_request("missing:cmid"))
     refused: Any = None
     async with engine_of(request).begin() as conn:
         if teacher:
@@ -551,14 +536,15 @@ async def resend_transcript(
             if row is None or row.site_id != site:
                 raise fail(transcript_not_found())
             actor_id = int(body.actor_userid or 0)
+            cmid = int(body.cmid or 0)  # checked above: a grader's cmid is never None
             refused = await _other_activity(
                 conn,
                 row,
                 t,
                 site,
-                body.cmid,
+                cmid,
                 "transcript_resend_cmid",
-                _asker("grader", key, actor_id, body.cmid),
+                _asker("grader", key, actor_id, cmid),
             )
             if refused is None:
                 check = await _grader_ok(conn, row, actor_id, settings)

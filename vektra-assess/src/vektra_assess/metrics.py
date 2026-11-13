@@ -11,8 +11,8 @@ id can become a label, whatever the database holds. ``LABELS`` is the whole allo
 the guard test fails if the exposition contains any other label value.
 
 Counts of rows the database still holds are GAUGES (the retention purge lowers them, review
-#3): alert on their level. The only counters are monotonic: the purge's cumulative deleted rows,
-this process's dropped log keys and its grader transcript calls without a page cmid.
+#3): alert on their level. The only counters are monotonic: the purge's cumulative deleted rows
+and this process's dropped log keys.
 """
 
 from __future__ import annotations
@@ -47,8 +47,6 @@ CLOSE_REASONS = (
     "access_revoked",
 )
 DELIVERY_STATUSES = ("PENDING", "RETRYING", "SENT", "FAILED", "ABANDONED", "REPLACED")
-#: the transcript routes a grader may call without the plugin page's cmid (plugin request)
-TRANSCRIPT_ROUTES = ("download_token", "resend")
 #: the Start rollback reasons of ``worker.preflight.Reason``; ``capture_failed_*`` variants fold
 #: into ``capture_failed``
 ROLLBACK_REASONS = (
@@ -73,23 +71,7 @@ LABELS: Mapping[str, frozenset[str]] = {
     "state": frozenset((*SESSION_STATES, OTHER)),
     "reason": frozenset((*CLOSE_REASONS, *ROLLBACK_REASONS, OTHER)),
     "status": frozenset((*DELIVERY_STATUSES, OTHER)),
-    "route": frozenset(TRANSCRIPT_ROUTES),
 }
-
-#: this process's grader calls without the page cmid, per route (a monotonic counter)
-_CMID_MISSING: dict[str, int] = dict.fromkeys(TRANSCRIPT_ROUTES, 0)
-
-
-def count_transcript_cmid_missing(route: str) -> None:
-    """One grader call of ``route`` that carried no page cmid (``TRANSCRIPT_ROUTES`` only)."""
-    if route in _CMID_MISSING:
-        _CMID_MISSING[route] += 1
-
-
-def transcript_cmid_missing() -> dict[str, int]:
-    """A copy of the per-route counts (tests and the collector)."""
-    return dict(_CMID_MISSING)
-
 
 SNAPSHOT_SQL = "SELECT public.assess_metrics_snapshot()"
 
@@ -141,14 +123,6 @@ def families(snap: Mapping[str, Any] | None, *, age_s: float | None) -> list[Met
     )
     dropped.add_metric([], float(dropped_keys_total()))
     out.append(dropped)
-    missing = CounterMetricFamily(
-        "vektra_assess_transcript_cmid_missing",
-        "Grader transcript calls without the plugin page's cmid in this process, per route",
-        labels=["route"],
-    )
-    for route, calls in transcript_cmid_missing().items():
-        missing.add_metric([route], float(calls))
-    out.append(missing)
     if snap is None:
         return out
     if age_s is not None:

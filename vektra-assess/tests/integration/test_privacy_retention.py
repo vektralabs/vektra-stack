@@ -258,7 +258,7 @@ async def test_the_purge_removes_every_content_row_and_keeps_the_control(
         ]
         got = await w.client.post(
             f"/api/v1/assess/transcripts/{target.session_id}/download-token",
-            json={"sub": target.sub},
+            json={"sub": target.sub, "cmid": target.cmid},
             headers=auth("mint"),
         )
         assert got.status_code == 410, got.text
@@ -267,14 +267,14 @@ async def test_the_purge_removes_every_content_row_and_keeps_the_control(
         # another student asking for that id learns nothing
         other = await w.client.post(
             f"/api/v1/assess/transcripts/{target.session_id}/download-token",
-            json={"sub": target.sub + 1},
+            json={"sub": target.sub + 1, "cmid": target.cmid},
             headers=auth("mint"),
         )
         assert other.status_code == 404, other.text
         # neither does a grader: the purged session's facts are gone, nothing can be verified
         grader = await w.client.post(
             f"/api/v1/assess/transcripts/{target.session_id}/download-token",
-            json={"actor_userid": 12},
+            json={"actor_userid": 12, "cmid": target.cmid},
             headers=auth("teacher"),
         )
         assert grader.status_code == 404, grader.text

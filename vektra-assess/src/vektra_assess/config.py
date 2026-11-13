@@ -459,7 +459,7 @@ class VektraAssessSettings(BaseSettings):
         description="Seconds after the deadline an in-flight reply may still finish (REQ-070).",
     )
     min_plugin_version: str = Field(
-        "0.1.0",
+        "0.2.0",
         min_length=1,
         alias="VEKTRA_ASSESS_MIN_PLUGIN_VERSION",
         description="Lowest local_vektradiscuss release accepted at mint (ARCH-067); a site's own minimum applies when higher.",

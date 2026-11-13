@@ -74,7 +74,7 @@ Follow CONTRIBUTING.md, with these points for assess:
       container that mounts a worker-only secret no longer starts).
 - [ ] Bump the published-image examples (`docs/getting-started/index.md`,
       `deploy/docker-compose.image.yml.example`).
-- [ ] `VEKTRA_ASSESS_MIN_PLUGIN_VERSION` (default `0.1.0`, checked at mint against the plugin's
+- [ ] `VEKTRA_ASSESS_MIN_PLUGIN_VERSION` (default `0.2.0`, checked at mint against the plugin's
       `plugin_version`, `403 ERR-ASSESS-016` below it) equals the lowest plugin release that
       implements the contract this version serves. Raise the default in `config.py`,
       `configuration.md` and `.env.example` together if the contract changed.

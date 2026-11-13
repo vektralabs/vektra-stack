@@ -107,7 +107,10 @@ async def test_loginas_is_refused_audited_and_writes_no_token(pg, over) -> None:
     ("version", "site_min", "ok"),
     [
         ("1.0.0", None, True),
-        ("0.0.9", None, False),  # below VEKTRA_ASSESS_MIN_PLUGIN_VERSION (0.1.0)
+        ("0.0.9", None, False),
+        ("0.1.9", None, False),  # below VEKTRA_ASSESS_MIN_PLUGIN_VERSION (0.2.0)
+        ("0.2.0", None, True),  # the default minimum itself
+        ("0.10.0", None, True),  # numeric, not lexical: 0.10.0 > 0.2.0
         ("1.0.0", "1.2.0", False),  # below the site's own minimum
         ("1.2.0-rc1", "1.2.0", True),
         ("banana", None, False),

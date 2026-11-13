@@ -198,6 +198,9 @@ PRIVACY_ROUTES = {
     ("/api/v1/assess/privacy/subjects/{userid}/transcripts", "GET"): (
         "require_exact_scope_assess:privacy-export"
     ),
+    ("/api/v1/assess/privacy/subjects/{userid}/activities", "GET"): (
+        "require_exact_scope_assess:privacy-export"
+    ),
     ("/api/v1/assess/privacy/activities/{cmid}/subjects", "GET"): (
         "require_exact_scope_assess:privacy-export"
     ),

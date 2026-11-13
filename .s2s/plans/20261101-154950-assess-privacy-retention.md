@@ -229,6 +229,13 @@ no log files fails rather than passing.
 
 - OQ-020 (DPO): retention value, legal basis, notice text, erasure mode and REQ-092 approval are
   inputs; the mechanism ships fail closed until they are set. Blocker for pilot, not for build.
+- **Open DPO question (OQ-020), 2026-11-13:** are the reasons a teacher enters (a reset's
+  reason, a teacher note on a turn) the student's personal data to export? The new
+  `GET /privacy/subjects/{userid}/activities` (plugin request, CodeRabbit on the plugin's PR #9)
+  exports the subject's sessions, resets and extra time as ids, states, codes and times only and
+  leaves those texts out until the DPO decides. The activity set comes from `SUBJECT_TABLES`, the
+  erasure's own list, so export, `activities/{cmid}/subjects` and the subject erasure cannot drift
+  (cross-checked by `integration/test_privacy_subject_activities.py`).
 - OQ-033: erasure default implemented; `retain_exam_evidence` mode exists so the DPO decision is a
   setting, not a code change.
 - Drift / risk: crypto-shredding vs backups (see Design Notes) — ARCH-079's claim is conditional on

@@ -39,6 +39,17 @@ ACTIVITY_SUBJECTS = text(
     + ") AS t WHERE u > :after ORDER BY u LIMIT :n"
 )
 
+#: the activities of a site where a subject has any row (the plugin's get_contexts_for_userid):
+#: the same tables, so what the export lists is what the subject erasure deletes
+SUBJECT_ACTIVITIES = text(
+    "SELECT c FROM ("
+    + " UNION ".join(
+        f"SELECT cmid AS c FROM {t} WHERE site_id = :s AND student_userid = :u"
+        for t in SUBJECT_TABLES
+    )
+    + ") AS t WHERE c > :after ORDER BY c LIMIT :n"
+)
+
 
 def subject_ref(site_id: object, userid: int) -> str:
     return hashlib.sha256(f"{site_id}|{int(userid)}".encode("ascii")).hexdigest()

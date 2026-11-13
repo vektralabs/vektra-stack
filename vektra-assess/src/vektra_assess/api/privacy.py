@@ -16,6 +16,13 @@
     REQ-093 (b): the subject's transcripts of this site, whatever the enrolment or course access
     now, as the exact bytes the in-course download serves (base64, with their SHA-256), at most
     ``EXPORT_PAGE`` per page, the cursor in ``X-Assess-Cursor``. Audited with counts only.
+``GET /api/v1/assess/privacy/subjects/{userid}/activities`` (exact ``assess:privacy-export``)
+    Every activity of this site where the subject has any row the subject erasure deletes
+    (``privacy.subject.SUBJECT_TABLES``, the erasure's own list), with its sessions (number,
+    state, close reason, times), resets (after which session, when) and extra time: the plugin's
+    ``get_contexts_for_userid`` and the export of what has no transcript. Ids, states, codes and
+    times only: no reset reason, no teacher note. ``EXPORT_PAGE`` activities per page, the cmid
+    cursor in ``X-Assess-Cursor``. Audited with counts only.
 ``GET /api/v1/assess/privacy/activities/{cmid}/subjects`` (exact ``assess:privacy-export``)
     The user ids with any assess row for that activity of this site (the plugin's
     ``get_users_in_context``).
@@ -60,7 +67,11 @@ from vektra_assess.errors import (
 )
 from vektra_assess.jobs import JobKind, enqueue_job
 from vektra_assess.privacy import config as privacy_config
-from vektra_assess.privacy.subject import ACTIVITY_SUBJECTS, subject_ref
+from vektra_assess.privacy.subject import (
+    ACTIVITY_SUBJECTS,
+    SUBJECT_ACTIVITIES,
+    subject_ref,
+)
 from vektra_assess.transcript import store
 from vektra_shared.auth import ApiKeyInfo, require_exact_scope
 
@@ -475,6 +486,114 @@ async def export_subject(
     )
 
 
+_ACT_SESSIONS = text(
+    "SELECT cmid, session_no, state, close_reason, created_at, closed_at, courseid_hint "
+    "FROM assess_sessions WHERE site_id = :s AND student_userid = :u AND cmid = ANY(:c) "
+    "ORDER BY cmid, session_no"
+)
+_ACT_RESETS = text(
+    "SELECT cmid, session_no, granted_at FROM assess_reset_grants WHERE site_id = :s "
+    "AND student_userid = :u AND cmid = ANY(:c) ORDER BY cmid, granted_at, session_no"
+)
+_ACT_EXTRA = text(
+    "SELECT cmid, sum(extra_seconds) AS extra FROM assess_extra_time WHERE site_id = :s "
+    "AND student_userid = :u AND cmid = ANY(:c) GROUP BY cmid"
+)
+#: the course of an activity with no session: the hint a mint recorded, if any
+_ACT_COURSE = text(
+    "SELECT cmid, max(courseid_hint) AS course FROM assess_token_jti WHERE site_id = :s "
+    "AND student_userid = :u AND cmid = ANY(:c) GROUP BY cmid"
+)
+
+
+def _cursor_int(request: Request) -> int:
+    """An integer ``X-Assess-Cursor`` (a cmid or a user id), 0 when absent; 400 when malformed."""
+    after = header_int(request, "X-Assess-Cursor") or 0
+    if request.headers.get("X-Assess-Cursor") and not after:
+        raise fail(bad_request("cursor"))
+    return after
+
+
+@router.get("/privacy/subjects/{userid}/activities")
+async def subject_activities(
+    userid: str, request: Request, key: ApiKeyInfo = Depends(_export)
+) -> JSONResponse:
+    user = path_id(userid, "userid")
+    after = _cursor_int(request)
+    _limit(request, key)
+    async with engine_of(request).begin() as conn:
+        site = await site_of_key(conn, key, "privacy-export")
+        cmids = [
+            int(c)
+            for c in (
+                await conn.execute(
+                    SUBJECT_ACTIVITIES,
+                    {"s": site, "u": user, "after": after, "n": EXPORT_PAGE + 1},
+                )
+            ).scalars()
+        ]
+        more = len(cmids) > EXPORT_PAGE
+        cmids = cmids[:EXPORT_PAGE]
+        items: dict[int, dict[str, Any]] = {
+            c: {
+                "cmid": c,
+                "course_id": None,
+                "sessions": [],
+                "resets": [],
+                "extra_seconds": 0,
+            }
+            for c in cmids
+        }
+        if cmids:
+            params = {"s": site, "u": user, "c": cmids}
+            for row in (await conn.execute(_ACT_COURSE, params)).all():
+                if row.course is not None:
+                    items[int(row.cmid)]["course_id"] = int(row.course)
+            for row in (await conn.execute(_ACT_SESSIONS, params)).all():
+                item = items[int(row.cmid)]
+                if row.courseid_hint is not None:
+                    item["course_id"] = int(
+                        row.courseid_hint
+                    )  # the session's own hint wins
+                item["sessions"].append(
+                    {
+                        "session_no": int(row.session_no),
+                        "state": str(row.state),
+                        "close_reason": row.close_reason,
+                        "created_at": iso_time(row.created_at),
+                        "closed_at": iso_time(row.closed_at),
+                    }
+                )
+            for row in (await conn.execute(_ACT_RESETS, params)).all():
+                items[int(row.cmid)]["resets"].append(
+                    {
+                        "after_session_no": int(row.session_no),
+                        "granted_at": iso_time(row.granted_at),
+                    }
+                )
+            for row in (await conn.execute(_ACT_EXTRA, params)).all():
+                items[int(row.cmid)]["extra_seconds"] = int(row.extra or 0)
+        await write_event(
+            conn,
+            AssessAuditEvent.PRIVACY_EXPORT,
+            actor="api",
+            site_id=site,
+            data={
+                "kind": "activities",
+                "activities": len(cmids),
+                "page_more": more,
+                "key_id": key.key_id,
+            },
+        )
+    return JSONResponse(
+        content={
+            "items": [items[c] for c in cmids],
+            "next_cursor": str(cmids[-1]) if more and cmids else None,
+        },
+        headers={"Cache-Control": "no-store"},
+    )
+
+
 SUBJECTS_PAGE = 500
 
 
@@ -483,9 +602,7 @@ async def activity_subjects(
     cmid: str, request: Request, key: ApiKeyInfo = Depends(_export)
 ) -> JSONResponse:
     activity = path_id(cmid, "cmid")
-    after = header_int(request, "X-Assess-Cursor") or 0
-    if request.headers.get("X-Assess-Cursor") and not after:
-        raise fail(bad_request("cursor"))
+    after = _cursor_int(request)
     _limit(request, key)
     async with engine_of(request).begin() as conn:
         site = await site_of_key(conn, key, "privacy-export")

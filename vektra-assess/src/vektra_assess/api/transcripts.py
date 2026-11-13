@@ -29,7 +29,9 @@ Page cmid (plugin request)
     transcript's activity. A transcript (or a purged transcript's tombstone) of another activity
     than ``cmid`` is refused with the envelope of an unknown transcript (404 ``ERR-ASSESS-017``),
     before any role check, and audited ``assess_ownership_mismatch_rejected``. This keeps the
-    page from reaching another activity's transcripts. ``cmid`` is required on the download-token
+    page from reaching another activity's transcripts; it does not by itself hide whether a
+    transcript exists: within the same activity a non-grader still gets 403 where an unknown id
+    gets 404 (a possible follow-up). ``cmid`` is required on the download-token
     mint (owner and grader) and on the grader's resend: every ``local_vektradiscuss`` release
     from 0.2.0, the minimum accepted at mint, sends it; a call without it is a 400
     ``ERR-ASSESS-014`` ``missing:cmid``.
@@ -115,10 +117,20 @@ class MintBody(BaseModel):
     cmid: Cmid  # the plugin page's activity (module docstring, "Page cmid")
 
 
-class ResendBody(BaseModel):
+class GraderResendBody(BaseModel):
+    """An ``assess:teacher`` key's resend: the page ``cmid`` is required (plugin >= 0.2.0)."""
+
     model_config = ConfigDict(extra="forbid")
     actor_userid: int | None = Field(None, ge=1)
-    cmid: Cmid | None = None  # grader path only, and required there
+    cmid: Cmid
+
+
+class OperatorResendBody(BaseModel):
+    """An ``admin`` key's resend: no ``cmid`` (the key has no site, and a cmid means something
+    only within one), so the field is ``extra_forbidden`` like any unknown one."""
+
+    model_config = ConfigDict(extra="forbid")
+    actor_userid: int | None = Field(None, ge=1)
 
 
 _TRANSCRIPT = text(
@@ -504,7 +516,16 @@ async def resend_transcript(
     doc = json_object(await read_capped_body(request))
     if any(RECIPIENT_LIKE.search(k) for k in _all_keys(doc)):
         raise fail(resend_recipient_forbidden())
-    body = validate_body(doc, ResendBody)
+    teacher = "assess:teacher" in key.scopes and "admin" not in key.scopes
+    # the whole body is validated before the limiter is charged (review #2): a malformed call
+    # spends no budget
+    body: GraderResendBody | OperatorResendBody
+    if teacher:
+        body = validate_body(doc, GraderResendBody)
+        if body.actor_userid is None:
+            raise fail(bad_request("actor_userid"))
+    else:
+        body = validate_body(doc, OperatorResendBody)
     settings = settings_of(request)
     t = _uuid(tid)
     allowed, _ = limiter_of(request, "resend").check(
@@ -512,15 +533,6 @@ async def resend_transcript(
     )
     if not allowed:
         raise fail(rate_limited(60, "resend_rate"))
-    teacher = "assess:teacher" in key.scopes and "admin" not in key.scopes
-    if teacher and body.actor_userid is None:
-        raise fail(bad_request("actor_userid"))
-    if not teacher and "cmid" in body.model_fields_set:
-        # an admin key has no site, and a cmid means something only within one
-        raise fail(bad_request("extra_forbidden:cmid"))
-    if teacher and body.cmid is None:
-        # the same reason a model-required field gives on the download-token mint
-        raise fail(bad_request("missing:cmid"))
     refused: Any = None
     async with engine_of(request).begin() as conn:
         if teacher:
@@ -532,11 +544,11 @@ async def resend_transcript(
             if owner is not None:
                 await bind_site(conn, owner)
         row = (await conn.execute(_TRANSCRIPT, {"t": t})).first()
-        if teacher:
+        if isinstance(body, GraderResendBody):
             if row is None or row.site_id != site:
                 raise fail(transcript_not_found())
             actor_id = int(body.actor_userid or 0)
-            cmid = int(body.cmid or 0)  # checked above: a grader's cmid is never None
+            cmid = body.cmid
             refused = await _other_activity(
                 conn,
                 row,

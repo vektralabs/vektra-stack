@@ -16,7 +16,7 @@ import pytest
 from sqlalchemy.ext.asyncio import create_async_engine
 from support.recipients import configure_recipients, refs
 from support.sessions import seed_session
-from support.world import auth, err, world
+from support.world import auth, default_settings, err, world
 
 from integration.test_session_preflight import _reset
 from vektra_assess.keys import AssessKeyring
@@ -652,7 +652,6 @@ async def test_a_missing_cmid_is_a_400(pg, worker) -> None:  # type: ignore[no-u
             await mint(w, s.session_id, sub=s.sub),
             await mint(w, s.session_id, key="teacher", actor_userid=12),
             await resend(w, s.session_id, actor_userid=12),
-            await resend(w, s.session_id, actor_userid=12, cmid=None),
         ]
         for r in refused:
             assert r.status_code == 400 and err(r)["code"] == "ERR-ASSESS-014", r.text
@@ -677,6 +676,43 @@ async def test_a_missing_cmid_is_a_400(pg, worker) -> None:  # type: ignore[no-u
         )
         await _age_rounds(pg, s)
         r = await resend(w, s.session_id, key="admin")
+        assert r.status_code == 202, r.text
+
+
+async def test_a_null_cmid_is_refused_alike_on_both_routes(pg, worker) -> None:  # type: ignore[no-untyped-def]
+    """Review #3/#4: an explicit ``"cmid": null`` is the model's own reason, the same on the
+    download-token mint (both paths) and the grader's resend; the operator's resend refuses the
+    field whatever its value."""
+    async with world(pg) as w:
+        s, _ = await _ready(w, worker)
+        await _graders(w, s)
+        got = [
+            await mint(w, s.session_id, sub=s.sub, cmid=None),
+            await mint(w, s.session_id, key="teacher", actor_userid=12, cmid=None),
+            await resend(w, s.session_id, actor_userid=12, cmid=None),
+        ]
+        reasons = set()
+        for r in got:
+            assert r.status_code == 400 and err(r)["code"] == "ERR-ASSESS-014", r.text
+            reasons.add(err(r)["details"]["reason"])
+        assert reasons == {"int_type:cmid"}
+        r = await resend(w, s.session_id, key="admin", cmid=None)
+        assert r.status_code == 400
+        assert err(r)["details"] == {"reason": "extra_forbidden:cmid"}
+
+
+async def test_a_resend_without_cmid_spends_no_rate_budget(pg, worker) -> None:  # type: ignore[no-untyped-def]
+    """Review #2: the body is validated before the resend limiter is charged, so malformed
+    calls (here, more than the per-key budget) never cause a later 429 for a good one."""
+    async with world(pg, default_settings(VEKTRA_ASSESS_RESEND_RPM=2)) as w:
+        s, _ = await _ready(w, worker)
+        await _graders(w, s)
+        for _ in range(5):
+            r = await resend(w, s.session_id, actor_userid=12)
+            assert r.status_code == 400, r.text
+            assert err(r)["details"] == {"reason": "missing:cmid"}
+        await _age_rounds(pg, s)
+        r = await resend(w, s.session_id, actor_userid=12, cmid=s.cmid)
         assert r.status_code == 202, r.text
 
 

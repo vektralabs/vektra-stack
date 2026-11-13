@@ -229,13 +229,17 @@ no log files fails rather than passing.
 
 - OQ-020 (DPO): retention value, legal basis, notice text, erasure mode and REQ-092 approval are
   inputs; the mechanism ships fail closed until they are set. Blocker for pilot, not for build.
-- **Open DPO question (OQ-020), 2026-11-13:** are the reasons a teacher enters (a reset's
-  reason, a teacher note on a turn) the student's personal data to export? The new
-  `GET /privacy/subjects/{userid}/activities` (plugin request, CodeRabbit on the plugin's PR #9)
-  exports the subject's sessions, resets and extra time as ids, states, codes and times only and
-  leaves those texts out until the DPO decides. The activity set comes from `SUBJECT_TABLES`, the
-  erasure's own list, so export, `activities/{cmid}/subjects` and the subject erasure cannot drift
-  (cross-checked by `integration/test_privacy_subject_activities.py`).
+- **Open DPO question (OQ-020), 2026-11-13:** are the texts and identities a teacher enters
+  (a reset's reason, a teacher note on a turn, the grader recorded as having granted extra time)
+  the student's personal data to export? `GET /privacy/subjects/{userid}/activities` (plugin
+  request, CodeRabbit on the plugin's PR #9) leaves them out until the DPO decides. It exports
+  the sessions (a transcript id, or the decrypted turns of a live session), resets, extra time,
+  purged-session counts and per-table counts of the technical rows. The activity set and the
+  projection are `privacy.subject` (`SUBJECT_TABLES`, `SUBJECT_EXPORT`); a schema-scan test
+  (`integration/test_privacy_subject_activities.py`) fails on a subject table nobody declared.
+  Known limits: a session closed before its transcript was generated exports `turns: null` (the
+  API holds no key to a closed session's turns; the transcript, once generated, carries them),
+  and turns carry no `created_at` (the API's material function does not return it).
 - OQ-033: erasure default implemented; `retain_exam_evidence` mode exists so the DPO decision is a
   setting, not a code change.
 - Drift / risk: crypto-shredding vs backups (see Design Notes) — ARCH-079's claim is conditional on

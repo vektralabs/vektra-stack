@@ -220,9 +220,9 @@ async def test_c_pre_created_roles_and_the_membership_are_enough_for_head(
     current = _alembic(url, "current")
     assert heads.returncode == 0 and current.returncode == 0, current.stderr
     want = sorted(line.split()[0] for line in heads.stdout.splitlines() if line.strip())
-    assert want == ["0009", "a0001"], heads.stdout
-    # the assess base is recorded; 0009, which it depends on, is implied
-    assert "a0001" in current.stdout, current.stdout
+    assert want == ["0009", "a0004"], heads.stdout
+    # the assess head is recorded; 0009, which the base depends on, is implied
+    assert "a0004" in current.stdout, current.stdout
     # the definer functions really are owned by the definer
     owners = await _admin(
         server,

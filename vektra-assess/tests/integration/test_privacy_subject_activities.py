@@ -1,10 +1,11 @@
 """``GET /api/v1/assess/privacy/subjects/{userid}/activities`` (plugin request, CodeRabbit on the
 plugin's PR #9): every activity of the key's site where the subject has ANY row the erasure would
-delete, with their sessions, resets and extra time, so the LMS's export and its erasure approval
-see what ``DELETE /privacy/subjects/{userid}`` erases.
+delete or rewrite, with what the export owes the subject, so the LMS's export and its erasure
+approval see what ``DELETE /privacy/subjects/{userid}`` erases.
 
-The set is derived from ``privacy.subject.SUBJECT_TABLES``, the one list the erasure deletes and
-counts and ``activities/{cmid}/subjects`` reads: the drift test below cross-checks the three.
+The set and the projection are ``privacy.subject``'s (``SUBJECT_TABLES``, ``SUBJECT_EXPORT``).
+The oracle here is independent of both: it reads the schema (``information_schema``) for every
+``assess_*`` table with a subject column or a key to a session.
 """
 
 from __future__ import annotations
@@ -18,7 +19,8 @@ from support.sessions import seed_session
 from support.world import auth, default_settings, err, make_key, world
 
 from integration.test_privacy_retention import _privacy_key, erase, ready
-from vektra_assess.privacy.subject import SUBJECT_TABLES
+from vektra_assess.privacy import purge
+from vektra_assess.privacy import subject as subj
 
 pytestmark = pytest.mark.integration
 
@@ -34,6 +36,13 @@ async def worker(pg):  # type: ignore[no-untyped-def]
 
 
 URL = "/api/v1/assess/privacy/subjects/{u}/activities"
+TECHNICAL = {
+    "assess_start_attempts",
+    "assess_token_jti",
+    "assess_gate_inputs",
+    "assess_render_state",
+    "assess_render_checks",
+}
 
 
 async def _get(w, user: Any, key: str = "export", cursor: str | None = None):  # type: ignore[no-untyped-def]
@@ -61,23 +70,108 @@ async def _extra_only(pg, site: uuid.UUID, cmid: int, user: int, s: int = 600) -
     )
 
 
+async def _tombstone_only(pg, site: uuid.UUID, cmid: int, user: int) -> None:  # type: ignore[no-untyped-def]
+    """What a retention purge leaves of a session: ids and a subject reference."""
+    await pg.run(
+        "super",
+        "INSERT INTO assess_purge_records (site_id, subject_ref, session_id, session_no, "
+        "cmid, reason) VALUES (:s, :ref, :sid, 1, :c, 'retention')",
+        {
+            "s": site,
+            "ref": subj.subject_ref(site, user),
+            "sid": uuid.uuid4(),
+            "c": cmid,
+        },
+    )
+
+
+async def _schema_subject_tables(pg) -> tuple[set[str], set[str]]:  # type: ignore[no-untyped-def]
+    """From the schema alone: (tables with a ``student_userid`` column, tables with a
+    ``subject_ref`` column or a foreign key to ``assess_sessions`` / ``assess_transcripts``)."""
+    by_user = {
+        r[0]
+        for r in await pg.run(
+            "super",
+            "SELECT table_name FROM information_schema.columns WHERE table_schema = 'public' "
+            "AND table_name LIKE 'assess\\_%' AND column_name = 'student_userid'",
+        )
+    }
+    linked = {
+        r[0]
+        for r in await pg.run(
+            "super",
+            "SELECT DISTINCT tc.table_name FROM information_schema.table_constraints tc "
+            "JOIN information_schema.constraint_column_usage cu "
+            "ON cu.constraint_name = tc.constraint_name "
+            "WHERE tc.constraint_type = 'FOREIGN KEY' AND tc.table_schema = 'public' "
+            "AND cu.table_name IN ('assess_sessions', 'assess_transcripts') "
+            "AND tc.table_name LIKE 'assess\\_%' "
+            "UNION SELECT table_name FROM information_schema.columns "
+            "WHERE table_schema = 'public' AND table_name LIKE 'assess\\_%' "
+            "AND column_name IN ('subject_ref', 'subject_userids', 'subject_userid_hash')",
+        )
+    }
+    return by_user, linked
+
+
 async def _cmids_with_rows(pg, site: uuid.UUID, user: int) -> set[int]:  # type: ignore[no-untyped-def]
-    """Independently of the route: every cmid with a row of the subject in any subject table."""
+    """Independently of the route and of ``SUBJECT_TABLES``: every cmid where a table the
+    schema scan finds holds a row of the subject, plus its retention tombstones."""
+    by_user, _ = await _schema_subject_tables(pg)
     out: set[int] = set()
-    for table in SUBJECT_TABLES:
+    for table in by_user:
         rows = await pg.run(
             "super",
             f"SELECT DISTINCT cmid FROM {table} WHERE site_id = :s AND student_userid = :u",
             {"s": site, "u": user},
         )
         out |= {int(r[0]) for r in rows}
-    return out
+    rows = await pg.run(
+        "super",
+        "SELECT DISTINCT cmid FROM assess_purge_records WHERE site_id = :s AND subject_ref = :r",
+        {"s": site, "r": subj.subject_ref(site, user)},
+    )
+    return out | {int(r[0]) for r in rows}
+
+
+async def test_every_subject_table_of_the_schema_is_covered(pg, worker) -> None:  # type: ignore[no-untyped-def]
+    """Findings 2+3: the schema, not the code, says which tables hold a subject. Each is a
+    subject table (exported by declaration), session-linked content (reached through the
+    subject's sessions), the tombstones, or a documented exclusion; and every table the erasure
+    touches is one the listing covers."""
+    by_user, linked = await _schema_subject_tables(pg)
+    session_linked = {
+        *purge.SESSION_TABLES,
+        *purge.TRANSCRIPT_TABLES,
+        "assess_transcripts",
+        "assess_turn_notes",  # keyed to its turn, deleted with the session's content
+    }
+    covered = (
+        set(subj.SUBJECT_TABLES)
+        | session_linked
+        | {"assess_purge_records"}
+        | set(subj.EXPORT_EXCLUDED)
+    )
+    assert by_user <= set(subj.SUBJECT_TABLES) | set(subj.EXPORT_EXCLUDED), by_user
+    assert linked <= covered, sorted(linked - covered)
+    assert set(subj.SUBJECT_EXPORT) == set(subj.SUBJECT_TABLES)
+    # what the erasure touches (its own constants) is a subset of what the listing covers
+    touched = {
+        *subj.SUBJECT_TABLES,
+        *purge.SESSION_TABLES,
+        *purge.TRANSCRIPT_TABLES,
+        "assess_transcripts",
+        "assess_purge_records",
+        "assess_jobs",
+    }
+    assert touched <= covered, sorted(touched - covered)
 
 
 async def test_listing_export_and_erasure_cover_the_same_activities(pg, worker) -> None:  # type: ignore[no-untyped-def]
     """The drift cross-check: a transcript in A, only a live session in B, only a reset in C,
-    only extra time in D. All four are listed, each lists the subject, and erasing the subject
-    deletes exactly the listed activities' rows (and nothing of another subject)."""
+    only extra time in D, only a retention tombstone in E. All five are listed, the schema
+    oracle finds exactly those, each but E lists the subject (a tombstone keeps a hash, no id),
+    and erasing the subject deletes or rewrites exactly the listed activities' rows."""
     async with world(pg, default_settings(VEKTRA_ASSESS_ERASURE_WAIT_S=10)) as w:
         await _privacy_key(w, "assess:privacy-export", "export")
         await _privacy_key(w, "assess:privacy-erase", "erase")
@@ -85,9 +179,10 @@ async def test_listing_export_and_erasure_cover_the_same_activities(pg, worker) 
         b = await seed_session(w, worker, "ACTIVE", assignment="simple")
         assert b.sub == a.sub and b.cmid != a.cmid
         user = a.sub
-        c, d = 770_001, 770_002
+        c, d, e = 770_001, 770_002, 770_003
         await _reset_only(pg, w.site, c, user)
         await _extra_only(pg, w.site, d, user, 900)
+        await _tombstone_only(pg, w.site, e, user)
         # another subject in C: never listed for ours, untouched by the erasure
         await _extra_only(pg, w.site, c, 990_123)
 
@@ -97,32 +192,46 @@ async def test_listing_export_and_erasure_cover_the_same_activities(pg, worker) 
         body = r.json()
         assert body["next_cursor"] is None
         listed = {i["cmid"]: i for i in body["items"]}
-        assert set(listed) == {a.cmid, b.cmid, c, d}
+        assert set(listed) == {a.cmid, b.cmid, c, d, e}
         assert set(listed) == await _cmids_with_rows(pg, w.site, user)
         assert [i["cmid"] for i in body["items"]] == sorted(listed)
-        # the shape: ids, states, codes and timestamps, never free text
-        assert [s["state"] for s in listed[a.cmid]["sessions"]] == ["CLOSED"]
-        assert listed[a.cmid]["sessions"][0]["close_reason"] == "finished"
-        assert listed[a.cmid]["sessions"][0]["session_no"] == 1
-        assert listed[a.cmid]["sessions"][0]["closed_at"] is not None
-        assert listed[a.cmid]["course_id"] == 7 or listed[a.cmid]["course_id"] is None
-        assert [s["state"] for s in listed[b.cmid]["sessions"]] == ["ACTIVE"]
-        assert listed[b.cmid]["sessions"][0]["closed_at"] is None
-        assert listed[c] == {
-            "cmid": c,
-            "course_id": None,
-            "sessions": [],
-            "resets": [
-                {
-                    "after_session_no": 1,
-                    "granted_at": listed[c]["resets"][0]["granted_at"],
-                }
-            ],
-            "extra_seconds": 0,
+
+        # A: a closed session with a transcript points to the transcript export
+        (sa,) = listed[a.cmid]["sessions"]
+        assert sa["state"] == "CLOSED" and sa["close_reason"] == "finished"
+        assert sa["transcript_id"] and "turns" not in sa
+        assert set(sa) == {
+            "session_no",
+            "state",
+            "close_reason",
+            "created_at",
+            "deadline_at",
+            "closed_at",
+            "transcript_id",
         }
-        assert listed[c]["resets"][0]["granted_at"]
-        assert listed[d]["sessions"] == [] and listed[d]["resets"] == []
-        assert listed[d]["extra_seconds"] == 900
+        # B: a live session carries its decrypted turns, the same the owner reads
+        (sb,) = listed[b.cmid]["sessions"]
+        assert sb["state"] == "ACTIVE" and "transcript_id" not in sb
+        own = await w.client.get(
+            f"/api/v1/assess/sessions/{b.session_id}",
+            headers={"Authorization": f"Bearer {b.session_token}"},
+        )
+        assert own.status_code == 200, own.text
+        want = [
+            {k: t[k] for k in ("turn_no", "role", "kind", "text")}
+            for t in own.json()["turns"]
+        ]
+        assert want and sb["turns"] == want
+        assert sb["deadline_at"] is not None
+        assert listed[b.cmid]["technical_records"]["assess_token_jti"] >= 1
+        # C, D, E
+        assert listed[c]["sessions"] == [] and listed[c]["extra_seconds"] == 0
+        (g,) = listed[c]["resets"]
+        assert (
+            g["after_session_no"] == 1 and g["granted_at"] and g["consumed_at"] is None
+        )
+        assert listed[d]["extra_seconds"] == 900 and listed[d]["extra_granted_at"]
+        assert listed[e]["purged_sessions"] == 1 and listed[e]["sessions"] == []
         for item in body["items"]:
             assert set(item) == {
                 "cmid",
@@ -130,20 +239,16 @@ async def test_listing_export_and_erasure_cover_the_same_activities(pg, worker) 
                 "sessions",
                 "resets",
                 "extra_seconds",
+                "extra_granted_at",
+                "purged_sessions",
+                "technical_records",
             }
-            for s in item["sessions"]:
-                assert set(s) == {
-                    "session_no",
-                    "state",
-                    "close_reason",
-                    "created_at",
-                    "closed_at",
-                }
+            assert set(item["technical_records"]) == TECHNICAL
             for g in item["resets"]:
-                assert set(g) == {"after_session_no", "granted_at"}
+                assert set(g) == {"after_session_no", "granted_at", "consumed_at"}
 
-        # the activity listing includes the subject in every listed activity
-        for cmid in listed:
+        # the activity listing includes the subject in every listed activity but E
+        for cmid in set(listed) - {e}:
             got = await w.client.get(
                 f"/api/v1/assess/privacy/activities/{cmid}/subjects",
                 headers=auth("export"),
@@ -151,13 +256,50 @@ async def test_listing_export_and_erasure_cover_the_same_activities(pg, worker) 
             assert got.status_code == 200, got.text
             assert user in got.json()["userids"], cmid
 
-        # the erasure deletes exactly the listed activities' rows
+        # the erasure deletes (or, for E, rewrites) exactly the listed activities' rows
         r = await erase(w, worker, f"/api/v1/assess/privacy/subjects/{user}")
         assert r.status_code == 200, r.text
         assert await _cmids_with_rows(pg, w.site, user) == set()
         after = await _get(w, user)
         assert after.json() == {"items": [], "next_cursor": None}
         assert await _cmids_with_rows(pg, w.site, 990_123) == {c}
+
+
+async def test_the_course_is_the_sessions_else_the_latest_mints(pg, worker) -> None:  # type: ignore[no-untyped-def]
+    """Finding 5: the session's hint over any mint's; with no session, the latest mint's (by
+    ``minted_at``, not the largest id); with neither, null."""
+    async with world(pg) as w:
+        await _privacy_key(w, "assess:privacy-export", "export")
+        user, with_session, mint_only, none = 880_010, 773_001, 773_002, 773_003
+        await pg.run(
+            "super",
+            "INSERT INTO assess_sessions (site_id, cmid, student_userid, session_no, state, "
+            "starting_expires_at, courseid_hint) VALUES "
+            "(:s, :c, :u, 1, 'STARTING', now() + interval '1 minute', 42)",
+            {"s": w.site, "c": with_session, "u": user},
+        )
+        for cmid, course, age in (
+            (with_session, 99, "1 minute"),
+            (mint_only, 900, "2 hours"),  # the largest hint, but the older mint
+            (mint_only, 51, "1 hour"),
+        ):
+            await pg.run(
+                "super",
+                "INSERT INTO assess_token_jti (jti, site_id, student_userid, cmid, "
+                "courseid_hint, mint_key_id, minted_at, expires_at) VALUES (:j, :s, :u, :c, "
+                f":k, :key, now() - interval '{age}', now())",
+                {
+                    "j": uuid.uuid4().hex,
+                    "s": w.site,
+                    "u": user,
+                    "c": cmid,
+                    "k": course,
+                    "key": w.keys["mint"].key_id,
+                },
+            )
+        await _extra_only(pg, w.site, none, user)
+        got = {i["cmid"]: i["course_id"] for i in (await _get(w, user)).json()["items"]}
+        assert got == {with_session: 42, mint_only: 51, none: None}
 
 
 async def test_pages_follow_the_cursor(pg, worker) -> None:  # type: ignore[no-untyped-def]
@@ -184,6 +326,23 @@ async def test_pages_follow_the_cursor(pg, worker) -> None:  # type: ignore[no-u
             {"s": w.site},
         )
         assert audited[0][0] == 2
+
+
+async def test_the_transcript_export_audit_names_its_kind(pg, worker) -> None:  # type: ignore[no-untyped-def]
+    """Finding 9: both exports' audit rows carry ``kind``."""
+    async with world(pg) as w:
+        await _privacy_key(w, "assess:privacy-export", "export")
+        r = await w.client.get(
+            "/api/v1/assess/privacy/subjects/880001/transcripts", headers=auth("export")
+        )
+        assert r.status_code == 200, r.text
+        rows = await pg.run(
+            "super",
+            "SELECT data->>'kind' FROM assess_audit_events WHERE event = "
+            "'assess_privacy_export' AND site_id = :s",
+            {"s": w.site},
+        )
+        assert [x[0] for x in rows] == ["transcripts"]
 
 
 async def test_an_unknown_subject_is_an_empty_page(pg, worker) -> None:  # type: ignore[no-untyped-def]
@@ -228,10 +387,11 @@ async def test_a_site_a_key_never_sees_site_b_activities(pg, worker) -> None:  #
         user = 880_002
         await _extra_only(pg, w.site, 772_001, user)
         await _extra_only(pg, w.other_site, 772_002, user)
+        await _tombstone_only(pg, w.other_site, 772_003, user)
         mine = (await _get(w, user)).json()
         theirs = (await _get(w, user, key="export_b")).json()
         assert [i["cmid"] for i in mine["items"]] == [772_001]
-        assert [i["cmid"] for i in theirs["items"]] == [772_002]
+        assert [i["cmid"] for i in theirs["items"]] == [772_002, 772_003]
 
 
 async def test_the_listing_is_rate_limited_per_key(pg, worker) -> None:  # type: ignore[no-untyped-def]

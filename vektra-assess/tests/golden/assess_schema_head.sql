@@ -1733,6 +1733,8 @@ CREATE INDEX ix_assess_purge_records_subject ON public.assess_purge_records USIN
 
 CREATE INDEX ix_assess_purge_records_transcript ON public.assess_purge_records USING btree (transcript_id) WHERE (transcript_id IS NOT NULL);
 
+CREATE INDEX ix_assess_render_checks_subject ON public.assess_render_checks USING btree (site_id, student_userid, cmid);
+
 CREATE INDEX ix_assess_setup_check_reports_site ON public.assess_setup_check_reports USING btree (site_id, created_at DESC);
 
 CREATE INDEX ix_assess_start_attempts_student ON public.assess_start_attempts USING btree (site_id, student_userid, cmid, created_at);
@@ -1740,6 +1742,8 @@ CREATE INDEX ix_assess_start_attempts_student ON public.assess_start_attempts US
 CREATE INDEX ix_assess_terminations_activity ON public.assess_terminations USING btree (site_id, cmid);
 
 CREATE INDEX ix_assess_token_jti_expires ON public.assess_token_jti USING btree (expires_at);
+
+CREATE INDEX ix_assess_token_jti_subject ON public.assess_token_jti USING btree (site_id, student_userid, cmid);
 
 CREATE INDEX ix_assess_transcripts_generated_live ON public.assess_transcripts USING btree (generated_at) WHERE (ciphertext IS NOT NULL);
 

@@ -54,7 +54,8 @@ from vektra_assess.api.common import (
     read_capped_body,
     site_of_key,
 )
-from vektra_assess.api.deps import settings_of
+from vektra_assess.api.deps import dek_cache_of, handoff_private_of, settings_of
+from vektra_assess.api.material import MaterialUnavailable, load_material
 from vektra_assess.api.state import limiter_of
 from vektra_assess.api.teachers import ascii_id, header_int, path_id
 from vektra_assess.api.transcripts import transcript_key_of
@@ -69,11 +70,8 @@ from vektra_assess.errors import (
 )
 from vektra_assess.jobs import JobKind, enqueue_job
 from vektra_assess.privacy import config as privacy_config
-from vektra_assess.privacy.subject import (
-    ACTIVITY_SUBJECTS,
-    SUBJECT_ACTIVITIES,
-    subject_ref,
-)
+from vektra_assess.privacy import subject
+from vektra_assess.privacy.subject import ACTIVITY_SUBJECTS, subject_ref
 from vektra_assess.transcript import store
 from vektra_shared.auth import ApiKeyInfo, require_exact_scope
 
@@ -479,7 +477,12 @@ async def export_subject(
             AssessAuditEvent.PRIVACY_EXPORT,
             actor="api",
             site_id=site,
-            data={"transcripts": len(items), "page_more": more, "key_id": key.key_id},
+            data={
+                "kind": "transcripts",
+                "transcripts": len(items),
+                "page_more": more,
+                "key_id": key.key_id,
+            },
         )
     return JSONResponse(
         content={
@@ -490,24 +493,23 @@ async def export_subject(
     )
 
 
-_ACT_SESSIONS = text(
-    "SELECT cmid, session_no, state, close_reason, created_at, closed_at, courseid_hint "
-    "FROM assess_sessions WHERE site_id = :s AND student_userid = :u AND cmid = ANY(:c) "
-    "ORDER BY cmid, session_no"
+#: the session fields the export needs besides the declared ones: the transcript (if any), the
+#: epoch a live session's material is read at, the course hint
+_ACT_SESSION_EXTRA = text(
+    "SELECT s.cmid, s.session_no, s.id, s.epoch, s.courseid_hint, t.id AS transcript_id "
+    "FROM assess_sessions s LEFT JOIN assess_transcripts t ON t.session_id = s.id "
+    "AND t.ciphertext IS NOT NULL AND t.shredded_at IS NULL "
+    "WHERE s.site_id = :s AND s.student_userid = :u AND s.cmid = ANY(:c) "
+    "ORDER BY s.cmid, s.session_no"
 )
-_ACT_RESETS = text(
-    "SELECT cmid, session_no, granted_at FROM assess_reset_grants WHERE site_id = :s "
-    "AND student_userid = :u AND cmid = ANY(:c) ORDER BY cmid, granted_at, session_no"
+#: the course of an activity with no session hint: the latest mint's hint
+_ACT_MINT_COURSE = text(
+    "SELECT DISTINCT ON (cmid) cmid, courseid_hint FROM assess_token_jti WHERE site_id = :s "
+    "AND student_userid = :u AND cmid = ANY(:c) AND courseid_hint IS NOT NULL "
+    "ORDER BY cmid, minted_at DESC"
 )
-_ACT_EXTRA = text(
-    "SELECT cmid, sum(extra_seconds) AS extra FROM assess_extra_time WHERE site_id = :s "
-    "AND student_userid = :u AND cmid = ANY(:c) GROUP BY cmid"
-)
-#: the course of an activity with no session: the hint a mint recorded, if any
-_ACT_COURSE = text(
-    "SELECT cmid, max(courseid_hint) AS course FROM assess_token_jti WHERE site_id = :s "
-    "AND student_userid = :u AND cmid = ANY(:c) GROUP BY cmid"
-)
+#: one page is read in one snapshot: every table agrees with the others
+_PAGE_SNAPSHOT = {"isolation_level": "REPEATABLE READ", "postgresql_readonly": True}
 
 
 def _cursor_int(request: Request) -> int:
@@ -518,6 +520,47 @@ def _cursor_int(request: Request) -> int:
     return after
 
 
+def _value(v: Any) -> Any:
+    return iso_time(v) if hasattr(v, "isoformat") else v
+
+
+def _empty_item(cmid: int) -> dict[str, Any]:
+    item: dict[str, Any] = {"cmid": cmid, "course_id": None}
+    for how in subject.SUBJECT_EXPORT.values():
+        if isinstance(how, subject.Detail):
+            if how.into is None:
+                item.update(how.defaults)
+            else:
+                item[how.into] = []
+    item["purged_sessions"] = 0
+    item["technical_records"] = {
+        t: 0
+        for t, how in subject.SUBJECT_EXPORT.items()
+        if isinstance(how, subject.Count)
+    }
+    return item
+
+
+async def _live_turns(request: Request, conn: Any, sid: UUID, epoch: int) -> Any:
+    """A live session's turns, decrypted through the API's one material path; ``None`` when the
+    session is no longer live at that epoch (closed meanwhile: its transcript will carry them)."""
+    try:
+        material = await load_material(
+            conn, sid, epoch, handoff_private_of(request), dek_cache_of(request)
+        )
+    except MaterialUnavailable:
+        return None
+    return [
+        {
+            "turn_no": t.turn_no,
+            "role": t.role,
+            "kind": t.kind,
+            "text": material.text_of(t),
+        }
+        for t in material.turns
+    ]
+
+
 @router.get("/privacy/subjects/{userid}/activities")
 async def subject_activities(
     userid: str, request: Request, key: ApiKeyInfo = Depends(_export)
@@ -525,58 +568,33 @@ async def subject_activities(
     user = path_id(userid, "userid")
     after = _cursor_int(request)
     _limit(request, key)
-    async with engine_of(request).begin() as conn:
-        site = await site_of_key(conn, key, "privacy-export")
-        cmids = [
-            int(c)
-            for c in (
-                await conn.execute(
-                    SUBJECT_ACTIVITIES,
-                    {"s": site, "u": user, "after": after, "n": EXPORT_PAGE + 1},
-                )
-            ).scalars()
-        ]
-        more = len(cmids) > EXPORT_PAGE
-        cmids = cmids[:EXPORT_PAGE]
-        items: dict[int, dict[str, Any]] = {
-            c: {
-                "cmid": c,
-                "course_id": None,
-                "sessions": [],
-                "resets": [],
-                "extra_seconds": 0,
+    engine = engine_of(request)
+    async with engine.connect() as raw:
+        conn = await raw.execution_options(**_PAGE_SNAPSHOT)
+        async with conn.begin():
+            site = await site_of_key(conn, key, "privacy-export")
+            params: dict[str, Any] = {
+                "s": site,
+                "u": user,
+                "ref": subject_ref(site, user),
             }
-            for c in cmids
-        }
-        if cmids:
-            params = {"s": site, "u": user, "c": cmids}
-            for row in (await conn.execute(_ACT_COURSE, params)).all():
-                if row.course is not None:
-                    items[int(row.cmid)]["course_id"] = int(row.course)
-            for row in (await conn.execute(_ACT_SESSIONS, params)).all():
-                item = items[int(row.cmid)]
-                if row.courseid_hint is not None:
-                    item["course_id"] = int(
-                        row.courseid_hint
-                    )  # the session's own hint wins
-                item["sessions"].append(
-                    {
-                        "session_no": int(row.session_no),
-                        "state": str(row.state),
-                        "close_reason": row.close_reason,
-                        "created_at": iso_time(row.created_at),
-                        "closed_at": iso_time(row.closed_at),
-                    }
-                )
-            for row in (await conn.execute(_ACT_RESETS, params)).all():
-                items[int(row.cmid)]["resets"].append(
-                    {
-                        "after_session_no": int(row.session_no),
-                        "granted_at": iso_time(row.granted_at),
-                    }
-                )
-            for row in (await conn.execute(_ACT_EXTRA, params)).all():
-                items[int(row.cmid)]["extra_seconds"] = int(row.extra or 0)
+            cmids = [
+                int(c)
+                for c in (
+                    await conn.execute(
+                        subject.SUBJECT_ACTIVITIES,
+                        {**params, "after": after, "n": EXPORT_PAGE + 1},
+                    )
+                ).scalars()
+            ]
+            more = len(cmids) > EXPORT_PAGE
+            cmids = cmids[:EXPORT_PAGE]
+            items = {c: _empty_item(c) for c in cmids}
+            if cmids:
+                params["c"] = cmids
+                await _fill_page(request, conn, params, items)
+    async with engine.begin() as conn:
+        await site_of_key(conn, key, "privacy-export")
         await write_event(
             conn,
             AssessAuditEvent.PRIVACY_EXPORT,
@@ -596,6 +614,52 @@ async def subject_activities(
         },
         headers={"Cache-Control": "no-store"},
     )
+
+
+async def _fill_page(
+    request: Request,
+    conn: Any,
+    params: dict[str, Any],
+    items: dict[int, dict[str, Any]],
+) -> None:
+    """Every declared table of ``subject.SUBJECT_EXPORT`` for the page's activities, then the
+    sessions' transcripts or live turns, the course and the tombstones."""
+    for table, how in subject.SUBJECT_EXPORT.items():
+        rows = (await conn.execute(text(subject.export_query(table)), params)).all()
+        for row in rows:
+            item = items[int(row.cmid)]
+            if isinstance(how, subject.Count):
+                item["technical_records"][table] = int(row.n)
+                continue
+            values = {name: _value(getattr(row, col)) for col, name in how.columns}
+            if how.into is None:
+                item.update(values)
+            else:
+                item[how.into].append(values)
+    for row in (await conn.execute(_ACT_SESSION_EXTRA, params)).all():
+        item = items[int(row.cmid)]
+        session = next(
+            x for x in item["sessions"] if x["session_no"] == int(row.session_no)
+        )
+        if row.courseid_hint is not None:
+            item["course_id"] = int(row.courseid_hint)  # the latest session's hint wins
+        if row.transcript_id is not None:
+            # its content is the transcript: GET /privacy/subjects/{userid}/transcripts
+            session["transcript_id"] = str(row.transcript_id)
+        elif session["state"] in ("ACTIVE", "OUTAGE"):
+            session["turns"] = await _live_turns(request, conn, row.id, int(row.epoch))
+        elif session["state"] == "STARTING":
+            session["turns"] = []  # nothing written yet
+        else:
+            session["turns"] = (
+                None  # closed, transcript not generated (yet): see the docs
+            )
+    for row in (await conn.execute(_ACT_MINT_COURSE, params)).all():
+        item = items[int(row.cmid)]
+        if item["course_id"] is None:
+            item["course_id"] = int(row.courseid_hint)
+    for row in (await conn.execute(subject.SUBJECT_PURGED, params)).all():
+        items[int(row.cmid)]["purged_sessions"] = int(row.n)
 
 
 SUBJECTS_PAGE = 500

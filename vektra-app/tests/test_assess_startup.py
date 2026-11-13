@@ -7,6 +7,7 @@ session is (integration).
 
 from __future__ import annotations
 
+import asyncio
 import os
 from collections.abc import Iterator
 from pathlib import Path
@@ -369,7 +370,15 @@ async def test_role_check_against_postgres(
 
         assert set(app.state.assess_limiters) == set(LIMITER_NAMES)
         assert getattr(app.state, "rate_limiter", None) is None
+        # step 12 started the metrics refresher; on this bare server (no assess branch) it
+        # polls a function that does not exist, for ever, unless the test stops it
+        assert app.state.assess_metrics_task is not None
     finally:
+        # as the app's shutdown does: the refresher first, then the engine. Without it the
+        # task outlived the test and kept a connection to this module's container polling
+        # every 15 s, which held the run up (review of #209)
+        await asyncio.wait_for(assess_wiring.stop_metrics_refresher(app), 10)
+        assert app.state.assess_metrics_task.done()
         await app.state.assess_engine.dispose()
 
 

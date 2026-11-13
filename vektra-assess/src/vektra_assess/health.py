@@ -55,7 +55,9 @@ PARSER_STALE_FACTOR = 3
 
 #: one query for every figure (review #7). ``configured_sites`` is computed here: the table's
 #: CHECKs enforce every bound at write time (revision 0040), so the one read-side rule left is
-#: that the notice URL names a host (``privacy.config._has_host``); no text column is read.
+#: that the notice URL names a host (``privacy.config._has_host``); no text column is read. It is
+#: counted over every site, which the API role's own read of ``assess_privacy_config`` (bound to
+#: one site by RLS, ADR-0033 D9.2) cannot do: a SECURITY DEFINER function (revision a0002).
 _DETAILS_SQL = text(
     "SELECT extract(epoch FROM now()), "
     "(SELECT details FROM assess_heartbeat WHERE component = 'worker'), "
@@ -63,8 +65,7 @@ _DETAILS_SQL = text(
     "(SELECT details FROM assess_heartbeat WHERE component = 'smtp'), "
     "(SELECT details FROM assess_heartbeat WHERE component = 'purge'), "
     "(SELECT count(*) FROM assess_sites WHERE disabled_at IS NULL), "
-    "(SELECT count(*) FROM assess_privacy_config p JOIN assess_sites s ON s.id = p.site_id "
-    "WHERE s.disabled_at IS NULL AND p.notice_url ~ '^https://[^/?#@\\s\\[\\]]+')"
+    "assess_configured_site_count()"
 )
 
 _AGE_SQL = text(

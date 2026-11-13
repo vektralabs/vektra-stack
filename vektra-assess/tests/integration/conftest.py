@@ -49,19 +49,35 @@ class Pg:
         )
 
     @asynccontextmanager
-    async def conn(self, who: str = "super") -> AsyncIterator[AsyncConnection]:
+    async def conn(
+        self, who: str = "super", *, site: Any = None
+    ) -> AsyncIterator[AsyncConnection]:
+        """A connection as ``who``. ``site``: bound to that site for its FIRST transaction,
+        as an API request binds it (RLS for the API role, ADR-0033 D9.2): the API role reads
+        nothing of a site-scoped table unbound."""
         engine = create_async_engine(self.url(who))
         try:
             async with engine.connect() as c:
+                if site is not None:
+                    await c.execute(
+                        text("SELECT set_config('app.assess_site_id', :s, true)"),
+                        {"s": str(site)},
+                    )
                 yield c
         finally:
             await engine.dispose()
 
     async def run(
-        self, who: str, sql: str, params: dict[str, Any] | None = None
+        self,
+        who: str,
+        sql: str,
+        params: dict[str, Any] | None = None,
+        *,
+        site: Any = None,
     ) -> list[Any]:
-        """Run one statement in its own transaction as ``who``; return rows."""
-        async with self.conn(who) as c:
+        """Run one statement in its own transaction as ``who`` (bound to ``site`` if given);
+        return rows."""
+        async with self.conn(who, site=site) as c:
             try:
                 r = await c.execute(text(sql), params or {})
                 rows = list(r.fetchall()) if r.returns_rows else []

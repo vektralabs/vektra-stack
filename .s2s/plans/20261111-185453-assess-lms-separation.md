@@ -187,7 +187,7 @@ Regrouped by the product owner on 2026-11-11 (relayed by the coordinator): phase
 
 ### Phase 3: the costs an operator feels
 - [x] 3.1 (in parallel with 2a-2) `vektra-testkit` (new dev-only distribution, `testkit/` at the root, dev dependency group): `vektra-shared/src/vektra_shared/testing_recorders.py` and `vektra-shared/tests/lms_conformance/` move there; the `ProviderRegistry` refusal of test doubles stays; `test_image_content_boundary.py` asserts the production image has no `testing_recorders`
-- [ ] 3.2 (in parallel with 2a-4) RLS for `vektra_assess_api` (ADR-0033 D9), a new revision of the assess branch:
+- [x] 3.2 (in parallel with 2a-4) RLS for `vektra_assess_api` (ADR-0033 D9), a new revision of the assess branch (`a0002_assess_api_rls.py`, branch `feat/assess-api-rls`; see Notes, 2026-11-12):
   - policies on the site-scoped tables the API reads;
   - `SET LOCAL app.assess_site_id` from the key's site binding at the start of each request transaction (`vektra-assess/src/vektra_assess/api/deps.py`);
   - test: an API connection bound to site A, with the route's `site_id` predicate removed, reads 0 rows of site B
@@ -230,7 +230,7 @@ Each criterion is checked against the guard's data file. A status line or a gree
 - [x] `lms_boundary_baseline.toml` contains no entries, and the guard is green.
 - [x] With `VEKTRA_ASSESS_ENABLED=false`, a clean cluster has 0 `assess_*` tables, 0 `vektra_assess_*` roles and 0 assess functions after `docker/entrypoint.sh` ran (counted with `\dt assess_*`, `\du vektra_assess*`, `\df`), and the platform migrates without CREATEROLE. Met in 2a-3: `integration/test_schema_branch.py::test_a_*` (counted in SQL) and `integration/test_migration_managed_postgres.py::test_a_0_*`.
 - [x] The production image contains no `testing_recorders` module.
-- [ ] The RLS test reads 0 rows of site B from a connection bound to site A, with the route predicate removed.
+- [x] The RLS test reads 0 rows of site B from a connection bound to site A, with the route predicate removed. Met in 3.2: `vektra-assess/tests/integration/test_api_rls.py::test_a_route_statement_without_its_site_predicate_reads_nothing_of_site_b` (the Start route's `_ACTIVITY` with `site_id = :s AND` removed) and, through the routes, `test_through_a_route_a_missing_predicate_reads_the_key_site_only`.
 
 ## Testing Approach
 
@@ -314,7 +314,7 @@ Each criterion is checked against the guard's data file. A status line or a gree
   - **Recorded suites kept as joint tests.** `test_context_capture.py`, `golden_part_a_cases.py` and the canary matrix (`tests/canary/runner.py`) still run on the 4.3/5.2 recordings, now through `MoodleLmsProvider`: they are the D4 joint guarantee (Vektra's canary sinks over the provider's recorded reviews) and move with the provider in 2a-4. Their logic counterparts are on the fake (`test_capture_fake.py`, `test_context_selection.py`, `test_idor.py`, `test_start_source_cache.py`, `test_teacher_gate.py`) and the integration suites seed through `FakeLmsProvider` (`support/sessions.py`, `support/teacher_ops.py`).
   - **Names kept for 2a-3.** `ws_tls_ok` is not renamed `lms_tls_ok` yet; `moodle_release`, `moodle_origin`, `moodle_rubric`, `moodle_reasons` stay (D5 renames). The snapshot's `QuizItem.qtype` and `state` now hold the neutral `QuestionKind` / `QuestionState` values (model payload: `tipo: multiple_choice`).
   - **Review HTML (D4).** The sidecar's `review_item` takes the profile in the request header and refuses a request without a valid one (`no_profile`); its reply keys are `question_text`/`response`/`truncated`. `test_review_extraction_golden.py` proves the Moodle profile reproduces, for all 162 recorded questions, the extraction of the code before the change (`tests/golden/review_extraction_moodle.json`, committed first).
-  - **D9 backstop** (`test_site_predicate_static.py`): 14 API statements read a site-scoped table without a `site_id` predicate; each is safe for a stated reason (the key-to-site lookup, a lookup by an id from a token already verified for the site, one deployment-wide count) and sits in a commented allowlist that fails when stale. Phase-3 RLS is their only database backstop.
+  - **D9 backstop** (`test_site_predicate_static.py`): 14 API statements read a site-scoped table without a `site_id` predicate; each is safe for a stated reason (the key-to-site lookup, a lookup by an id from a token already verified for the site, one deployment-wide count) and sits in a commented allowlist that fails when stale. Phase-3 RLS is their only database backstop. **Closed in 3.2 (2026-11-12)**: the key-to-site lookup and the deployment-wide count became SECURITY DEFINER functions (`assess_site_of_key`, `assess_live_session_count`), so the allowlist has 12 entries; each of the 12 reads only tables under the a0002 policy (`test_every_allowlisted_statement_is_backed_by_rls`), and runs in a transaction bound to the request's site.
   - **Open**: the fake answers `not_found` where Moodle's `resolve_in_course` answers `activity_not_in_course` (a neutral constant for it would let a fake-based test reach `api/teachers.py`'s definitive branch).
 - 2026-11-12, PR 2a-2 (#205), after the high-effort code review (10 findings, all fixed):
   - **Protocol additions** (`vektra_shared.lms`): `LmsProvider.required_secrets` (24 members; the worker binds the setup check on the provider's declared secrets, not on a hard-coded key name); `HtmlExtractionProfile.kinds` (the question kinds a provider proved its profile for; the vertical extracts only kinds in both its own `EXTRACTION_KINDS` and the profile's); `SUBMISSION_MISMATCH` / `FILE_NOT_IN_SUBMISSION` (file-ownership refusals the vertical audits for any provider).
@@ -438,3 +438,30 @@ Each criterion is checked against the guard's data file. A status line or a gree
   8. **Snapshot**: `SCHEMA_VERSION = 3` (the `lms_release` rename); a version-2 header is `unsupported_schema`. The eval dataset is regenerated.
   9. **`prompt_version`**: a string file enters as its parsed YAML values, sorted compact JSON, so comment/quoting/order edits keep the version (test) and values still change it (test). Final `4aeeda08`.
   10. **One helper**: `vektra_app.assess_switch.assess_enabled()` (full settings, False when they do not validate), used by `migration_branches()`, `include_assess_router` and, through the module's `main`, the entrypoint.
+- 2026-11-12, task 3.2 (`feat/assess-api-rls`, off `develop` 4896eeb2): RLS for `vektra_assess_api`, assess revision `a0002_assess_api_rls.py`.
+  - **Tables**: the 20 tables that have a `site_id` column and that the API role can `SELECT`. The revision's `SITE_TABLES`, the grant matrix and the catalog are compared both ways (`test_the_rls_revision_covers_every_site_scoped_table_the_api_reads`, `test_every_site_scoped_table_the_api_reads_has_the_policy`). Each table gets `ENABLE` but not `FORCE`. With `FORCE` and no policy for the owner, the migration user would read 0 rows. The managed-Postgres test shows that a plain, non-superuser owner still reads both sites' rows.
+  - **Policies**: `assess_api_site_bound` applies to the API role only. It uses `site_id = NULLIF(current_setting('app.assess_site_id', true), '')::uuid` for both `USING` and `WITH CHECK`. NULL or `''` gives 0 rows and no writes, and a malformed value raises `22P02`. `EXPLAIN` shows the predicate as an `Index Cond`. `assess_unbound_roles` gives `USING (true)` to the worker and to the definer.
+  - **The definer is under RLS too.** It owns no table and has no BYPASSRLS. Without its own policy, every SECURITY DEFINER function would have read 0 rows. The test calls `get_session_material`, `assess_close_session` and the new functions as the API role, and the worker's close unbound.
+  - **Binding** (`vektra_assess/api/site_binding.py`, re-exported by `deps.py`):
+    - a ContextVar holds the request's site, and the router's first dependency resets it;
+    - the token verifiers set it from the signed site, and `session_gate.gate` binds the claims' site in its own transaction as well, so the gate holds wherever it is called from (the chaos suite calls it outside a request);
+    - `site_of_key` resolves the site with `assess_site_of_key` and binds it, both in the current transaction (`set_config(..., true)`) and for the rest of the request;
+    - a `begin` listener on the API engine binds every later transaction, the reply task included;
+    - binding a second, different site is refused.
+  - **Cross-site paths, each a definer function returning ids or counts**:
+    - `assess_site_of_key` (the key's site, looked up before anything is bound);
+    - `assess_live_session_count` (the Start admission cap);
+    - `assess_configured_site_count` (`/health/assess`);
+    - `assess_pending_replies` (the PendingTurnDriver; each answer task binds its session's site);
+    - `assess_transcript_site` (resend with an admin key);
+    - `assess_session_exists` (review of #209: the gate keeps auditing a cross-site probe as an ownership mismatch, with the same not-found answer).
+  - **Admin routes bind the path site** once it has been checked: `PUT`/`GET /sites/{site_id}/privacy`, and the setup check (a teacher key must belong to the path site).
+  - **Unchanged**: the model activations and the SMTP test touch no table that has a `site_id`. The UI router and the origin check read `assess_sites`, which is not covered.
+  - **Not covered**, each for a stated reason:
+    - `assess_audit_events`: the API can only insert into it, and refusals are written with no trusted site;
+    - `assess_setup_checks`: the API has no privilege on it;
+    - `assess_sites` and the child tables without a `site_id`.
+  - **Runtime guard**: `tests/support/binding_guard.py`, installed by `support.world`, fails a route test when a statement reaches a covered table before the site is bound. Its positive control is in `test_api_rls.py`.
+  - **Tests that used the API role directly** needed the binding a route provides. They now bind it with `pg.conn("api", site=...)`, `pg.run(..., site=...)` or `support.world.bind`.
+  - **Golden**: regenerated. The diff contains additions only: the policies, the 6 functions and the definer's column grants.
+  - **Open**: the child tables (`assess_transcripts`, `assess_turn_flags`, `assess_turn_notes`, `assess_enrolment_checks`, `assess_outage_incidents`, `assess_deliveries`, `assess_consumed_jtis`) have no policy of their own. A policy built on an `EXISTS` through `assess_sessions` would cover them, and is a possible follow-up. The definer's policy is unconditional. Restricting it to the bound site when a site is bound would also hold the definer functions to the request's site. That is not done here: D9.2 kept the definer paths unchanged.

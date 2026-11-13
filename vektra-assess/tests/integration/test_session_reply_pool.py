@@ -40,10 +40,12 @@ async def test_replies_beyond_the_pool_all_complete(pg, worker) -> None:  # type
             for a, u in TARGETS
         ]
         # a small API pool: 2 connections, no overflow, a short checkout timeout
-        small = create_async_engine(
-            pg.url("api"), pool_size=2, max_overflow=0, pool_timeout=3
+        # (bound and watched by the binding guard like the world's own engine)
+        small = w.use_api_engine(
+            create_async_engine(
+                pg.url("api"), pool_size=2, max_overflow=0, pool_timeout=3
+            )
         )
-        w.app.state.assess_engine = small
         w.app.state.assess_turn_driver = None
         try:
             for s in seeded:

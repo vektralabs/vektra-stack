@@ -48,6 +48,7 @@ from vektra_assess.api.common import (
     site_of_key,
 )
 from vektra_assess.api.deps import settings_of
+from vektra_assess.api.site_binding import bind_site
 from vektra_assess.api.state import limiter_of
 from vektra_assess.api.teachers import ascii_id, header_int, path_id
 from vektra_assess.api.transcripts import transcript_key_of
@@ -137,6 +138,8 @@ async def put_privacy(
     async with engine_of(request).begin() as conn:
         if (await conn.execute(_SITE, {"s": site})).scalar() is None:
             raise fail(bad_request("unknown_site"))
+        # ADR-0033 D9.2: an operator's key spans sites; the checked path site is bound
+        await bind_site(conn, site)
         old = (await conn.execute(_CURRENT, {"s": site})).first()
         if old is not None and privacy_config.version_must_change(old, doc):
             raise fail(privacy_config_invalid(privacy_config.MUST_CHANGE))
@@ -183,6 +186,7 @@ async def get_privacy(
     async with engine_of(request).connect() as conn:
         if (await conn.execute(_SITE, {"s": site})).scalar() is None:
             raise fail(bad_request("unknown_site"))
+        await bind_site(conn, site)  # ADR-0033 D9.2, as in put_privacy
         row = (await conn.execute(privacy_config.READ, {"s": site})).first()
     return JSONResponse(content=_view(row))
 

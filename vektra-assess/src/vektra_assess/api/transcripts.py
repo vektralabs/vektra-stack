@@ -61,6 +61,11 @@ from vektra_assess.api.deps import bearer_token, settings_of
 from vektra_assess.api.download_tokens import DownloadClaims, DownloadTokens, jti_hash
 from vektra_assess.api.graders import GraderCheck, check_fresh_grader
 from vektra_assess.api.models import Cmid
+from vektra_assess.api.site_binding import (
+    SiteBindingConflict,
+    bind_site,
+    set_request_site,
+)
 from vektra_assess.api.state import limiter_of
 from vektra_assess.audit import AssessAuditEvent, write_event
 from vektra_assess.errors import (
@@ -138,6 +143,8 @@ _CONSUME = text(
     "UPDATE assess_transcript_download_tokens SET consumed_at = now() WHERE jti_hash = :h"
 )
 _RESEND = text("SELECT assess_enqueue_resend(:t, :a, :gap)")
+#: the site of a transcript, for an operator's resend (a definer function, revision a0002)
+_TRANSCRIPT_SITE = text("SELECT assess_transcript_site(:t)")
 
 
 def download_tokens_of(request: Request) -> DownloadTokens:
@@ -173,9 +180,16 @@ async def verify_assess_token_download(request: Request) -> DownloadClaims:
     except Exception:
         raise fail(download_token_invalid()) from None
     try:
-        return download_tokens_of(request).verify(token)
+        claims = download_tokens_of(request).verify(token)
     except TokenError:
         raise fail(download_token_invalid()) from None
+    # ADR-0033 D9.2: the download is bound to the site the signed token names; a site the
+    # binding refuses is the same 401 as any other bad download token, never a 500
+    try:
+        set_request_site(claims.site)
+    except (ValueError, TypeError, SiteBindingConflict):
+        raise fail(download_token_invalid()) from None
+    return claims
 
 
 def _uuid(tid: str) -> UUID:
@@ -524,9 +538,16 @@ async def resend_transcript(
         _cmid_missing("resend", key)
     refused: Any = None
     async with engine_of(request).begin() as conn:
-        row = (await conn.execute(_TRANSCRIPT, {"t": t})).first()
         if teacher:
             site = await site_of_key(conn, key, "teacher")
+        else:
+            # ADR-0033 D9.2: an operator's key spans sites; the transcript names its own, which
+            # is bound before the row is read (an unknown transcript binds nothing: 404 below)
+            owner = (await conn.execute(_TRANSCRIPT_SITE, {"t": t})).scalar()
+            if owner is not None:
+                await bind_site(conn, owner)
+        row = (await conn.execute(_TRANSCRIPT, {"t": t})).first()
+        if teacher:
             if row is None or row.site_id != site:
                 raise fail(transcript_not_found())
             actor_id = int(body.actor_userid or 0)

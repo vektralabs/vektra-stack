@@ -94,7 +94,9 @@ _START_CAP = text(
     "AS wait_s FROM assess_start_attempts WHERE site_id = :s AND student_userid = :u "
     "AND cmid = :c AND outcome = 'requested' AND created_at > now() - interval '1 hour'"
 )
-_LIVE = text("SELECT count(*) FROM assess_sessions WHERE state <> 'CLOSED'")
+#: the deployment-wide admission cap counts every site's live sessions: a definer function,
+#: because the API role's own read of assess_sessions is bound to this site (ADR-0033 D9.2)
+_LIVE = text("SELECT assess_live_session_count()")
 _RENDER = text(
     "SELECT status, reason_code, extract(epoch FROM now() - computed_at) AS age_s "
     "FROM assess_render_state WHERE site_id = :s AND student_userid = :u AND cmid = :c"

@@ -201,6 +201,17 @@ CREATE FUNCTION public.assess_close_session(p_sid uuid, p_epoch integer, p_reaso
 
 ALTER FUNCTION public.assess_close_session(p_sid uuid, p_epoch integer, p_reason text) OWNER TO vektra_assess_definer;
 
+CREATE FUNCTION public.assess_configured_site_count() RETURNS bigint
+    LANGUAGE sql STABLE SECURITY DEFINER
+    SET search_path TO 'pg_catalog', 'pg_temp'
+    AS $$
+        SELECT count(*) FROM public.assess_privacy_config p
+        JOIN public.assess_sites s ON s.id = p.site_id
+        WHERE s.disabled_at IS NULL AND p.notice_url ~ '^https://[^/?#@\s\[\]]+'
+    $$;
+
+ALTER FUNCTION public.assess_configured_site_count() OWNER TO vektra_assess_definer;
+
 CREATE FUNCTION public.assess_end_outage(p_sid uuid, p_min_credit_s integer) RETURNS integer
     LANGUAGE plpgsql SECURITY DEFINER
     SET search_path TO 'pg_catalog', 'pg_temp'
@@ -375,6 +386,15 @@ CREATE FUNCTION public.assess_enter_outage(p_sid uuid, p_epoch integer, p_starte
 
 ALTER FUNCTION public.assess_enter_outage(p_sid uuid, p_epoch integer, p_started_at timestamp with time zone, p_reason text) OWNER TO vektra_assess_definer;
 
+CREATE FUNCTION public.assess_live_session_count() RETURNS bigint
+    LANGUAGE sql STABLE SECURITY DEFINER
+    SET search_path TO 'pg_catalog', 'pg_temp'
+    AS $$
+        SELECT count(*) FROM public.assess_sessions WHERE state <> 'CLOSED'
+    $$;
+
+ALTER FUNCTION public.assess_live_session_count() OWNER TO vektra_assess_definer;
+
 CREATE FUNCTION public.assess_metrics_snapshot() RETURNS jsonb
     LANGUAGE sql STABLE SECURITY DEFINER
     SET search_path TO 'pg_catalog', 'pg_temp'
@@ -442,6 +462,22 @@ CREATE FUNCTION public.assess_outage_spent(p_sid uuid) RETURNS double precision
 
 ALTER FUNCTION public.assess_outage_spent(p_sid uuid) OWNER TO <owner>;
 
+CREATE FUNCTION public.assess_pending_replies(p_min_age_s double precision, p_limit integer) RETURNS TABLE(id uuid, site_id uuid)
+    LANGUAGE sql SECURITY DEFINER
+    SET search_path TO 'pg_catalog', 'pg_temp'
+    AS $$
+        SELECT s.id, s.site_id FROM public.assess_sessions s
+        WHERE s.state = 'ACTIVE'
+          AND s.pending_reply_since IS NOT NULL
+          AND s.pending_reply_since <= now() - make_interval(secs => p_min_age_s)
+          AND s.deadline_at + make_interval(secs => s.reply_grace_s) > now()
+          AND NOT EXISTS (SELECT 1 FROM pg_catalog.pg_locks l WHERE l.locktype = 'advisory' AND l.granted AND l.objsubid = 1 AND ((l.classid::bigint << 32) | l.objid::bigint) = hashtextextended('assess_reply:' || CAST(s.id AS text), 0))
+        ORDER BY s.pending_reply_since
+        LIMIT p_limit
+    $$;
+
+ALTER FUNCTION public.assess_pending_replies(p_min_age_s double precision, p_limit integer) OWNER TO vektra_assess_definer;
+
 CREATE FUNCTION public.assess_rollback_starting(p_sid uuid) RETURNS boolean
     LANGUAGE plpgsql SECURITY DEFINER
     SET search_path TO 'pg_catalog', 'pg_temp'
@@ -481,6 +517,15 @@ CREATE FUNCTION public.assess_rollback_starting(p_sid uuid) RETURNS boolean
     $$;
 
 ALTER FUNCTION public.assess_rollback_starting(p_sid uuid) OWNER TO vektra_assess_definer;
+
+CREATE FUNCTION public.assess_session_exists(p_sid uuid) RETURNS boolean
+    LANGUAGE sql STABLE SECURITY DEFINER
+    SET search_path TO 'pg_catalog', 'pg_temp'
+    AS $$
+        SELECT EXISTS (SELECT 1 FROM public.assess_sessions WHERE id = p_sid)
+    $$;
+
+ALTER FUNCTION public.assess_session_exists(p_sid uuid) OWNER TO vektra_assess_definer;
 
 CREATE FUNCTION public.assess_sessions_drop_handoff_on_close() RETURNS trigger
     LANGUAGE plpgsql SECURITY DEFINER
@@ -553,6 +598,18 @@ CREATE FUNCTION public.assess_sessions_require_opening_turn() RETURNS trigger
 
 ALTER FUNCTION public.assess_sessions_require_opening_turn() OWNER TO vektra_assess_definer;
 
+CREATE FUNCTION public.assess_site_of_key(p_key_id uuid, p_purpose text) RETURNS TABLE(id uuid, min_plugin_version text, disabled boolean)
+    LANGUAGE sql STABLE SECURITY DEFINER
+    SET search_path TO 'pg_catalog', 'pg_temp'
+    AS $$
+        SELECT s.id, s.min_plugin_version, s.disabled_at IS NOT NULL
+        FROM public.assess_site_keys k
+        JOIN public.assess_sites s ON s.id = k.site_id
+        WHERE k.api_key_id = p_key_id AND k.purpose = p_purpose
+    $$;
+
+ALTER FUNCTION public.assess_site_of_key(p_key_id uuid, p_purpose text) OWNER TO vektra_assess_definer;
+
 CREATE FUNCTION public.assess_snapshots_immutable() RETURNS trigger
     LANGUAGE plpgsql
     SET search_path TO 'pg_catalog', 'pg_temp'
@@ -564,6 +621,17 @@ CREATE FUNCTION public.assess_snapshots_immutable() RETURNS trigger
         $$;
 
 ALTER FUNCTION public.assess_snapshots_immutable() OWNER TO <owner>;
+
+CREATE FUNCTION public.assess_transcript_site(p_tid uuid) RETURNS uuid
+    LANGUAGE sql STABLE SECURITY DEFINER
+    SET search_path TO 'pg_catalog', 'pg_temp'
+    AS $$
+        SELECT s.site_id FROM public.assess_transcripts t
+        JOIN public.assess_sessions s ON s.id = t.session_id
+        WHERE t.id = p_tid
+    $$;
+
+ALTER FUNCTION public.assess_transcript_site(p_tid uuid) OWNER TO vektra_assess_definer;
 
 CREATE FUNCTION public.get_session_material(p_sid uuid, p_epoch integer) RETURNS TABLE(sealed_dek bytea, handoff_kid text, snapshot_ciphertext bytea, snapshot_hash text, seq integer, turn_nos integer[], turn_roles text[], turn_kinds text[], turn_ciphertexts bytea[], turn_hashes text[])
     LANGUAGE sql STABLE SECURITY DEFINER
@@ -1965,6 +2033,126 @@ ALTER TABLE ONLY public.source_documents
 ALTER TABLE ONLY public.source_documents
     ADD CONSTRAINT source_documents_supersedes_id_fkey FOREIGN KEY (supersedes_id) REFERENCES public.source_documents(id);
 
+ALTER TABLE public.assess_activity_config ENABLE ROW LEVEL SECURITY;
+
+ALTER TABLE public.assess_activity_config_sealed ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY assess_api_site_bound ON public.assess_activity_config TO vektra_assess_api USING ((site_id = (NULLIF(current_setting('app.assess_site_id'::text, true), ''::text))::uuid)) WITH CHECK ((site_id = (NULLIF(current_setting('app.assess_site_id'::text, true), ''::text))::uuid));
+
+CREATE POLICY assess_api_site_bound ON public.assess_activity_config_sealed TO vektra_assess_api USING ((site_id = (NULLIF(current_setting('app.assess_site_id'::text, true), ''::text))::uuid)) WITH CHECK ((site_id = (NULLIF(current_setting('app.assess_site_id'::text, true), ''::text))::uuid));
+
+CREATE POLICY assess_api_site_bound ON public.assess_erasure_records TO vektra_assess_api USING ((site_id = (NULLIF(current_setting('app.assess_site_id'::text, true), ''::text))::uuid)) WITH CHECK ((site_id = (NULLIF(current_setting('app.assess_site_id'::text, true), ''::text))::uuid));
+
+CREATE POLICY assess_api_site_bound ON public.assess_extra_time TO vektra_assess_api USING ((site_id = (NULLIF(current_setting('app.assess_site_id'::text, true), ''::text))::uuid)) WITH CHECK ((site_id = (NULLIF(current_setting('app.assess_site_id'::text, true), ''::text))::uuid));
+
+CREATE POLICY assess_api_site_bound ON public.assess_gate_inputs TO vektra_assess_api USING ((site_id = (NULLIF(current_setting('app.assess_site_id'::text, true), ''::text))::uuid)) WITH CHECK ((site_id = (NULLIF(current_setting('app.assess_site_id'::text, true), ''::text))::uuid));
+
+CREATE POLICY assess_api_site_bound ON public.assess_privacy_config TO vektra_assess_api USING ((site_id = (NULLIF(current_setting('app.assess_site_id'::text, true), ''::text))::uuid)) WITH CHECK ((site_id = (NULLIF(current_setting('app.assess_site_id'::text, true), ''::text))::uuid));
+
+CREATE POLICY assess_api_site_bound ON public.assess_purge_records TO vektra_assess_api USING ((site_id = (NULLIF(current_setting('app.assess_site_id'::text, true), ''::text))::uuid)) WITH CHECK ((site_id = (NULLIF(current_setting('app.assess_site_id'::text, true), ''::text))::uuid));
+
+CREATE POLICY assess_api_site_bound ON public.assess_render_checks TO vektra_assess_api USING ((site_id = (NULLIF(current_setting('app.assess_site_id'::text, true), ''::text))::uuid)) WITH CHECK ((site_id = (NULLIF(current_setting('app.assess_site_id'::text, true), ''::text))::uuid));
+
+CREATE POLICY assess_api_site_bound ON public.assess_render_state TO vektra_assess_api USING ((site_id = (NULLIF(current_setting('app.assess_site_id'::text, true), ''::text))::uuid)) WITH CHECK ((site_id = (NULLIF(current_setting('app.assess_site_id'::text, true), ''::text))::uuid));
+
+CREATE POLICY assess_api_site_bound ON public.assess_reset_grants TO vektra_assess_api USING ((site_id = (NULLIF(current_setting('app.assess_site_id'::text, true), ''::text))::uuid)) WITH CHECK ((site_id = (NULLIF(current_setting('app.assess_site_id'::text, true), ''::text))::uuid));
+
+CREATE POLICY assess_api_site_bound ON public.assess_sessions TO vektra_assess_api USING ((site_id = (NULLIF(current_setting('app.assess_site_id'::text, true), ''::text))::uuid)) WITH CHECK ((site_id = (NULLIF(current_setting('app.assess_site_id'::text, true), ''::text))::uuid));
+
+CREATE POLICY assess_api_site_bound ON public.assess_setup_check_reports TO vektra_assess_api USING ((site_id = (NULLIF(current_setting('app.assess_site_id'::text, true), ''::text))::uuid)) WITH CHECK ((site_id = (NULLIF(current_setting('app.assess_site_id'::text, true), ''::text))::uuid));
+
+CREATE POLICY assess_api_site_bound ON public.assess_site_capabilities TO vektra_assess_api USING ((site_id = (NULLIF(current_setting('app.assess_site_id'::text, true), ''::text))::uuid)) WITH CHECK ((site_id = (NULLIF(current_setting('app.assess_site_id'::text, true), ''::text))::uuid));
+
+CREATE POLICY assess_api_site_bound ON public.assess_site_keys TO vektra_assess_api USING ((site_id = (NULLIF(current_setting('app.assess_site_id'::text, true), ''::text))::uuid)) WITH CHECK ((site_id = (NULLIF(current_setting('app.assess_site_id'::text, true), ''::text))::uuid));
+
+CREATE POLICY assess_api_site_bound ON public.assess_start_attempts TO vektra_assess_api USING ((site_id = (NULLIF(current_setting('app.assess_site_id'::text, true), ''::text))::uuid)) WITH CHECK ((site_id = (NULLIF(current_setting('app.assess_site_id'::text, true), ''::text))::uuid));
+
+CREATE POLICY assess_api_site_bound ON public.assess_start_breaker TO vektra_assess_api USING ((site_id = (NULLIF(current_setting('app.assess_site_id'::text, true), ''::text))::uuid)) WITH CHECK ((site_id = (NULLIF(current_setting('app.assess_site_id'::text, true), ''::text))::uuid));
+
+CREATE POLICY assess_api_site_bound ON public.assess_teacher_gate TO vektra_assess_api USING ((site_id = (NULLIF(current_setting('app.assess_site_id'::text, true), ''::text))::uuid)) WITH CHECK ((site_id = (NULLIF(current_setting('app.assess_site_id'::text, true), ''::text))::uuid));
+
+CREATE POLICY assess_api_site_bound ON public.assess_terminations TO vektra_assess_api USING ((site_id = (NULLIF(current_setting('app.assess_site_id'::text, true), ''::text))::uuid)) WITH CHECK ((site_id = (NULLIF(current_setting('app.assess_site_id'::text, true), ''::text))::uuid));
+
+CREATE POLICY assess_api_site_bound ON public.assess_token_jti TO vektra_assess_api USING ((site_id = (NULLIF(current_setting('app.assess_site_id'::text, true), ''::text))::uuid)) WITH CHECK ((site_id = (NULLIF(current_setting('app.assess_site_id'::text, true), ''::text))::uuid));
+
+CREATE POLICY assess_api_site_bound ON public.assess_transcript_download_tokens TO vektra_assess_api USING ((site_id = (NULLIF(current_setting('app.assess_site_id'::text, true), ''::text))::uuid)) WITH CHECK ((site_id = (NULLIF(current_setting('app.assess_site_id'::text, true), ''::text))::uuid));
+
+ALTER TABLE public.assess_erasure_records ENABLE ROW LEVEL SECURITY;
+
+ALTER TABLE public.assess_extra_time ENABLE ROW LEVEL SECURITY;
+
+ALTER TABLE public.assess_gate_inputs ENABLE ROW LEVEL SECURITY;
+
+ALTER TABLE public.assess_privacy_config ENABLE ROW LEVEL SECURITY;
+
+ALTER TABLE public.assess_purge_records ENABLE ROW LEVEL SECURITY;
+
+ALTER TABLE public.assess_render_checks ENABLE ROW LEVEL SECURITY;
+
+ALTER TABLE public.assess_render_state ENABLE ROW LEVEL SECURITY;
+
+ALTER TABLE public.assess_reset_grants ENABLE ROW LEVEL SECURITY;
+
+ALTER TABLE public.assess_sessions ENABLE ROW LEVEL SECURITY;
+
+ALTER TABLE public.assess_setup_check_reports ENABLE ROW LEVEL SECURITY;
+
+ALTER TABLE public.assess_site_capabilities ENABLE ROW LEVEL SECURITY;
+
+ALTER TABLE public.assess_site_keys ENABLE ROW LEVEL SECURITY;
+
+ALTER TABLE public.assess_start_attempts ENABLE ROW LEVEL SECURITY;
+
+ALTER TABLE public.assess_start_breaker ENABLE ROW LEVEL SECURITY;
+
+ALTER TABLE public.assess_teacher_gate ENABLE ROW LEVEL SECURITY;
+
+ALTER TABLE public.assess_terminations ENABLE ROW LEVEL SECURITY;
+
+ALTER TABLE public.assess_token_jti ENABLE ROW LEVEL SECURITY;
+
+ALTER TABLE public.assess_transcript_download_tokens ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY assess_unbound_roles ON public.assess_activity_config TO vektra_assess_worker, vektra_assess_definer USING (true) WITH CHECK (true);
+
+CREATE POLICY assess_unbound_roles ON public.assess_activity_config_sealed TO vektra_assess_worker, vektra_assess_definer USING (true) WITH CHECK (true);
+
+CREATE POLICY assess_unbound_roles ON public.assess_erasure_records TO vektra_assess_worker, vektra_assess_definer USING (true) WITH CHECK (true);
+
+CREATE POLICY assess_unbound_roles ON public.assess_extra_time TO vektra_assess_worker, vektra_assess_definer USING (true) WITH CHECK (true);
+
+CREATE POLICY assess_unbound_roles ON public.assess_gate_inputs TO vektra_assess_worker, vektra_assess_definer USING (true) WITH CHECK (true);
+
+CREATE POLICY assess_unbound_roles ON public.assess_privacy_config TO vektra_assess_worker, vektra_assess_definer USING (true) WITH CHECK (true);
+
+CREATE POLICY assess_unbound_roles ON public.assess_purge_records TO vektra_assess_worker, vektra_assess_definer USING (true) WITH CHECK (true);
+
+CREATE POLICY assess_unbound_roles ON public.assess_render_checks TO vektra_assess_worker, vektra_assess_definer USING (true) WITH CHECK (true);
+
+CREATE POLICY assess_unbound_roles ON public.assess_render_state TO vektra_assess_worker, vektra_assess_definer USING (true) WITH CHECK (true);
+
+CREATE POLICY assess_unbound_roles ON public.assess_reset_grants TO vektra_assess_worker, vektra_assess_definer USING (true) WITH CHECK (true);
+
+CREATE POLICY assess_unbound_roles ON public.assess_sessions TO vektra_assess_worker, vektra_assess_definer USING (true) WITH CHECK (true);
+
+CREATE POLICY assess_unbound_roles ON public.assess_setup_check_reports TO vektra_assess_worker, vektra_assess_definer USING (true) WITH CHECK (true);
+
+CREATE POLICY assess_unbound_roles ON public.assess_site_capabilities TO vektra_assess_worker, vektra_assess_definer USING (true) WITH CHECK (true);
+
+CREATE POLICY assess_unbound_roles ON public.assess_site_keys TO vektra_assess_worker, vektra_assess_definer USING (true) WITH CHECK (true);
+
+CREATE POLICY assess_unbound_roles ON public.assess_start_attempts TO vektra_assess_worker, vektra_assess_definer USING (true) WITH CHECK (true);
+
+CREATE POLICY assess_unbound_roles ON public.assess_start_breaker TO vektra_assess_worker, vektra_assess_definer USING (true) WITH CHECK (true);
+
+CREATE POLICY assess_unbound_roles ON public.assess_teacher_gate TO vektra_assess_worker, vektra_assess_definer USING (true) WITH CHECK (true);
+
+CREATE POLICY assess_unbound_roles ON public.assess_terminations TO vektra_assess_worker, vektra_assess_definer USING (true) WITH CHECK (true);
+
+CREATE POLICY assess_unbound_roles ON public.assess_token_jti TO vektra_assess_worker, vektra_assess_definer USING (true) WITH CHECK (true);
+
+CREATE POLICY assess_unbound_roles ON public.assess_transcript_download_tokens TO vektra_assess_worker, vektra_assess_definer USING (true) WITH CHECK (true);
+
 ALTER TABLE public.conversations ENABLE ROW LEVEL SECURITY;
 
 CREATE POLICY conversations_namespace_insert ON public.conversations FOR INSERT WITH CHECK (((COALESCE(current_setting('app.current_namespace'::text, true), ''::text) = ''::text) OR ((namespace_id)::text = current_setting('app.current_namespace'::text, true))));
@@ -2013,6 +2201,9 @@ REVOKE ALL ON FUNCTION public.assess_close_session(p_sid uuid, p_epoch integer, 
 GRANT ALL ON FUNCTION public.assess_close_session(p_sid uuid, p_epoch integer, p_reason text) TO vektra_assess_api;
 GRANT ALL ON FUNCTION public.assess_close_session(p_sid uuid, p_epoch integer, p_reason text) TO vektra_assess_worker;
 
+REVOKE ALL ON FUNCTION public.assess_configured_site_count() FROM PUBLIC;
+GRANT ALL ON FUNCTION public.assess_configured_site_count() TO vektra_assess_api;
+
 REVOKE ALL ON FUNCTION public.assess_end_outage(p_sid uuid, p_min_credit_s integer) FROM PUBLIC;
 GRANT ALL ON FUNCTION public.assess_end_outage(p_sid uuid, p_min_credit_s integer) TO vektra_assess_worker;
 
@@ -2022,15 +2213,30 @@ GRANT ALL ON FUNCTION public.assess_enqueue_resend(p_tid uuid, p_actor text, p_m
 REVOKE ALL ON FUNCTION public.assess_enter_outage(p_sid uuid, p_epoch integer, p_started_at timestamp with time zone, p_reason text) FROM PUBLIC;
 GRANT ALL ON FUNCTION public.assess_enter_outage(p_sid uuid, p_epoch integer, p_started_at timestamp with time zone, p_reason text) TO vektra_assess_api;
 
+REVOKE ALL ON FUNCTION public.assess_live_session_count() FROM PUBLIC;
+GRANT ALL ON FUNCTION public.assess_live_session_count() TO vektra_assess_api;
+
 REVOKE ALL ON FUNCTION public.assess_metrics_snapshot() FROM PUBLIC;
 GRANT ALL ON FUNCTION public.assess_metrics_snapshot() TO vektra_assess_api;
+
+REVOKE ALL ON FUNCTION public.assess_pending_replies(p_min_age_s double precision, p_limit integer) FROM PUBLIC;
+GRANT ALL ON FUNCTION public.assess_pending_replies(p_min_age_s double precision, p_limit integer) TO vektra_assess_api;
 
 REVOKE ALL ON FUNCTION public.assess_rollback_starting(p_sid uuid) FROM PUBLIC;
 GRANT ALL ON FUNCTION public.assess_rollback_starting(p_sid uuid) TO vektra_assess_api;
 
+REVOKE ALL ON FUNCTION public.assess_session_exists(p_sid uuid) FROM PUBLIC;
+GRANT ALL ON FUNCTION public.assess_session_exists(p_sid uuid) TO vektra_assess_api;
+
 REVOKE ALL ON FUNCTION public.assess_sessions_drop_handoff_on_close() FROM PUBLIC;
 
 REVOKE ALL ON FUNCTION public.assess_sessions_require_opening_turn() FROM PUBLIC;
+
+REVOKE ALL ON FUNCTION public.assess_site_of_key(p_key_id uuid, p_purpose text) FROM PUBLIC;
+GRANT ALL ON FUNCTION public.assess_site_of_key(p_key_id uuid, p_purpose text) TO vektra_assess_api;
+
+REVOKE ALL ON FUNCTION public.assess_transcript_site(p_tid uuid) FROM PUBLIC;
+GRANT ALL ON FUNCTION public.assess_transcript_site(p_tid uuid) TO vektra_assess_api;
 
 REVOKE ALL ON FUNCTION public.get_session_material(p_sid uuid, p_epoch integer) FROM PUBLIC;
 GRANT ALL ON FUNCTION public.get_session_material(p_sid uuid, p_epoch integer) TO vektra_assess_api;
@@ -2182,6 +2388,8 @@ GRANT USAGE ON SEQUENCE public.assess_outage_incidents_id_seq TO vektra_assess_d
 GRANT SELECT,INSERT ON TABLE public.assess_privacy_config TO vektra_assess_api;
 GRANT SELECT ON TABLE public.assess_privacy_config TO vektra_assess_worker;
 
+GRANT SELECT(site_id) ON TABLE public.assess_privacy_config TO vektra_assess_definer;
+
 GRANT UPDATE(retention_days) ON TABLE public.assess_privacy_config TO vektra_assess_api;
 
 GRANT UPDATE(legal_basis_label) ON TABLE public.assess_privacy_config TO vektra_assess_api;
@@ -2189,6 +2397,7 @@ GRANT UPDATE(legal_basis_label) ON TABLE public.assess_privacy_config TO vektra_
 GRANT UPDATE(legal_basis_text) ON TABLE public.assess_privacy_config TO vektra_assess_api;
 
 GRANT UPDATE(notice_url) ON TABLE public.assess_privacy_config TO vektra_assess_api;
+GRANT SELECT(notice_url) ON TABLE public.assess_privacy_config TO vektra_assess_definer;
 
 GRANT UPDATE(notice_text) ON TABLE public.assess_privacy_config TO vektra_assess_api;
 
@@ -2268,9 +2477,16 @@ GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE public.assess_site_capabilities TO ve
 GRANT SELECT ON TABLE public.assess_site_keys TO vektra_assess_api;
 GRANT SELECT ON TABLE public.assess_site_keys TO vektra_assess_worker;
 
+GRANT SELECT(site_id) ON TABLE public.assess_site_keys TO vektra_assess_definer;
+
+GRANT SELECT(api_key_id) ON TABLE public.assess_site_keys TO vektra_assess_definer;
+
+GRANT SELECT(purpose) ON TABLE public.assess_site_keys TO vektra_assess_definer;
+
 GRANT SELECT ON TABLE public.assess_sites TO vektra_assess_worker;
 
 GRANT SELECT(id) ON TABLE public.assess_sites TO vektra_assess_api;
+GRANT SELECT(id) ON TABLE public.assess_sites TO vektra_assess_definer;
 
 GRANT SELECT(lms_site_uuid) ON TABLE public.assess_sites TO vektra_assess_api;
 
@@ -2281,10 +2497,12 @@ GRANT UPDATE(release) ON TABLE public.assess_sites TO vektra_assess_worker;
 
 GRANT SELECT(min_plugin_version) ON TABLE public.assess_sites TO vektra_assess_api;
 GRANT UPDATE(min_plugin_version) ON TABLE public.assess_sites TO vektra_assess_worker;
+GRANT SELECT(min_plugin_version) ON TABLE public.assess_sites TO vektra_assess_definer;
 
 GRANT SELECT(created_at) ON TABLE public.assess_sites TO vektra_assess_api;
 
 GRANT SELECT(disabled_at) ON TABLE public.assess_sites TO vektra_assess_api;
+GRANT SELECT(disabled_at) ON TABLE public.assess_sites TO vektra_assess_definer;
 
 GRANT UPDATE(probe_manifest) ON TABLE public.assess_sites TO vektra_assess_worker;
 

@@ -291,6 +291,18 @@ _ACTIVATE = text(
     "frozen_policy = CAST(:fp AS jsonb), starting_expires_at = NULL, last_activity_at = now() "
     "WHERE id = :s"
 )
+#: REQ-087: the reset grant written after session N (``session_no = N``) is consumed by session
+#: N+1 in the commit transaction, right after ``_WITHIN_T`` stamps the final ``committed_at``,
+#: and at that time. Eligibility counts grants
+#: and does not read this; the subject export does. ``uq_assess_reset_grants_session`` leaves at
+#: most one such grant, and ``consumed_at IS NULL`` keeps a re-run from moving the time. A
+#: rolled-back Start never reaches this statement, so it consumes nothing.
+_CONSUME_GRANT = text(
+    "UPDATE assess_reset_grants g SET consumed_at = s.committed_at "
+    "FROM assess_sessions s WHERE s.id = :s AND g.site_id = s.site_id AND g.cmid = s.cmid "
+    "AND g.student_userid = s.student_userid AND g.session_no = s.session_no - 1 "
+    "AND g.consumed_at IS NULL"
+)
 #: dated at the pre-flight's admission (database clock, before the LMS was read), never at the
 #: commit: the enrolment was observed then, and a slow capture must not make it look fresher
 #: than it is
@@ -622,13 +634,17 @@ async def _commit(
                 # The LAST statement before COMMIT: T on the wall clock (clock_timestamp(), not
                 # now(), which is the transaction start), after every write including the audit.
                 # The guarded update touches no row past T, and the transaction rolls back. What
-                # is left after it is the COMMIT itself (a few milliseconds): that is the only
-                # margin by which a commit can land past T.
+                # is left after it is the reset-grant consumption (one indexed row) and the
+                # COMMIT itself (a few milliseconds): that is the only margin by which a commit
+                # can land past T.
                 guarded = await conn.execute(
                     _WITHIN_T, {"sid": sid, "t": deps.settings.start_t_s}
                 )
                 if guarded.rowcount != 1:
                     raise _Rollback(Reason.START_TIMEOUT)
+                # after the stamp, so the grant takes the final committed_at; one indexed
+                # single-row update, still inside the transaction
+                await conn.execute(_CONSUME_GRANT, {"s": sid})
                 reached_commit = True
     except _Rollback:
         raise

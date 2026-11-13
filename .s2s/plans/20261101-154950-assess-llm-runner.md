@@ -399,3 +399,7 @@ migration, the trace persistence round trip and the activation table and endpoin
 - **BACKLOG**: RAG-ON for discussions (ARCH-072 activation preconditions, uncached visibility,
   the post_retrieval branch, `[Materiale:]` tags) is out of scope. This plan deliberately ships
   no RAG branch.
+
+- **Open follow-ups (2026-11-13, recorded, not fixed):**
+  - NFR-023 must be re-activated: `prompt_version` is now `4aeeda08` (#206), so the activation recorded for the previous version no longer applies.
+  - Test model conformance: `gpt-5-mini` sometimes fails the Part B labels (Start rolled back as `part_b_rejected`). The NFR-023 re-activation run should measure how often.

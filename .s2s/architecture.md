@@ -194,7 +194,7 @@ Vektra is a modular open-source platform for Retrieval-Augmented Generation (RAG
 | Goal | Approach | Reference |
 |------|----------|-----------|
 | Deployment simplicity | Single container, Docker Compose, inline defaults | ARCH-001, ARCH-002 |
-| Extensibility | 10 Protocol interfaces for all integration points, ProviderRegistry for unified selection | ARCH-029, ARCH-035 to ARCH-039, ARCH-053 |
+| Extensibility | 11 Protocol interfaces for all integration points, ProviderRegistry for unified selection | ARCH-029, ARCH-035 to ARCH-039, ARCH-053 |
 | Security | Single trust boundary, encrypted conversations, soft delete for compliance | ARCH-020, ARCH-031, ARCH-040 |
 | Observability | Structured logging, Prometheus metrics, correlation IDs, RAG-specific QueryTrace | ARCH-008, ARCH-013, ARCH-014, ARCH-041 |
 | Future extraction | Module boundaries enforced via import-linter | ARCH-003 |
@@ -225,7 +225,7 @@ See [section 3.1](#31-business-context) for system context diagram.
 │                                                                                     │
 │  ┌───────────────────────────────────────────────────────────────────────────────┐ │
 │  │                           vektra_shared (library)                              │ │
-│  │  • Config schemas    • Error types    • 10 Protocol interfaces                 │ │
+│  │  • Config schemas    • Error types    • 11 Protocol interfaces                 │ │
 │  │  • Auth middleware   • ProviderRegistry  • Types (QueryTrace, Namespace, ...)  │ │
 │  └───────────────────────────────────────────────────────────────────────────────┘ │
 │         ▲                    ▲                    ▲                    ▲            │
@@ -431,7 +431,7 @@ See [section 8.4](#84-deployment) for Docker Compose specification and resource 
 - **ARCH-036 - QueryPipeline Protocol**: Abstraction of RAG query pipeline. execute() returns (QueryResponse, QueryTrace). Phase 1: SimpleQueryPipeline (embed -> search -> relevance_filter -> build_prompt -> LLM, with graceful degradation). relevance_filter applies minimum score threshold and overlap deduplication (ARCH-056). build_prompt calculates token budget from model context window (ARCH-055), renders composable Jinja2 templates (ARCH-054). Phase 2: AdvancedQueryPipeline adds query_rewrite (ARCH-061), query_classify, rerank, confidence scoring steps. Selectable via VEKTRA_QUERY_PIPELINE.
 - **ARCH-037 - ChunkingStrategy Protocol**: Abstraction of text chunking. Receives DocumentChunk stream, returns chunked stream. Phase 1: FixedSizeChunking. Selectable via VEKTRA_CHUNKING_STRATEGY.
 - **ARCH-038 - EventEmitter interface**: Internal event hooks with NoOp default. Emission points at document lifecycle, query completion, safeguard triggers, API key operations. Phase 2 (implemented): WebhookEventEmitter (HMAC-SHA256 signed HTTP POST, activated via `VEKTRA_WEBHOOK_URL`). LogEventEmitter (structlog-based) was scoped during planning but never implemented; the webhook path subsumed the use case.
-- **ARCH-039 - ProviderRegistry pattern**: Unified registry for all Protocol implementations. Dict-based in Phase 1, extensible to entry_points plugin discovery in Phase 2. Consistent VEKTRA_* env var configuration pattern.
+- **ARCH-039 - ProviderRegistry pattern**: Unified registry for all Protocol implementations. Dict-based in Phase 1, extensible to entry_points plugin discovery in Phase 2. Consistent VEKTRA_* env var configuration pattern. Amended by [ADR-0033](decisions/ADR-0033-lms-provider-protocol.md): 11 Protocols; the `lms` slot is filled from the entry-point group `vektra.lms_providers` (`VEKTRA_ASSESS_LMS_PROVIDER`).
 - **ARCH-040 - Forward-compatible data model**: Phase 1 schema includes fields for Phase 2 features: response_id and citation_id for feedback loops, document version and supersedes_id for versioning, deleted_at and deletion_reason for soft delete, index_version for zero-downtime reindex. All fields nullable/defaulted, no behavioral change in Phase 1.
 - **ARCH-041 - Audit/analytics separation**: QueryTrace (per-step timing, chunk refs, model info) emitted separately from audit log. QueryTrace does not contain query text or response content (REQ-051 compliance). Phase 1: structlog emission. Phase 2 (implemented): dedicated query_traces table with reporting API (vektra-analytics).
 - **ARCH-042 - Content type detection**: Magic bytes validation before DocumentExtractor dispatch. python-magic for MIME detection. Logs warning on mismatch with declared type.
@@ -564,13 +564,13 @@ See [section 8.4](#84-deployment) for Docker Compose specification and resource 
 
 #### vektra_shared
 
-**Responsibility**: Cross-cutting infrastructure (not a deployable component). Defines all 10 Protocol interfaces, extended types, ProviderRegistry, and auth middleware.
+**Responsibility**: Cross-cutting infrastructure (not a deployable component). Defines all 11 Protocol interfaces, extended types, ProviderRegistry, and auth middleware.
 
-**Provides**: 10 Protocol definitions (LLMProvider, EmbeddingProvider, SparseEmbeddingProvider, VectorStoreProvider, DocumentExtractor, ChunkingStrategy, QueryPipeline, SafeguardHook, EventEmitter, KeyStoreProvider), ProviderRegistry, types (DocumentChunk, QueryResponse, QueryTrace, SourceDocument, SourceRef, Namespace, SearchFilters, ChunkMetadata, BoundingBox, ElementType, SearchMode, QueryEmbedding, SparseVector, ChunkEmbedding, SearchResult, ChunkRef, QueryRequest, QueryChunk, SafeguardContext, SafeguardResult, ExtractionRequest), config schemas, error definitions, auth middleware
+**Provides**: 11 Protocol definitions (LLMProvider, EmbeddingProvider, SparseEmbeddingProvider, VectorStoreProvider, DocumentExtractor, ChunkingStrategy, QueryPipeline, SafeguardHook, EventEmitter, KeyStoreProvider, LmsProvider), ProviderRegistry, types (DocumentChunk, QueryResponse, QueryTrace, SourceDocument, SourceRef, Namespace, SearchFilters, ChunkMetadata, BoundingBox, ElementType, SearchMode, QueryEmbedding, SparseVector, ChunkEmbedding, SearchResult, ChunkRef, QueryRequest, QueryChunk, SafeguardContext, SafeguardResult, ExtractionRequest), config schemas, error definitions, auth middleware
 
 ### 8.3 Protocol interfaces
 
-Phase 1 defines 10 Protocol interfaces. Each has a simple Phase 1 implementation (or is not registered when optional) and is designed for Phase 2 swap without contract changes.
+There are 11 Protocol interfaces. The first ten date from Phase 1: each has a simple Phase 1 implementation (or is not registered when optional) and is designed for Phase 2 swap without contract changes. The 11th, `LmsProvider`, came with the assessment vertical's LMS separation ([ADR-0033](decisions/ADR-0033-lms-provider-protocol.md)); it has no in-tree implementation.
 
 **Design principle**: Protocol signatures designed for Phase 2 features; Phase 1 implementations are simple. Fields and parameters that Phase 1 ignores still exist in the types so that Phase 2 swaps implementations without schema migrations or API changes.
 
@@ -707,6 +707,23 @@ class EventEmitter(Protocol):
 
 Phase 1: NoOpEventEmitter. Emission points: document.indexed, document.failed, query.completed, safeguard.triggered, apikey.created, apikey.revoked. Phase 2 (implemented): WebhookEventEmitter — HMAC-SHA256 signed HTTP POST with configurable URL, secret, and timeout (`VEKTRA_WEBHOOK_URL`, `VEKTRA_WEBHOOK_SECRET`, `VEKTRA_WEBHOOK_TIMEOUT`). LogEventEmitter was originally scoped for Phase 2 but never built; structlog already emits the same events at module boundaries, so the webhook path was prioritized instead.
 
+#### LmsProvider (new - ADR-0033)
+
+```python
+@runtime_checkable
+class LmsProvider(Protocol):  # vektra_shared.lms.protocol, 25 members
+    name: str
+    # read members (per site): every one returns Reading[T] = Readable[T] | Unreadable
+    # plus setup items, capability results, startup problems, the review-HTML profile,
+    # required_secrets, aclose()
+```
+
+The 11th Protocol. It gives read access to one LMS product for every site of a deployment, on the neutral types of `vektra_shared.lms.types`. Only `vektra_assess` consumes it. The vertical keeps the authority: it decides, re-resolves every id it is given, and schedules; the provider only carries the transport (ADR-0033 D1, D2).
+
+- **Composition**: entry-point group `vektra.lms_providers`, selected by `VEKTRA_ASSESS_LMS_PROVIDER`. `vektra_app.lms_providers` loads it once per process and registers it under the `lms` slot. With assess enabled and no provider set, the worker refuses to start and the setup item `lms_provider_registered` is `MISSING`. The registry refuses test doubles.
+- **Fail closed**: the loaded provider is wrapped by `vektra_shared.lms.guard.guarded()` (`GuardedLmsProvider`). A member that raises becomes a declared `Unreadable`, and only the Protocol is reachable through the wrapper.
+- **Where the Moodle provider lives**: in the plugin repository vektra-moodle-discuss, top-level `provider/` (distribution `vektra-lms-moodle`), released as a wheel. The platform image installs it only in the `lms-moodle` variant, pinned by version and sha256 in `docker/lms-providers/moodle.txt` (ADR-0033 D6, OD-5, OD-6). The default image holds no `vektra_lms_*` package, and the platform tree names no LMS: `vektra-shared/tests/test_lms_boundary.py` enforces this with an empty baseline.
+
 ### 8.3.1 Extended types
 
 #### KeyStoreProvider
@@ -723,7 +740,7 @@ hashes the token with argon2id before looking it up (ADR-0010).
 
 It is defined in `vektra_shared/auth.py` rather than the protocols module because the
 auth middleware consumes it directly, which is why earlier revisions of this document
-counted nine Protocols instead of ten.
+counted nine Protocols instead of ten (eleven since ADR-0033).
 
 #### Protocol support types
 
@@ -944,7 +961,7 @@ class ProviderRegistry:
     def list(category: str) -> list[str]
 ```
 
-Phase 1: dict-based. Unified env var pattern: `VEKTRA_EMBEDDING_PROVIDER`, `VEKTRA_SPARSE_EMBEDDING_PROVIDER` (optional, Phase 2), `VEKTRA_VECTOR_STORE_PROVIDER`, `VEKTRA_QUERY_PIPELINE`, `VEKTRA_CHUNKING_STRATEGY`, `VEKTRA_SAFEGUARD_MODE`, `VEKTRA_DOCUMENT_EXTRACTOR`.
+Phase 1: dict-based. Unified env var pattern: `VEKTRA_EMBEDDING_PROVIDER`, `VEKTRA_SPARSE_EMBEDDING_PROVIDER` (optional, Phase 2), `VEKTRA_VECTOR_STORE_PROVIDER`, `VEKTRA_QUERY_PIPELINE`, `VEKTRA_CHUNKING_STRATEGY`, `VEKTRA_SAFEGUARD_MODE`, `VEKTRA_DOCUMENT_EXTRACTOR`. The `lms` slot (ADR-0033) is filled from the entry-point group `vektra.lms_providers`, named by `VEKTRA_ASSESS_LMS_PROVIDER`.
 
 #### Configuration types
 
@@ -2090,7 +2107,7 @@ Quality scenarios (QS-xx) define measurable targets. Validation scenarios ([vali
 | **Presidio** | Microsoft open-source library for PII (Personally Identifiable Information) detection and anonymization. Accepted for Phase 2 SafeguardHook implementation for input/output content filtering. |
 | **Prompt template** | Jinja2 template file for prompt construction (ARCH-054). Three composable templates: system.j2 (LLM behavior), context.j2 (chunk formatting), conversation.j2 (history formatting). Loaded from configurable directory with built-in fallback. |
 | **Prompt version** | SHA-256 hash (8-char prefix) of concatenated template sources (ARCH-048, ARCH-054). Recorded in QueryTrace for quality correlation. Per-template hashes in StepTrace metadata. |
-| **Protocol interface** | Python typing.Protocol defining contract for pluggable components. 10 Protocols defined: LLMProvider, EmbeddingProvider, SparseEmbeddingProvider, VectorStoreProvider, DocumentExtractor, ChunkingStrategy, QueryPipeline, SafeguardHook, EventEmitter, KeyStoreProvider. |
+| **Protocol interface** | Python typing.Protocol defining contract for pluggable components. 11 Protocols defined: LLMProvider, EmbeddingProvider, SparseEmbeddingProvider, VectorStoreProvider, DocumentExtractor, ChunkingStrategy, QueryPipeline, SafeguardHook, EventEmitter, KeyStoreProvider, LmsProvider. |
 | **ProviderRegistry** | Unified registry for Protocol implementations. Dict-based in Phase 1, extensible to entry_points plugin discovery. |
 | **Query rewriting** | Pre-retrieval step that rewrites a conversational query into a self-contained form by resolving pronouns, demonstratives, and anaphoric references using conversation history (ARCH-061). |
 | **QueryPipeline** | Protocol abstracting the RAG query flow. Phase 1: SimpleQueryPipeline. Phase 2: AdvancedQueryPipeline with query rewriting (ARCH-061), reranking, and verification. |
@@ -2297,6 +2314,8 @@ Revised effort: backend 10-14 dev-weeks, plugin 3-5.
 ### B.2 Architectural decisions
 
 #### ARCH-065: Vektra-authoritative split with a thin, non-authoritative Moodle local_ plugin
+
+> Amended by [ADR-0033](decisions/ADR-0033-lms-provider-protocol.md) (2026-11-11): the authority stays in Vektra; the LMS transport moved behind the `LmsProvider` Protocol (see B.7).
 
 **Context**:
 
@@ -2681,6 +2700,8 @@ CONF-005 resolved 4/4. No scope change, because REQ-077's field and its default 
 *Related*: REQ-077, NFR-015, BR-013, OQ-031, ADR-0026, CONF-005
 
 #### ARCH-073: Top-level vektra_assess module with stable external names and import-linter contracts
+
+> Amended by [ADR-0033](decisions/ADR-0033-lms-provider-protocol.md) (2026-11-11): stored and wire names that named the LMS were renamed in place (D5), and `vektra_assess.moodle` left the package (see B.7).
 
 **Context**:
 
@@ -3224,3 +3245,12 @@ Amended:
 
 Feature-level open items from specs remain: OQ-020 (DPO), OQ-025 (WS readability resolved 2026-11-01; math/qtype fidelity still open), OQ-026 (reference model/hardware), OQ-027 (eval-suite owner).
 
+### B.7 LMS separation (ADR-0033, 2026-11-11 to 2026-11-13)
+
+[ADR-0033](decisions/ADR-0033-lms-provider-protocol.md) separates `vektra_assess` from the LMS. It amends ARCH-065 and ARCH-073, and COMP-004 no longer lives in this repository. Plan: `.s2s/plans/20261111-185453-assess-lms-separation.md`.
+
+- **Protocol**: `vektra_assess` depends only on `LmsProvider` (`vektra_shared.lms`, section 8.3), loaded from the entry-point group `vektra.lms_providers` and wrapped by `guarded()`. The gate logic stays in the vertical (`LmsStartSource`). The setup check is a generic runner plus the items the provider declares (D3). The parser sidecar takes the review-HTML profile from the provider (D4).
+- **The Moodle provider**: the former `vektra_assess.moodle` (COMP-004) is the `vektra-lms-moodle` distribution in vektra-moodle-discuss `provider/`. The `lms-moodle` image variant installs its wheel pinned by sha256 (D6).
+- **Schema**: the assess tables are an Alembic branch of their own. `a0001_assess_base` (label `assess`, `depends_on` platform `0009`) replaced the old revisions 0009 to 0044, and later revisions follow it (`a0002` onward). `docker/entrypoint.sh` runs `platform@head`, and `assess@head` only when `VEKTRA_ASSESS_ENABLED=true`. With assess off, a clean cluster has no `assess_*` table, no `vektra_assess_*` role and no assess function, and the platform migrates without CREATEROLE (D7).
+- **RLS for `vektra_assess_api`** (D9.2, revision `a0002`): the policy `assess_api_site_bound` limits the API role to `site_id = app.assess_site_id` on the 20 site-scoped tables it can read. The API binds the site per request (`vektra_assess.api.site_binding`). The few reads that cannot be bound to one site are `SECURITY DEFINER` functions returning ids or counts. This narrows the ADR-0009 deviation recorded in D9; child tables without a `site_id` have no policy of their own.
+- **Measure**: `vektra-shared/tests/lms_boundary_baseline.toml` has no entries. `test_lms_boundary.py` fails on any LMS name in the platform tree.

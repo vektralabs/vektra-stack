@@ -1,10 +1,10 @@
 # Implementation Plan: Separating `vektra-assess` from the LMS (the `LmsProvider` Protocol)
 
 **ID**: 20261111-185453-assess-lms-separation
-**Status**: in_progress (ADR-0033 accepted 2026-11-11, with OD-1 to OD-6 decided; phase 4, the ADR itself, is in review in #201; PR 2a-1 done on `feat/lms-provider-protocol`, in review; PR 2a-2 done on `feat/assess-on-lms-protocol`, stacked on #203; PR 2a-3 done on `feat/assess-schema-branch`, stacked on #205, 2a-3.9 waiting for the coordinator; PR 2a-4 done on `feat/lms-moodle-adapter-out`, stacked on #206: the LMS boundary baseline is empty)
+**Status**: in_progress (every code task is merged: #201 ADR, 2a-1 #203, 2a-2 #205, 2a-3 #206, 2a-4 #207, 3.1 #204, 3.2 #209, 2b.2/2b.3 #210; 2b.1 in vektra-moodle-discuss #6 and #7, releases `provider-v0.9.0.dev1` and `provider-v0.9.0.dev2`; the LMS boundary baseline has 0 entries; the phase 4 `.s2s/architecture.md` update done in #218. One item remains, see Notes 2026-11-13: the deploy VM read-only check of 2a-3.9, for someone with server access)
 **Branch**: `docs/assess-lms-separation-adr` (phase 4), `feat/lms-provider-protocol` (2a-1, stacked on #201). Each later PR has its own branch, listed in the PR split below.
 **Created**: 2026-11-11T18:54:53Z
-**Updated**: 2026-11-12T12:00:00Z
+**Updated**: 2026-11-13T14:00:00Z
 
 ## Traceability
 
@@ -83,15 +83,15 @@ Regrouped by the product owner on 2026-11-11 (relayed by the coordinator): phase
 
 ## Tasks
 
-### Phase 4: the decision (this PR, `docs/assess-lms-separation-adr`)
+### Phase 4: the decision (#201, `docs/assess-lms-separation-adr`)
 - [x] Measure the real LMS surface on `origin/develop` `f95c148b` with the guard's matcher and `rg`, file:line references included (ADR-0033 §1, §7)
 - [x] Write ADR-0033, with the open decisions OD-1 to OD-6
 - [x] Annotate ADR-0027 "Amended by ADR-0033"
 - [x] Add the Separation section to `INDEX-ASSESS.md` and a one-line pointer to `.s2s/CONTEXT.md`
 - [x] Product owner answers OD-1 to OD-6 (2026-11-11); ADR-0033 set to `accepted`, with the answers recorded in its section 6
-- [ ] `.s2s/architecture.md`: ARCH-039 says 11 Protocols and lists the `lms` slot; the ARCH-065 and ARCH-073 rows point at ADR-0033 (on acceptance)
+- [x] `.s2s/architecture.md`: ARCH-039 says 11 Protocols and lists the `lms` slot; the ARCH-065 and ARCH-073 rows point at ADR-0033 (on acceptance). Done in #218 (2026-11-13): every "10 Protocol" count is now 11; section 8.3 has an `LmsProvider` entry; ARCH-039, ARCH-065 and ARCH-073 point at ADR-0033; Appendix B gains B.7 (LMS separation: the assess Alembic branch, RLS for `vektra_assess_api`, D9.2). `.s2s/CONTEXT.md` counts fixed the same way (11 Protocols, 79 decisions, 33 ADRs)
 
-### Phase 2a, PR 2a-1: Protocol and neutral types
+### Phase 2a, PR 2a-1 (#203): Protocol and neutral types
 - [x] 2a-1.1 `vektra-shared/src/vektra_shared/lms/__init__.py`, `types.py`: `Reading`, `Readable`, `Unreadable`, `UnreadableReason`, `ShapeEvidence` (moved from `vektra-assess/src/vektra_assess/readable.py`, with the field `wsfunction` renamed `call`), and the neutral types of ADR-0033 D2. `readable.py` becomes a re-export until 2a-2b deletes it.
 - [x] 2a-1.2 `vektra-shared/src/vektra_shared/lms/protocol.py`: `LmsProvider` (23 members, `@runtime_checkable`), `StaffRole`, `QuestionState`, `QuestionKind`, `OverdueMode`, `GradeMethod`, `HtmlExtractionProfile`, `ReviewHtml`, `SetupItem`, `CapabilityResult`, `StartupProblem`
 - [x] 2a-1.3 `vektra-shared/src/vektra_shared/protocols.py`: re-export `LmsProvider`, docstring "10 Protocol interfaces" becomes 11; `registry.py` docstring lists `"lms"`
@@ -104,7 +104,7 @@ Regrouped by the product owner on 2026-11-11 (relayed by the coordinator): phase
 - [x] 2a-1.10 `make lint`, `make test`, guard green, baseline unchanged
 - [x] 2a-1.11 (added by the product owner, 2026-11-11) `VEKTRA_ASSESS_SAFEGUARD_MODE=none` follows the model's locality: accepted with `VEKTRA_ENV=development` and any `VEKTRA_ASSESS_PROVIDER_LOCALITY`; outside development accepted with `onprem`, refused at startup with `cloud` (the default), in the refusal style of the other development-only switches (`StartupValidationError` at step `assess_llm_check`, `vektra-app/src/vektra_app/assess_llm.py`), the message saying that a cloud model requires the safeguard and how to fix it. Failing-first tests, one per row, plus `presidio` still the default (`vektra-app/tests/test_assess_llm.py`); the dev overlay still accepted (`test_compose_assess_profile.py`). Documented in `.env.example`, `docs/reference/configuration.md` and `docs/guides/operators/assess-deployment.md`
 
-### Phase 2a, PR 2a-2 (part a): the vertical on the Protocol
+### Phase 2a, PR 2a-2 (#205, part a): the vertical on the Protocol
 - [x] 2a-2a.1 `vektra-assess/src/vektra_assess/moodle/provider.py`: `MoodleLmsProvider`, implementing `LmsProvider` over `moodle/readers/*`, `moodle/probes.py` and the Moodle items of `moodle/setup_check.py`; normalises `overduehandling`, `grademethod`, the attempt and question states, and `qtype` into the neutral enums. The conformance kit runs on it with the recorded fixtures.
 - [x] 2a-2a.2 `vektra-assess/src/vektra_assess/worker/start_source.py`: `MoodleStartSource` becomes `LmsStartSource(provider: LmsProvider, …)`; same methods (`gate_facts`, `capture`, `enrolled`, `graders`, `teacher_facts`, `close_facts`, `forget`); no import from `vektra_assess.moodle`
 - [x] 2a-2a.3 `vektra-assess/src/vektra_assess/worker/preflight.py`: `MoodleGateFacts` becomes `LmsGateFacts`; `StartSource` docstring; `worker/render.py`, `worker/enrolment.py`, `worker/teacher_gate.py`, `worker/transcript_gen.py`, `transcript/facts.py` follow
@@ -117,13 +117,13 @@ Regrouped by the product owner on 2026-11-11 (relayed by the coordinator): phase
 - [x] 2a-2a.10 unit tests moved to the fake, among them `test_start_source_cache.py`, `test_teacher_gate.py`, `test_context_capture.py`, `test_context_selection.py`, `test_capabilities.py`, `test_idor.py`, `test_render_moodle_reasons.py` (renamed in 2a-3), `test_parser_client.py`, `test_boundaries.py`
 - [x] 2a-2a.11 `make lint`, `make test`, `make test-integration`; guard green, baseline unchanged (the moved mentions stay inside the directory entry)
 
-### Phase 2a, PR 2a-2 (part b, same PR): the integration suites on the fake provider
+### Phase 2a, PR 2a-2 (#205, part b, same PR): the integration suites on the fake provider
 - [x] 2a-2b.1 `vektra-assess/tests/integration/`: `test_session_preflight*.py`, `test_session_start_guard.py`, `test_session_state.py`, `test_session_get.py`, `test_session_burst_inprocess.py`, `test_chaos_parser_kill.py`, `test_snapshot_store_db.py`, `test_transcript_generation.py`, `test_teacher_config_format.py`, `test_setup_check_{handler,render,run,worker_items}.py`, `test_ui_e2e.py`, `test_probes_db.py`, and `support/{sessions,teacher_ops}.py` on `FakeLmsProvider`
 - [x] 2a-2b.2 `tests/chaos/assess/worker_main.py`, `tests/nfr/test_assess_burst.py`, `scripts/assess_burst.py`: the fake is loaded through a development-only entry point; a production registry refuses it (test)
 - [x] 2a-2b.3 D9 backstop: `vektra-assess/tests/test_site_predicate_static.py` parses every SQL text in `vektra_assess.api` and fails when a statement reads a site-scoped `assess_*` table without a `site_id` predicate; a planted route without the predicate turns it red (positive control)
 - [x] 2a-2b.4 delete `vektra_assess/readable.py` (re-export) and `context/capture/readers.py` if still present; `make test-integration` green with 0 skipped (the existing JUnit-skip CI steps)
 
-### Phase 2a, PR 2a-3: the assess schema branch and the neutral names (OD-1 = yes, decided 2026-11-11)
+### Phase 2a, PR 2a-3 (#206): the assess schema branch and the neutral names (OD-1 = yes, decided 2026-11-11)
 - [x] 2a-3.0 **validity check, at the moment of the cut and before any other 2a-3 task.** Both facts must hold, and each must be measured:
   1. no published release ships `vektra-assess`: no `vektra-assess` package or `assess_*` revision in any `v*` tag, checked with `git tag -l 'v*'` and then `git ls-tree -r <tag> -- vektra-assess migrations/versions | rg assess` for each tag;
   2. `vektra-moodle-discuss` has no tag: `gh api repos/vektralabs/vektra-moodle-discuss/tags` returns `[]`.
@@ -158,11 +158,13 @@ Regrouped by the product owner on 2026-11-11 (relayed by the coordinator): phase
 
   Record in `## Notes` the result of the check, and what was recreated, by whom and when.
 
-### Phase 2a, PR 2a-4 (part a): the recorded fixtures (rename-only commit)
+  **Half done (2026-11-13):** the local F1 database is on the assess branch (read-only count: `alembic_version` = `a0004`, the assess head of `develop`, and 37 `assess_*` tables). The deploy VM check has no recorded result yet; this box stays open until it has one.
+
+### Phase 2a, PR 2a-4 (#207, part a): the recorded fixtures (rename-only commit)
 - [x] 2a-4a.1 `git mv vektra-assess/tests/fixtures/moodle_ws adapters/vektra-lms-moodle/tests/fixtures/moodle_ws` (328 files), and the fixture path constant in `vektra-assess/tests/assess_moodle_support.py`
 - [x] 2a-4a.2 proof in the PR body: `git diff --find-renames=100% --stat origin/develop...HEAD` shows 328 renames and 1 modified file, and `make test` is green
 
-### Phase 2a, PR 2a-4 (part b, same PR): the adapter leaves the platform (ratchet 1)
+### Phase 2a, PR 2a-4 (#207, part b, same PR): the adapter leaves the platform (ratchet 1)
 - [x] 2a-4b.1 `adapters/vektra-lms-moodle/pyproject.toml` (distribution `vektra-lms-moodle`, depends on `vektra-shared` only, entry point `vektra.lms_providers: moodle = vektra_lms_moodle:build_provider`); `git mv vektra-assess/src/vektra_assess/moodle adapters/vektra-lms-moodle/src/vektra_lms_moodle`; imports rewritten
 - [x] 2a-4b.2 provider settings class `vektra_lms_moodle/config.py`: the 11 settings of `vektra_assess/config.py:236-295` move here, with the names per OD-4; `startup_problems(env)` replaces `vektra-app/src/vektra_app/assess_worker.py:229-236`
 - [x] 2a-4b.3 the provider's tests move to `adapters/vektra-lms-moodle/tests/`:
@@ -181,20 +183,20 @@ Regrouped by the product owner on 2026-11-11 (relayed by the coordinator): phase
 - [x] 2a-4b.12 baseline: delete the `vektra-assess` directory entry and the 7 platform file entries in the same commit; guard green; `rg -il moodle vektra-assess/src vektra-assess/ui/src vektra-shared/src vektra-app/src vektra-admin/src` returns nothing (positive control: the same predicate on `adapters/` returns its files)
 
 ### Phase 2b: the adapter's home repository
-- [x] 2b.1 request to the plugin session (see Notes): host `vektra-lms-moodle` in the repository chosen by OD-5, with Python CI, the conformance run and a wheel release. Done by the plugin session: vektra-moodle-discuss PR #6 (merge `14ffbac`), pre-release `provider-v0.9.0.dev1`
-- [x] 2b.2 after the first published wheel: `.github/workflows/publish.yml` builds the image variant of OD-6, installing the wheel by pinned version and hash; remove `adapters/` and the `lms-moodle` dependency group (branch `chore/lms-moodle-adapter-wheel`; see Notes)
-- [x] 2b.3 the image-boundary test (2a-4b.10) asserts the variant's wheel hash
+- [x] 2b.1 request to the plugin session (see Notes): host `vektra-lms-moodle` in the repository chosen by OD-5, with Python CI, the conformance run and a wheel release. Done by the plugin session: vektra-moodle-discuss PR #6 (merge `14ffbac`), pre-release `provider-v0.9.0.dev1`; then vektra-moodle-discuss PR #7 (setup-check seeding under RLS) and pre-release `provider-v0.9.0.dev2`, which `docker/lms-providers/moodle.txt` pins on `develop`
+- [x] 2b.2 (#210) after the first published wheel: `.github/workflows/publish.yml` builds the image variant of OD-6, installing the wheel by pinned version and hash; remove `adapters/` and the `lms-moodle` dependency group (branch `chore/lms-moodle-adapter-wheel`; see Notes)
+- [x] 2b.3 (#210) the image-boundary test (2a-4b.10) asserts the variant's wheel hash
 
 ### Phase 3: the costs an operator feels
-- [x] 3.1 (in parallel with 2a-2) `vektra-testkit` (new dev-only distribution, `testkit/` at the root, dev dependency group): `vektra-shared/src/vektra_shared/testing_recorders.py` and `vektra-shared/tests/lms_conformance/` move there; the `ProviderRegistry` refusal of test doubles stays; `test_image_content_boundary.py` asserts the production image has no `testing_recorders`
-- [x] 3.2 (in parallel with 2a-4) RLS for `vektra_assess_api` (ADR-0033 D9), a new revision of the assess branch (`a0002_assess_api_rls.py`, branch `feat/assess-api-rls`; see Notes, 2026-11-12):
+- [x] 3.1 (#204, in parallel with 2a-2) `vektra-testkit` (new dev-only distribution, `testkit/` at the root, dev dependency group): `vektra-shared/src/vektra_shared/testing_recorders.py` and `vektra-shared/tests/lms_conformance/` move there; the `ProviderRegistry` refusal of test doubles stays; `test_image_content_boundary.py` asserts the production image has no `testing_recorders`
+- [x] 3.2 (#209, in parallel with 2a-4) RLS for `vektra_assess_api` (ADR-0033 D9), a new revision of the assess branch (`a0002_assess_api_rls.py`, branch `feat/assess-api-rls`; see Notes, 2026-11-12):
   - policies on the site-scoped tables the API reads;
   - `SET LOCAL app.assess_site_id` from the key's site binding at the start of each request transaction (`vektra-assess/src/vektra_assess/api/deps.py`);
   - test: an API connection bound to site A, with the route's `site_id` predicate removed, reads 0 rows of site B
 - [x] 3.3 `.s2s/BACKLOG.md`: DEBT item "unify `vektra_shared.netguard` with `vektra_learn.api._resolve_and_validate_url`" (owner: the author). Done in #199 (DEBT-042).
 - [x] 3.4 CHANGELOG `Changed`: JSON logs are written with `ensure_ascii=False` (every deployment). Done in #199 (the CHANGELOG `ensure_ascii` entry).
 - [x] 3.5 managed-Postgres upgrade note: prove the positive case (roles pre-created + the documented GRANT + assess migrated to head) on a cluster without superuser, then write it; "up to the current head" instead of a hand-written revision number. Done in #199 (the proven GRANT recipe, and "up to the current head").
-- [ ] 3.6 fallback only, if task 2a-3.0 forces OD-1 = no: the second ratchet (squash after every retained database has been migrated; see ADR-0033 D7)
+- [x] 3.6 not applicable: 2a-3.0 confirmed OD-1 = yes at the cut, and ratchet 2 closed in 2a-3 (#206). Fallback only, if task 2a-3.0 forces OD-1 = no: the second ratchet (squash after every retained database has been migrated; see ADR-0033 D7)
 
 ## State & Data Lifecycle
 
@@ -213,13 +215,13 @@ Each criterion is checked against the guard's data file. A status line or a gree
 
 **Phase 2a (ratchet 1)**
 - [x] `vektra-shared/tests/lms_boundary_baseline.toml` contains no `directory` entry and no `file` entry outside `migrations/`. The 8 entries are gone: `vektra-assess`, `vektra-shared/src/vektra_shared/{auth,errors,netguard}.py`, `vektra-app/src/vektra_app/{assess_wiring,assess_worker,main}.py`, `vektra-admin/src/vektra_admin/templates/keys.html`.
-- [ ] `uv run pytest vektra-shared/tests/test_lms_boundary.py` is green on `develop` after the last 2a PR.
-- [ ] No 2a PR added a baseline entry: `git log -p origin/develop -- vektra-shared/tests/lms_boundary_baseline.toml` shows only `-` lines.
+- [x] `uv run pytest vektra-shared/tests/test_lms_boundary.py` is green on `develop` after the last 2a PR. Run 2026-11-13 on `develop` `3a9684f8`: 17 passed.
+- [x] No 2a PR added a baseline entry: `git log -p origin/develop -- vektra-shared/tests/lms_boundary_baseline.toml` shows only `-` lines. Counted 2026-11-13: since 2026-11-11 the file's commits remove 1 (#205), 19 (#206) and 6 (#207) `[[entry]]` blocks, 26 in all, add none and raise no `mentions`; the 26 `+` entries are the guard's creation on 2026-11-08 (`2b042488`, `c13aac03`). `develop` has 0 `[[entry]]` lines.
 - [x] `rg -il moodle vektra-assess/src vektra-assess/ui/src` returns 0 files, and the same predicate on `adapters/vektra-lms-moodle/src` returns more than 0 (the predicate is not dead).
 - [x] `vektra_assess` imports no provider: import-linter green with the new contracts, and `python -c "import vektra_assess, sys; assert not [m for m in sys.modules if m.startswith('vektra_lms')]"`.
 - [x] The conformance kit is green on `FakeLmsProvider` and on `MoodleLmsProvider` with the 328 recorded fixtures (4.3 and 5.2), canary sinks included.
 - [x] The vertical's suites (unit, integration, chaos) use no Moodle fixture: `rg -l moodle_ws vektra-assess/tests tests/` returns nothing.
-- [ ] With `VEKTRA_ASSESS_ENABLED=true` and `VEKTRA_ASSESS_LMS_PROVIDER` unset, the worker refuses to start, and the setup item `lms_provider_registered` is `MISSING`.
+- [x] With `VEKTRA_ASSESS_ENABLED=true` and `VEKTRA_ASSESS_LMS_PROVIDER` unset, the worker refuses to start, and the setup item `lms_provider_registered` is `MISSING`. Run 2026-11-13: `vektra-app/tests/test_assess_processes.py::test_a_missing_provider_and_a_key_violation_are_reported_together` (`run_checks()` raises `StartupValidationError` naming `VEKTRA_ASSESS_LMS_PROVIDER is unset`), `vektra-app/tests/test_lms_providers.py::test_an_unset_name_is_refused`, and `vektra-assess/tests/test_setup_runner.py` (`(MISSING, "not_registered")`).
 - [x] The default image contains no `vektra_lms_*` package (image content test), and the `INSTALL_LMS_PROVIDER=moodle` build does.
 - [x] Ratchet 2 also closes in 2a (OD-1 = yes, decided): the baseline file has no entries, and the squash-equivalence test is green.
 
@@ -465,3 +467,9 @@ Each criterion is checked against the guard's data file. A status line or a gree
   - **Tests that used the API role directly** needed the binding a route provides. They now bind it with `pg.conn("api", site=...)`, `pg.run(..., site=...)` or `support.world.bind`.
   - **Golden**: regenerated. The diff contains additions only: the policies, the 6 functions and the definer's column grants.
   - **Open**: the child tables (`assess_transcripts`, `assess_turn_flags`, `assess_turn_notes`, `assess_enrolment_checks`, `assess_outage_incidents`, `assess_deliveries`, `assess_consumed_jtis`) have no policy of their own. A policy built on an `EXISTS` through `assess_sessions` would cover them, and is a possible follow-up. The definer's policy is unconditional. Restricting it to the bound site when a site is bound would also hold the definer functions to the request's site. That is not done here: D9.2 kept the definer paths unchanged.
+- 2026-11-13, tracker update (branch `chore/assess-followups-20261113`, off `develop` `3a9684f8`):
+  - **Merged**: #201 (phase 4), #203 (2a-1), #204 (3.1), #205 (2a-2), #206 (2a-3), #207 (2a-4), #209 (3.2), #210 (2b.2, 2b.3). In vektra-moodle-discuss: #6 (2b.1, `provider-v0.9.0.dev1`), #7 (`provider-v0.9.0.dev2`, the version `develop` pins).
+  - **Baseline**: 0 `[[entry]]` lines on `develop`; the guard passes (17 tests). Both ratchets are closed.
+  - **Note on OD-1's validity condition**: vektra-moodle-discuss now has tags, `provider-v0.9.0.dev1` and `provider-v0.9.0.dev2`. They came after the 2a-3 cut, where 2a-3.0 measured none, and they are provider wheels, not plugin releases. The plugin release `0.2.0` is not tagged.
+  - **What remains before `completed`**: the phase 4 `.s2s/architecture.md` update was added to this PR at the coordinator's request and is done. One item remains:
+    - 2a-3.9, the deploy VM read-only check (a request to the internal-ops session, for someone with server access). The local F1 database is done: it is at `a0004` with 37 `assess_*` tables (read-only count, 2026-11-13).

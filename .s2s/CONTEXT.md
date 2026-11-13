@@ -52,7 +52,7 @@ Split criteria defined in [ADR-0002](decisions/ADR-0002-repo-split-criteria.md).
 - **Logging**: structlog with JSON output, PII redaction processors. Correlation ID propagation across sync calls and arq jobs. OpenTelemetry spans at module boundaries. QueryTrace (ARCH-041) for RAG-specific observability, separate from audit log.
 - **Monitoring**: Prometheus metrics on /metrics via prometheus-fastapi-instrumentator. Hierarchical health endpoints (GET /health, GET /health/{component}). Memory observability via GET /health/memory.
 - **Security**: TLS termination at reverse proxy layer (NFR-012). Encryption at rest via pgcrypto for conversations (ARCH-031) and PostgreSQL TDE for database. Soft delete for compliance (REQ-057). SafeguardResult supports content modification for PII anonymization (ARCH-049). See [architecture.md](architecture.md#security).
-- **Extensibility**: 10 Protocol interfaces with ProviderRegistry (ARCH-039). Forward-compatible data model with Phase 2 fields present from Phase 1 (ARCH-040). EventEmitter for internal hooks (ARCH-038). LlamaIndex not adopted for Phase 1-2, standalone evaluation via RAGAS/DeepEval (ARCH-046). Three-tier evaluation strategy: CI synthetic tests, staging eval mode, production metrics-only (ARCH-050).
+- **Extensibility**: 11 Protocol interfaces with ProviderRegistry (ARCH-039; the 11th, `LmsProvider`, per ADR-0033). Forward-compatible data model with Phase 2 fields present from Phase 1 (ARCH-040). EventEmitter for internal hooks (ARCH-038). LlamaIndex not adopted for Phase 1-2, standalone evaluation via RAGAS/DeepEval (ARCH-046). Three-tier evaluation strategy: CI synthetic tests, staging eval mode, production metrics-only (ARCH-050).
 - **Pipeline quality**: SimpleQueryPipeline includes retrieval quality controls (relevance threshold, overlap deduplication, no-relevant-context detection per ARCH-056) and token budget allocation (ARCH-055) for prompt construction. Prompt templates are composable Jinja2 files (system, context, conversation per ARCH-054) with configurable path. Startup validation sequence (ARCH-057) ensures clear error reporting on misconfiguration.
 
 ## Components
@@ -135,7 +135,7 @@ See [architecture.md](architecture.md) for complete architecture documentation.
 - Content type detection: python-magic (magic bytes)
 - ORM: SQLAlchemy 2.0 async with asyncpg (ORM models internal to modules, Pydantic models as public API)
 
-**Protocol interfaces** (10 defined in vektra_shared):
+**Protocol interfaces** (11 defined in vektra_shared):
 - LLMProvider: multi-provider LLM abstraction with graceful degradation
 - EmbeddingProvider: shared embedding generation with asymmetric model support. Phase 1: SentenceTransformersProvider (in-process). Phase 2: TEIEmbeddingProvider against a remote Text Embeddings Inference server (FEAT-024)
 - SparseEmbeddingProvider: sparse vector generation for hybrid search (ARCH-053). Phase 1: not registered. Phase 2: FastEmbedBM25Provider via fastembed
@@ -145,9 +145,10 @@ See [architecture.md](architecture.md) for complete architecture documentation.
 - QueryPipeline: RAG pipeline abstraction returning QueryResponse + QueryTrace. Phase 2: AdvancedQueryPipeline with query rewriting (ARCH-061), reranking, hybrid search (implemented)
 - SafeguardHook: pre/post query safeguards (3 trust boundary points) with content modification support (ARCH-049)
 - EventEmitter: internal event hooks. NoOpEventEmitter (Phase 1), WebhookEventEmitter (Phase 2: HMAC-SHA256 signed HTTP POST)
-- KeyStoreProvider: API key lookup and validation for the auth middleware (ADR-0010). Defined in `auth.py` rather than the protocols module, and registered under the `key_store` slot like the other nine
+- KeyStoreProvider: API key lookup and validation for the auth middleware (ADR-0010). Defined in `auth.py` rather than the protocols module, and registered under the `key_store` slot like the others
+- LmsProvider: read access to one LMS product for the assessment vertical (ADR-0033). `vektra_shared.lms`, 25 members, neutral types, loaded from the entry-point group `vektra.lms_providers` (`VEKTRA_ASSESS_LMS_PROVIDER`) into the `lms` slot and wrapped fail-closed by `guarded()` (`GuardedLmsProvider`). No in-tree implementation: the Moodle provider lives in vektra-moodle-discuss `provider/` and the `lms-moodle` image installs it as a wheel pinned by sha256
 
-**Key decisions** (64 total, 26 ADRs):
+**Key decisions** (79 total, ARCH-001 to ARCH-079; 33 ADRs):
 - [ADR-0003](decisions/ADR-0003-modular-monolith-phase1.md): Modular monolith for Phase 1
 - [ADR-0005](decisions/ADR-0005-module-boundary-enforcement.md): Module boundary enforcement
 - [ADR-0006](decisions/ADR-0006-background-tasks-arq.md): Background tasks with arq

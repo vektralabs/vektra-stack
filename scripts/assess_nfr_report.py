@@ -317,7 +317,10 @@ SQL_HIDDEN = (
     "AND (NOT EXISTS (SELECT 1 FROM pg_policies p WHERE " + _APPLIES + " "
     "AND p.permissive = 'PERMISSIVE' AND p.qual = 'true') "
     "OR EXISTS (SELECT 1 FROM pg_policies p WHERE " + _APPLIES + " "
-    "AND p.permissive = 'RESTRICTIVE' AND p.qual IS DISTINCT FROM 'true')) ORDER BY 1"
+    # a restrictive policy filters reads only through its USING clause: no USING (qual NULL:
+    # a FOR ALL / INSERT policy with WITH CHECK only) filters nothing, ``true`` filters nothing
+    "AND p.permissive = 'RESTRICTIVE' AND p.qual IS NOT NULL AND p.qual <> 'true')) "
+    "ORDER BY 1"
 )
 
 

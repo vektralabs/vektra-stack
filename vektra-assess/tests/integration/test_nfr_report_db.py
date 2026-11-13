@@ -291,6 +291,22 @@ async def test_a_role_that_rls_restricts_is_refused_not_reported(pg, tmp_path) -
             f"TO {reader} USING (true)",
         )
         await r.load(cfg(reader_url))
+        # CodeRabbit 4558599990: a restrictive policy with no USING clause (WITH CHECK only:
+        # qual NULL, here on FOR ALL, which the read filter considers) filters no read, so it
+        # does not refuse either
+        await pg.run("super", f"DROP POLICY {restrictive} ON assess_sessions")
+        await pg.run(
+            "super",
+            f"CREATE POLICY {restrictive} ON assess_sessions AS RESTRICTIVE FOR ALL "
+            f"TO {reader} WITH CHECK (cmid > 0)",
+        )
+        qual = await pg.run(
+            "super",
+            "SELECT qual FROM pg_policies WHERE policyname = :p",
+            {"p": restrictive},
+        )
+        assert qual == [(None,)]
+        await r.load(cfg(reader_url))
     finally:
         await pg.run("super", f"DROP POLICY IF EXISTS {restrictive} ON assess_sessions")
         for name, table in policies:

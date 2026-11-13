@@ -220,7 +220,7 @@ printed, because some settings carry connection strings.
 | `VEKTRA_ASSESS_LLM_MAX_TOKENS` | int | `600` | Completion tokens per reply, reserved out of the context window before history is kept. With a reasoning model it covers the reasoning **and** the answer: see [Reasoning models (assess)](#reasoning-models-assess). |
 | `VEKTRA_ASSESS_LLM_CONTEXT_WINDOW` | int | `8192` | Context window of the model. History is trimmed oldest first; the context bundle is never trimmed (a bundle that does not fit is an error). Range `2048`..`1048576`. |
 | `VEKTRA_ASSESS_LLM_SEED` | int | - | Passed to providers that support a seed. Range `0`..`2147483647`. |
-| `VEKTRA_ASSESS_OUTAGE_TIMEOUT_S` | float | `45` | No first token within this time is a provider outage (REQ-086); a slow stream that keeps producing is not. |
+| `VEKTRA_ASSESS_OUTAGE_TIMEOUT_S` | float | `45` | No first token within this time is a provider outage (REQ-086); a slow stream that keeps producing is not. An empty or whitespace-only chunk (a reasoning model's reasoning) is not a first token: the reasoning time counts against this deadline ([Reasoning models (assess)](#reasoning-models-assess)). |
 | `VEKTRA_ASSESS_OUTAGE_G_S` | int | `20` | REQ-086 G. An outage moves the session to OUTAGE (timer frozen, input locked); the worker probes the provider every 5-10 s with one `max_tokens=1` call while any session is in OUTAGE. At the first success the outage ends: an interval of at least G seconds is credited in full, a shorter one earns nothing, and the cumulative credit never exceeds C = min(15 min, half the session duration). Cumulative outage above C, or a third consecutive failed call, closes the session `service_failure`. |
 | `VEKTRA_ASSESS_PRIVACY_NOTICE_URL` | url | unset | URL of the privacy notice, returned to the plugin in `GET /state` `pre_session.privacy.notice_url` (with `VEKTRA_ASSESS_PRIVACY_NOTICE_VERSION`). |
 | `VEKTRA_ASSESS_RETRY_RPM` | int | `6` | `POST /sessions/{sid}/retry` calls per minute per session; above it 429 (`retry_rate`). The retry only makes the API try the pending turn now; it never ends an OUTAGE or changes the state. |
@@ -305,27 +305,45 @@ its reasoning tokens out of it before it writes any answer. When the reasoning u
 budget, the stream ends with `finish_reason=length` and no text. Measured with an OpenAI reasoning
 model at the default of 600, three runs out of three: the Part B (the opening of the
 discussion) on a realistic context spent all 600 tokens on reasoning and ended after about 9 s
-with no text. A turn or an opening
-with no text is a provider outage for the runner, so the Start was rolled back
-(`provider_unavailable`). The worker logs such a call as `assess_preflight_provider_outage` with
-`outage_cause=max_tokens_exhausted`, the configured `max_tokens` and
-`remediation_code=raise_llm_max_tokens_or_lower_reasoning_effort`, and the
-`assess_start_rollback` audit row carries `cause=max_tokens_exhausted`.
+with no text.
+
+**Reasoning time counts against the first-token deadline.** The reasoning reaches Vektra as
+chunks with empty content, and an empty (or whitespace-only) chunk is not a first token: it does
+**not** reset `VEKTRA_ASSESS_OUTAGE_TIMEOUT_S` (default 45 s). The whole reasoning phase must fit
+inside that deadline, or the call ends as `first_token_timeout`.
+
+What happens when the budget runs out before any text:
+
+- **Start (Part B):** no opening, so the Start is rolled back (`provider_unavailable`). The
+  worker logs `assess_preflight_provider_outage` with `outage_cause=max_tokens_exhausted`, the
+  configured `max_tokens` and `remediation_code=raise_llm_max_tokens_or_lower_reasoning_effort`;
+  the `assess_start_rollback` audit row carries `cause=max_tokens_exhausted`.
+- **Discussion turn:** a configuration problem, not an outage. The session does not enter
+  OUTAGE; the attempt ends with the interrupted turn (`provider_refused`), logged as
+  `assess_turn_provider_failure` with the same fields.
+- **An answer cut at max_tokens after some text** (`finish_reason=length`) is delivered as the
+  post-check or the Part B rules allow, and logged as `assess_llm_answer_truncated` with
+  `outage_cause=max_tokens_truncated`, `max_tokens` and the same remediation code.
 
 Pick one of the two fixes, in this order:
 
-1. **Turn reasoning down or off** through `VEKTRA_ASSESS_LLM_EXTRA_BODY`, and keep the default
-   `VEKTRA_ASSESS_LLM_MAX_TOKENS=600` (Part B is capped at a few sentences, a turn is short):
+1. **Lower the reasoning effort, or turn reasoning off**, through `VEKTRA_ASSESS_LLM_EXTRA_BODY`,
+   and keep the default `VEKTRA_ASSESS_LLM_MAX_TOKENS=600` (Part B is capped at a few sentences,
+   a turn is short). This fixes both the token budget and the first-token deadline:
    - OpenAI reasoning models: `{"reasoning_effort": "low"}` (or `"minimal"` where the model
      accepts it);
    - Qwen3 on vLLM: `{"chat_template_kwargs": {"enable_thinking": false}}`, the same switch the
      RAG uses ([Using a local vLLM instance](#using-a-local-vllm-instance)). It applies to any
      vLLM model whose chat template reads `enable_thinking`.
 2. **Keep reasoning on and raise `VEKTRA_ASSESS_LLM_MAX_TOKENS`** so that reasoning plus answer
-   fit: start from 2048 and check the outage line and `make eval-assess` with your model. The
-   value is reserved out of `VEKTRA_ASSESS_LLM_CONTEXT_WINDOW` (it must stay below it), so a
-   larger budget leaves less room for the discussion history, and every turn takes longer. A
-   higher budget also lengthens the opening against the Start window `VEKTRA_ASSESS_START_T_S`.
+   fit: start from 2048. A larger budget means a longer reasoning phase before the first text, so
+   `VEKTRA_ASSESS_OUTAGE_TIMEOUT_S` must cover the longest reasoning time you measure, or the
+   calls that used to end as `max_tokens_exhausted` now end as `first_token_timeout`. For a Start,
+   that time must also fit the Start window: the opening has at most `VEKTRA_ASSESS_START_T_S`
+   minus 5 s minus what the LMS reads took (about 50 s at the default T of 60), and beyond it the
+   Start is rolled back `start_timeout`. The budget is reserved out of
+   `VEKTRA_ASSESS_LLM_CONTEXT_WINDOW` (it must stay below it), so it also leaves less room for
+   the discussion history. Check the outage lines and `make eval-assess` with your model.
 
 Either change is a configuration change of the discussion model: run `make eval-assess` again
 before you rely on it.

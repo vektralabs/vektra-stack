@@ -82,19 +82,12 @@ router = APIRouter()
 #: seconds kept before deadline + grace to persist a cut reply
 CUT_MARGIN_S = 2.0
 
-#: provider errors that are the provider ANSWERING (a refusal, not an outage): rate limit,
-#: over-length, content filter, budget, a request it rejects. They never set OUTAGE and earn no
-#: credit (REQ-086); the attempt ends with the marked turn, the student may write again. Matched
-#: on the exception type name the runner records (litellm's names), never on its message.
-NOT_AN_OUTAGE = frozenset(
-    {
-        "RateLimitError",
-        "ContextWindowExceededError",
-        "ContentPolicyViolationError",
-        "BudgetExceededError",
-        "BadRequestError",
-    }
-)
+# A provider error that is the provider ANSWERING (any 4xx: a rate limit, over-length, a content
+# filter, a wrong key or model, a request it rejects), the provider library's spend limit, or a
+# max_tokens spent before any text is a refusal, not an outage: it never sets OUTAGE and earns no
+# credit (REQ-086); the attempt ends with the marked turn and the student may write again. The
+# decision is ``ProviderOutageError.is_refusal``, from the runner's closed cause code (built from
+# type names and the received status, never the message).
 
 _APPEND = text(
     "SELECT assess_append_turn(:sid, :epoch, :seq, :role, :kind, :ct, :h, :prev)"
@@ -438,11 +431,17 @@ class TurnDriver:
                 elif isinstance(item, TurnResult):
                     result = item
         except ProviderOutageError as exc:
-            if exc.record.error_class in NOT_AN_OUTAGE:
+            if exc.is_refusal:
                 failure = "provider_refused"
             else:
                 # the server-side record: the interval starts at the call's own start
                 outage = exc.record
+            log.warning(
+                "assess_turn_provider_failure",
+                session_id=str(sid),
+                reason_code=failure or "provider_unavailable",
+                **exc.log_fields(getattr(self.runner, "max_tokens", None)),
+            )
         except Exception as exc:
             log.warning("assess_turn_driver_error", error_type=type(exc).__name__)
             failure = "internal_error"

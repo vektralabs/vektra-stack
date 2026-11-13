@@ -55,6 +55,7 @@ from vektra_assess.llm.types import (
     TraceWriter,
     TurnResult,
     TurnUsage,
+    remediation_code,
 )
 from vektra_shared.protocols import LLMProvider, SafeguardHook
 from vektra_shared.types import (
@@ -96,6 +97,11 @@ class DiscussionTurnRunner:
     @property
     def model(self) -> str:
         return str(self._settings.llm_model)
+
+    @property
+    def max_tokens(self) -> int:
+        """The completion budget of every call (``VEKTRA_ASSESS_LLM_MAX_TOKENS``)."""
+        return self._settings.llm_max_tokens
 
     @property
     def prompt_version(self) -> str:
@@ -189,10 +195,26 @@ class DiscussionTurnRunner:
             out.append(PriorTurn(prior.role, text))
         return tuple(out), changed
 
-    def _outage(self, rec: ProviderCallRecord) -> ProviderOutageError:
+    def _outage(
+        self, rec: ProviderCallRecord, attempt: int | None = None
+    ) -> ProviderOutageError:
         if self._metrics is not None:
             self._metrics.call_outcome(rec.outcome)
-        return ProviderOutageError(rec)
+        return ProviderOutageError(rec, attempt)
+
+    def _check_truncated(self, finish: str | None, kind: str) -> None:
+        """A completed answer cut at max_tokens (finish_reason "length"): delivery is unchanged
+        (the post-check or the Part B rules decide), but the operator learns the budget is short.
+        There is no truncation metric; the line is the signal."""
+        if finish != "length":
+            return
+        log.warning(
+            "assess_llm_answer_truncated",
+            kind=kind,
+            outage_cause="max_tokens_truncated",
+            max_tokens=self._settings.llm_max_tokens,
+            remediation_code=remediation_code("max_tokens_truncated"),
+        )
 
     def _emit_turn(self, gate: SentenceGate, records: list[ProviderCallRecord]) -> None:
         if self._metrics is None:
@@ -235,13 +257,15 @@ class DiscussionTurnRunner:
         messages: list[Message],
         records: list[ProviderCallRecord],
         stop: asyncio.Event | None = None,
+        attempt: int | None = None,
     ) -> tuple[AsyncIterator[CompletionChunk], CompletionChunk, datetime] | None:
-        """Open the provider stream and wait for its first non-empty chunk.
+        """Open the provider stream and wait for its first chunk with text.
 
-        ONE outage deadline covers both the open and the first token (an empty role chunk does
-        not reset it), and a stream that ends before any text is an outage, never an empty
-        reply. ``None`` means the caller's ``stop`` won first: the stream is already closed and
-        a ``cancelled`` record appended.
+        ONE outage deadline covers both the open and the first token: an empty or
+        whitespace-only chunk (a role chunk, a reasoning model's reasoning) does not reset it,
+        and a stream that ends before any text is an outage, never an empty reply. ``None``
+        means the caller's ``stop`` won first: the stream is already closed and a ``cancelled``
+        record appended.
         """
         s = self._settings
         kwargs: dict[str, object] = {}
@@ -249,9 +273,10 @@ class DiscussionTurnRunner:
             kwargs["seed"] = s.llm_seed
         started = _now()
         holder: list[AsyncIterator[CompletionChunk]] = []
-        finish: list[str | None] = [None]  # the last finish reason seen before any text
+        finish: str | None = None  # the last finish reason seen before any text
 
         async def acquire() -> CompletionChunk | None:
+            nonlocal finish
             stream = await self._llm.stream(
                 messages,
                 self.model,
@@ -262,9 +287,9 @@ class DiscussionTurnRunner:
             holder.append(stream.__aiter__())
             while True:
                 chunk = await anext(holder[0], None)
-                if chunk is None or chunk.content:
+                if chunk is None or chunk.content.strip():
                     return chunk
-                finish[0] = getattr(chunk, "finish_reason", None) or finish[0]
+                finish = _finish_reason(chunk) or finish
 
         async def give_up(
             outcome: CallOutcome,
@@ -301,23 +326,23 @@ class DiscussionTurnRunner:
                 await give_up("cancelled")
                 return None
             await give_up("first_token_timeout", cause="first_token_timeout")
-            raise self._outage(records[-1]) from None
+            raise self._outage(records[-1], attempt) from None
         try:
             first = task.result()
         # any provider failure is an outage record, never its text
         except Exception as exc:
             await give_up("error", type(exc).__name__, *outage_cause(exc))
-            raise self._outage(records[-1]) from None
+            raise self._outage(records[-1], attempt) from None
         if first is None:
             # finish_reason "length" with no text: max_tokens went on reasoning (a reasoning
-            # model); not the provider being down, but still no opening, so still an outage
-            spent = finish[0] == "length"
+            # model). Not the provider being down: the cause says so, and the turn path refuses
+            spent = finish == "length"
             await give_up(
                 "error",
                 "EmptyStream",
                 "max_tokens_exhausted" if spent else "empty_stream",
             )
-            raise self._outage(records[-1]) from None
+            raise self._outage(records[-1], attempt) from None
         return holder[0], first, started
 
     async def _release(
@@ -429,11 +454,13 @@ class DiscussionTurnRunner:
                 outcome: CallOutcome = "ok"
                 waiter = _StopWaiter(stop)
                 chunk: CompletionChunk | object | None = first
+                finish: str | None = None
                 try:
                     while True:
                         if chunk is None:
                             break
                         assert isinstance(chunk, CompletionChunk)
+                        finish = _finish_reason(chunk) or finish
                         completion += chunk.content
                         buf += chunk.content
                         done, buf = split(buf)
@@ -457,19 +484,7 @@ class DiscussionTurnRunner:
                                 it, timeout=self._settings.outage_timeout_s
                             )
                         except Exception as exc:
-                            stall = isinstance(exc, TimeoutError)
-                            cause, status = (
-                                ("stream_stall", None) if stall else outage_cause(exc)
-                            )
-                            rec = ProviderCallRecord(
-                                started,
-                                first_at,
-                                _now(),
-                                "error",
-                                "StreamStall" if stall else type(exc).__name__,
-                                cause,
-                                status,
-                            )
+                            rec = _failed_record(started, first_at, exc)
                             records.append(rec)
                             await self._finish_failed(gate, turn, steps, t_all)
                             raise self._outage(rec) from None
@@ -480,6 +495,8 @@ class DiscussionTurnRunner:
                     waiter.close()
                     await _close(it)  # the provider stream is closed on every path
                 records.append(ProviderCallRecord(started, first_at, _now(), outcome))
+                if outcome == "ok":
+                    self._check_truncated(finish, "turn")
                 steps.add(
                     "llm_call",
                     t_llm,
@@ -538,9 +555,14 @@ class DiscussionTurnRunner:
         )
 
     async def _part_b_once(
-        self, bundle: ContextBundle, language: str, records: list[ProviderCallRecord]
+        self,
+        bundle: ContextBundle,
+        language: str,
+        records: list[ProviderCallRecord],
+        attempt: int = 1,
     ) -> tuple[str, tuple[str, ...], str]:
-        """One generation: (checked text, violation codes, raw completion)."""
+        """One generation: (checked text, violation codes, raw completion). An outage carries
+        ``attempt``, the generation it ended."""
         messages = self._renderer.part_b_messages(bundle, language)
         # the same budget as a turn: an oversized prompt fails before generation, not inside it
         messages = fit(
@@ -551,11 +573,12 @@ class DiscussionTurnRunner:
             context_window=self._settings.llm_context_window,
             max_tokens=self._settings.llm_max_tokens,
         ).messages
-        opened = await self._open_stream(messages, records)
+        opened = await self._open_stream(messages, records, attempt=attempt)
         assert opened is not None  # no stop event: only an outage ends it early
         it, first, started = opened
         first_at = _now()
         raw = first.content
+        finish = _finish_reason(first)
         waiter = _StopWaiter(None)
         try:
             while True:
@@ -565,31 +588,14 @@ class DiscussionTurnRunner:
                     chunk = await waiter.next(
                         it, timeout=self._settings.outage_timeout_s
                     )
-                except TimeoutError:
-                    rec = ProviderCallRecord(
-                        started,
-                        first_at,
-                        _now(),
-                        "error",
-                        "StreamStall",
-                        "stream_stall",
-                    )
-                    records.append(rec)
-                    raise self._outage(rec) from None
                 except Exception as exc:
-                    rec = ProviderCallRecord(
-                        started,
-                        first_at,
-                        _now(),
-                        "error",
-                        type(exc).__name__,
-                        *outage_cause(exc),
-                    )
+                    rec = _failed_record(started, first_at, exc)
                     records.append(rec)
-                    raise self._outage(rec) from None
+                    raise self._outage(rec, attempt) from None
                 if chunk is None:
                     break
                 assert isinstance(chunk, CompletionChunk)
+                finish = _finish_reason(chunk) or finish
                 raw += chunk.content
                 if part_b.word_count(raw) > part_b.MAX_WORDS:
                     break  # the stream stops at the cap; the check below rejects it
@@ -597,6 +603,7 @@ class DiscussionTurnRunner:
             waiter.close()
             await _close(it)
         records.append(ProviderCallRecord(started, first_at, _now(), "ok"))
+        self._check_truncated(finish, "part_b")
         violations: list[str] = []
         m = markers.extract(raw, canonical_labels(bundle))
         if m.behaviour_class or m.contest or m.dropped:
@@ -652,13 +659,10 @@ class DiscussionTurnRunner:
             ):
                 break  # no time left for a second generation
             t_attempt = time.monotonic()
-            try:
-                text, codes, raw = await self._part_b_once(bundle, language, records)
-            except ProviderOutageError as exc:
-                exc.attempt = (
-                    attempt  # the pre-flight logs and audits which generation failed
-                )
-                raise
+            # an outage carries the attempt: the pre-flight logs which generation failed
+            text, codes, raw = await self._part_b_once(
+                bundle, language, records, attempt
+            )
             if self._metrics is not None:  # every completed call, accepted or rejected
                 self._metrics.call_outcome(records[-1].outcome)
             steps.add(
@@ -731,7 +735,9 @@ _CONNECTION_NAMES = frozenset(
 
 
 def _chain(exc: BaseException) -> list[BaseException]:
-    """The exception, its ``__cause__``/``__context__`` and litellm's ``original_exception``."""
+    """The exception first, then what it was raised FROM: ``__cause__`` and litellm's
+    ``original_exception``. Never ``__context__``: an exception merely being handled when this
+    one was raised did not cause it."""
     out: list[BaseException] = []
     todo: list[BaseException | None] = [exc]
     while todo and len(out) < 8:
@@ -740,19 +746,43 @@ def _chain(exc: BaseException) -> list[BaseException]:
             continue
         out.append(e)
         original = getattr(e, "original_exception", None)
-        todo += [
-            e.__cause__,
-            e.__context__,
-            original if isinstance(original, BaseException) else None,
-        ]
+        todo += [e.__cause__, original if isinstance(original, BaseException) else None]
     return out
 
 
-def _status(exc: BaseException) -> int | None:
-    for obj in (exc, getattr(exc, "response", None)):
-        code = getattr(obj, "status_code", None)
-        if isinstance(code, int) and not isinstance(code, bool) and 100 <= code <= 599:
-            return code
+def _http_status(code: object) -> int | None:
+    if isinstance(code, int) and not isinstance(code, bool) and 100 <= code <= 599:
+        return code
+    return None
+
+
+def _answered_status(exc: BaseException, names: set[str]) -> int | None:
+    """The status of a response the provider actually sent: the exception's ``response``, or an
+    ``APIStatusError`` (raised only for a received response). Never a status a library assigns
+    to its own timeout (litellm's ``Timeout`` claims 408, its connection error 500)."""
+    status = _http_status(getattr(getattr(exc, "response", None), "status_code", None))
+    if status is None and "APIStatusError" in names:
+        status = _http_status(getattr(exc, "status_code", None))
+    return status
+
+
+def _own_cause(exc: BaseException) -> tuple[str, int | None] | None:
+    """The cause this exception's own type says, or None when it says nothing."""
+    names = {k.__name__ for k in type(exc).__mro__}
+    for name, cause in _TIMEOUT_KINDS.items():
+        if name in names:
+            return cause, None
+    if names & _TIMEOUT_NAMES or isinstance(exc, TimeoutError):
+        return "timeout", None
+    if names & _CONNECTION_NAMES:
+        return "connection_error", None
+    if "BudgetExceededError" in names:  # litellm's own spend limit: no HTTP answer
+        return "budget_exceeded", None
+    status = _answered_status(exc, names)
+    if status is not None and 400 <= status <= 499:
+        return "http_4xx", status
+    if status is not None and 500 <= status <= 599:
+        return "http_5xx", status
     return None
 
 
@@ -760,25 +790,48 @@ def outage_cause(exc: BaseException) -> tuple[str, int | None]:
     """A provider exception as (``OutageCause`` code, HTTP status or None).
 
     Type names and the integer status only: the message is never read, since it can echo the
-    request (the prompt) or the response. A timeout wins over a status (litellm gives its own
-    ``Timeout`` a 408), then a connection failure, then the status class.
+    request (the prompt) or the response. The outermost exception that says anything wins; a
+    generic timeout only looks further down its ``raise ... from`` chain for the timeout's kind
+    (connect, read, ...). The status is set only when the provider answered: never for a
+    timeout or a connection failure.
     """
     chain = _chain(exc)
-    names = [{k.__name__ for k in type(e).__mro__} for e in chain]
-    status = next((s for s in map(_status, chain) if s is not None), None)
-    for kinds in names:
-        for name, cause in _TIMEOUT_KINDS.items():
-            if name in kinds:
-                return cause, status
-    if any(kinds & _TIMEOUT_NAMES for kinds in names):
-        return "timeout", status
-    if any(kinds & _CONNECTION_NAMES for kinds in names):
-        return "connection_error", status
-    if status is not None and 400 <= status <= 499:
-        return "http_4xx", status
-    if status is not None and 500 <= status <= 599:
-        return "http_5xx", status
-    return "provider_error", status
+    for i, e in enumerate(chain):
+        own = _own_cause(e)
+        if own is None:
+            continue
+        if own[0] == "timeout":
+            for deeper in chain[i + 1 :]:
+                kind = _own_cause(deeper)
+                if kind is not None and kind[0] in _TIMEOUT_KINDS.values():
+                    return kind[0], None
+        return own
+    return "provider_error", None
+
+
+class _Stall(Exception):
+    """No chunk within the stall timeout. Private, so that a provider's own ``TimeoutError``
+    (aiohttp's ``ServerTimeoutError``, ...) is classified by ``outage_cause``, not taken for
+    a stall."""
+
+
+def _failed_record(
+    started: datetime, first_at: datetime | None, exc: BaseException
+) -> ProviderCallRecord:
+    """The record of a call that failed after it opened: a stall, or the provider's error."""
+    if isinstance(exc, _Stall):
+        return ProviderCallRecord(
+            started, first_at, _now(), "error", "StreamStall", "stream_stall"
+        )
+    cause, status = outage_cause(exc)
+    return ProviderCallRecord(
+        started, first_at, _now(), "error", type(exc).__name__, cause, status
+    )
+
+
+def _finish_reason(chunk: object) -> str | None:
+    finish = getattr(chunk, "finish_reason", None)
+    return finish if isinstance(finish, str) else None
 
 
 _STOPPED = object()
@@ -810,7 +863,7 @@ class _StopWaiter:
         self, it: AsyncIterator[CompletionChunk], timeout: float | None = None
     ) -> CompletionChunk | object | None:
         """The next chunk, ``None`` at the end, ``_STOPPED`` if stop is set first; a chunk that
-        does not come within ``timeout`` raises ``TimeoutError``."""
+        does not come within ``timeout`` raises ``_Stall``."""
         nxt = asyncio.ensure_future(anext(it, None))
         waits: set[asyncio.Future[Any]] = {nxt}
         if self._stopped is not None:
@@ -829,7 +882,7 @@ class _StopWaiter:
         await _cancel(nxt)
         if self._stopped is not None and self._stopped in done:
             return _STOPPED
-        raise TimeoutError("no chunk within the stall timeout")
+        raise _Stall()
 
     def close(self) -> None:
         if self._stopped is not None:

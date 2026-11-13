@@ -40,11 +40,32 @@ OutageCause = Literal[
     "pool_timeout",
     "timeout",  # a timeout whose kind the exception chain does not say
     "connection_error",
-    "http_4xx",
+    "http_4xx",  # the provider ANSWERED with a 4xx: wrong key or model, rate limit, bad request
     "http_5xx",
+    "budget_exceeded",  # the provider library's own spend limit (litellm), no HTTP answer
     "provider_error",  # any other provider exception
+    # NOT a failure: a completed answer cut at max_tokens (finish_reason "length"). Logged as
+    # a warning; the caller's own checks decide whether the text is usable
+    "max_tokens_truncated",
 ]
 OUTAGE_CAUSES: frozenset[str] = frozenset(get_args(OutageCause))
+
+#: causes that are the provider (or its library) ANSWERING, or the configuration, not the
+#: provider being unavailable: a discussion turn takes the refusal path for them and the session
+#: never enters OUTAGE (REQ-086). A 429 is ``http_4xx`` and stays a refusal, as before.
+REFUSAL_CAUSES: frozenset[str] = frozenset(
+    {"http_4xx", "budget_exceeded", "max_tokens_exhausted"}
+)
+
+#: the closed remediation code of a spent max_tokens (docs/reference/configuration.md,
+#: "Reasoning models (assess)")
+MAX_TOKENS_REMEDIATION = "raise_llm_max_tokens_or_lower_reasoning_effort"
+_MAX_TOKENS_CAUSES = frozenset({"max_tokens_exhausted", "max_tokens_truncated"})
+
+
+def remediation_code(cause: str) -> str | None:
+    return MAX_TOKENS_REMEDIATION if cause in _MAX_TOKENS_CAUSES else None
+
 
 #: which budget a cause means expired: Vektra's own outage timeout, or the provider client's
 _BUDGET: dict[str, str] = {
@@ -66,10 +87,10 @@ class ProviderOutageError(RuntimeError):
     (1 or 2; None for a discussion turn). Neither carries any text of the call.
     """
 
-    def __init__(self, record: ProviderCallRecord) -> None:
+    def __init__(self, record: ProviderCallRecord, attempt: int | None = None) -> None:
         super().__init__(record.outcome)
         self.record = record
-        self.attempt: int | None = None
+        self.attempt = attempt
 
     @property
     def cause(self) -> str:
@@ -80,10 +101,37 @@ class ProviderOutageError(RuntimeError):
         return "provider_error"
 
     @property
+    def is_refusal(self) -> bool:
+        """The provider answered (or the configuration is wrong): not an outage (REQ-086)."""
+        return self.cause in REFUSAL_CAUSES
+
+    @property
     def expired_budget(self) -> str | None:
         """``outage_timeout`` (Vektra's), ``provider_timeout`` (the HTTP client's),
         ``max_tokens`` (the completion budget, spent before any text) or None."""
         return _BUDGET.get(self.cause)
+
+    def log_fields(self, max_tokens: int | None) -> dict[str, Any]:
+        """The content-free fields every failed-call log line carries (pre-flight and turns),
+        all under allowlisted keys: codes, a type name, a status, timings, the budget."""
+        rec = self.record
+        first_token_ms = (
+            None
+            if rec.first_token_at is None
+            else int((rec.first_token_at - rec.started_at).total_seconds() * 1000)
+        )
+        return {
+            "outage_cause": self.cause,
+            "error_type": rec.error_class,
+            "http_status": rec.status_code,
+            "outcome": rec.outcome,
+            "expired_budget": self.expired_budget,
+            "attempt": self.attempt,
+            "duration_ms": rec.duration_ms,  # the failed call, open to failure
+            "first_token_ms": first_token_ms,
+            "max_tokens": max_tokens,
+            "remediation_code": remediation_code(self.cause),
+        }
 
 
 class PartBRejectedError(RuntimeError):

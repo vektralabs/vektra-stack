@@ -701,11 +701,6 @@ def make_preflight_handler(
     return handle
 
 
-#: the closed remediation code of ``max_tokens_exhausted`` (docs/reference/configuration.md,
-#: "Reasoning models")
-MAX_TOKENS_REMEDIATION = "raise_llm_max_tokens_or_lower_reasoning_effort"
-
-
 def _log_part_b_outage(
     deps: PreflightDeps,
     sid: UUID,
@@ -721,28 +716,13 @@ def _log_part_b_outage(
     text) is a configuration problem, not an outage: the line names the configured max_tokens
     and a closed remediation code (raise ``VEKTRA_ASSESS_LLM_MAX_TOKENS``, or lower the
     reasoning effort through ``VEKTRA_ASSESS_LLM_EXTRA_BODY``)."""
-    rec = exc.record
-    spent = exc.cause == "max_tokens_exhausted"
     log.warning(
         "assess_preflight_provider_outage",
         session_id=str(sid),
-        outage_cause=exc.cause,
-        error_type=rec.error_class,
-        http_status=rec.status_code,
-        outcome=rec.outcome,
-        expired_budget=exc.expired_budget,
-        attempt=exc.attempt,
-        duration_ms=rec.duration_ms,  # the failed call, open to failure
-        first_token_ms=(
-            None
-            if rec.first_token_at is None
-            else int((rec.first_token_at - rec.started_at).total_seconds() * 1000)
-        ),
+        **exc.log_fields(deps.settings.llm_max_tokens),
         part_b_ms=None if spent_s is None else int(spent_s * 1000),
         remaining_s=None if remaining_s is None else round(remaining_s, 1),
         timeout_s=deps.settings.outage_timeout_s,
-        max_tokens=deps.settings.llm_max_tokens,
-        remediation_code=MAX_TOKENS_REMEDIATION if spent else None,
     )
 
 

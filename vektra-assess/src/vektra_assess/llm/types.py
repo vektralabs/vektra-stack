@@ -40,7 +40,14 @@ OutageCause = Literal[
     "pool_timeout",
     "timeout",  # a timeout whose kind the exception chain does not say
     "connection_error",
-    "http_4xx",  # the provider ANSWERED with a 4xx: wrong key or model, rate limit, bad request
+    # the credentials are refused (401/403: AuthenticationError, PermissionDeniedError), or none
+    # is configured at all: litellm then raises AuthenticationError with a synthetic status 500.
+    # Decided by the exception TYPE, never by the status litellm attaches
+    "auth_error",
+    # the provider refused the request (NotFound, BadRequest, UnprocessableEntity,
+    # ContentPolicyViolation, RateLimit 429, or any other answered 4xx): wrong model, rejected
+    # parameter or content, rate limit
+    "http_4xx",
     "http_5xx",
     "budget_exceeded",  # the provider library's own spend limit (litellm), no HTTP answer
     "provider_error",  # any other provider exception
@@ -54,8 +61,20 @@ OUTAGE_CAUSES: frozenset[str] = frozenset(get_args(OutageCause))
 #: provider being unavailable: a discussion turn takes the refusal path for them and the session
 #: never enters OUTAGE (REQ-086). A 429 is ``http_4xx`` and stays a refusal, as before.
 REFUSAL_CAUSES: frozenset[str] = frozenset(
-    {"http_4xx", "budget_exceeded", "max_tokens_exhausted"}
+    {"auth_error", "http_4xx", "budget_exceeded", "max_tokens_exhausted"}
 )
+
+RATE_LIMIT_STATUS = 429
+
+
+def is_config_refusal(cause: str, status: int | None) -> bool:
+    """The provider refusing the CONFIGURATION (the key, the model, a parameter), which only
+    the operator can fix: ``auth_error``, or an ``http_4xx`` that is not a 429. A 429 is a
+    refusal too, but a transient one (``RateLimitError`` always carries 429)."""
+    if cause == "auth_error":
+        return True
+    return cause == "http_4xx" and status != RATE_LIMIT_STATUS
+
 
 #: the closed remediation code of a spent max_tokens (docs/reference/configuration.md,
 #: "Reasoning models (assess)")
@@ -104,6 +123,11 @@ class ProviderOutageError(RuntimeError):
     def is_refusal(self) -> bool:
         """The provider answered (or the configuration is wrong): not an outage (REQ-086)."""
         return self.cause in REFUSAL_CAUSES
+
+    @property
+    def is_config_refusal(self) -> bool:
+        """A refusal of the configuration (``is_config_refusal``): the operator is alerted."""
+        return is_config_refusal(self.cause, self.record.status_code)
 
     @property
     def expired_budget(self) -> str | None:

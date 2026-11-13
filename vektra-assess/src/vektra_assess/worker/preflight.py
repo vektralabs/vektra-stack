@@ -71,6 +71,7 @@ from vektra_assess.llm.types import (
     RagNotAvailableError,
     TurnResult,
 )
+from vektra_assess.provider_alerts import queue_provider_config_alert
 from vektra_assess.timing import session_duration_s
 from vektra_assess.worker import locks
 from vektra_assess.worker.policy import (
@@ -216,12 +217,15 @@ class _Rollback(Exception):
         reason: str,
         extra: AssessAuditEvent | None = None,
         data: dict[str, str | int] | None = None,
+        config_refusal: str | None = None,
     ) -> None:
         super().__init__(reason)
         self.reason = reason
         self.extra = extra
         #: codes added to the ``assess_start_rollback`` audit data (e.g. the outage ``cause``)
         self.data = data
+        #: the closed cause of a provider configuration refusal: the rollback alerts the operator
+        self.config_refusal = config_refusal
 
 
 # --- SQL -------------------------------------------------------------------------------------
@@ -320,8 +324,12 @@ async def rollback_start(
     extra: AssessAuditEvent | None = None,
     limits: StartLimits | None = None,
     data: dict[str, str | int] | None = None,
+    config_refusal: str | None = None,
 ) -> bool:
     """Delete a STARTING session and everything under it, in the CALLER's transaction.
+
+    ``config_refusal``: the closed cause of a model provider configuration refusal; the
+    rollback queues the ``provider_config_refused`` operator alert in the same transaction.
 
     Returns False when there was nothing to roll back (already committed, already rolled back).
     Raises ``RollbackLeftovers`` if any session, snapshot, key, turn or hand-off row survives the
@@ -354,6 +362,8 @@ async def rollback_start(
         reason=reason,
         limits=limits or StartLimits(),
     )
+    if config_refusal is not None:
+        await queue_provider_config_alert(conn, row.site_id, config_refusal)
     for event in (AssessAuditEvent.START_ROLLBACK, extra):
         if event is None:
             continue
@@ -382,11 +392,19 @@ async def _rollback(
     extra: AssessAuditEvent | None = None,
     limits: StartLimits | None = None,
     data: dict[str, str | int] | None = None,
+    *,
+    config_refusal: str | None = None,
 ) -> None:
     async with acquire() as conn:
         async with conn.begin():
             done = await rollback_start(
-                conn, session_id, reason, extra=extra, limits=limits, data=data
+                conn,
+                session_id,
+                reason,
+                extra=extra,
+                limits=limits,
+                data=data,
+                config_refusal=config_refusal,
             )
     # ``reason_code``, the allowlisted key (vektra_shared.log_safety): a bare ``reason`` is not
     # on the allowlist and was logged as "[dropped]". The value is a closed ``Reason`` / gate code
@@ -687,7 +705,15 @@ def make_preflight_handler(
         try:
             await _run(deps, ctx.acquire, sid)
         except _Rollback as rb:
-            await _rollback(ctx.acquire, sid, rb.reason, rb.extra, limits, rb.data)
+            await _rollback(
+                ctx.acquire,
+                sid,
+                rb.reason,
+                rb.extra,
+                limits,
+                rb.data,
+                config_refusal=rb.config_refusal,
+            )
         except _AmbiguousCommit:
             await _resolve_ambiguous(ctx.acquire, sid, limits)
         except asyncio.CancelledError:
@@ -781,8 +807,12 @@ async def _run(deps: PreflightDeps, acquire: AcquireDb, sid: UUID) -> None:
     except ProviderOutageError as exc:
         spent = None if t_part_b is None else deps.clock() - t_part_b
         _log_part_b_outage(deps, sid, exc, remaining, spent)
+        # a configuration refusal keeps the reason the plugin and the UI read
+        # (provider_unavailable) and alerts the operator (provider_alerts)
         raise _Rollback(
-            Reason.PROVIDER_UNAVAILABLE, data={"cause": exc.cause}
+            Reason.PROVIDER_UNAVAILABLE,
+            data={"cause": exc.cause},
+            config_refusal=exc.cause if exc.is_config_refusal else None,
         ) from None
     except RagNotAvailableError:
         raise _Rollback(Reason.RAG_NOT_AVAILABLE) from None

@@ -284,6 +284,10 @@ async def _checks(lms_entry_points: Any | None = None) -> Checked:
             "VEKTRA_ASSESS_ENABLED is not true: the assess worker does not run on a "
             "deployment where assess is disabled."
         )
+    # the worker calls the model too (Part B, the outage probe), with its OWN environment's key
+    from vektra_app.assess_llm import check_model_credentials
+
+    check_model_credentials(settings, process="worker")
     # Review of #207, finding 7: the key matrix runs BEFORE any provider is built, on the
     # secrets the provider declares statically (its entry point's REQUIRED_SECRETS), so no
     # provider code runs with a forbidden secret mounted, and a missing provider and the key
@@ -833,10 +837,28 @@ def _setup_check_parts(
     )
 
 
+def make_outage_probe(settings: Any) -> Any:
+    """The outage probe over the discussion provider, built as every discussion call is
+    (``build_assess_llm``: the model, the key, ``VEKTRA_ASSESS_LLM_EXTRA_BODY``) and called as a
+    turn is: the same max_tokens, temperature, seed and first-token deadline
+    (``VEKTRA_ASSESS_OUTAGE_TIMEOUT_S``)."""
+    from vektra_app.assess_llm import build_assess_llm
+    from vektra_assess.worker.outage_probe import make_llm_probe
+
+    return make_llm_probe(
+        build_assess_llm(settings),
+        str(settings.llm_model),
+        timeout_s=float(settings.outage_timeout_s),
+        max_tokens=settings.llm_max_tokens,
+        temperature=settings.llm_temperature,
+        seed=settings.llm_seed,
+    )
+
+
 def _session_ticks(checked: Checked) -> dict[str, Any]:
     """The plan assess-session-lifecycle tick bodies (they need no key)."""
     from vektra_assess.worker.enrolment import queue_rechecks
-    from vektra_assess.worker.outage_probe import make_llm_probe, outage_tick
+    from vektra_assess.worker.outage_probe import outage_tick
     from vektra_assess.worker.reaper import reap_starting
     from vektra_assess.worker.render import gate_refresh_tick
     from vektra_assess.worker.reply_reconcile import queue_reconciles
@@ -869,15 +891,7 @@ def _session_ticks(checked: Checked) -> dict[str, Any]:
 
     async def probe() -> bool:
         if not probe_box:
-            from vektra_app.assess_llm import build_assess_llm
-
-            probe_box.append(
-                make_llm_probe(
-                    build_assess_llm(settings),
-                    str(settings.llm_model),
-                    timeout_s=min(settings.outage_timeout_s, 8.0),
-                )
-            )
+            probe_box.append(make_outage_probe(settings))
         return bool(await probe_box[0]())
 
     async def outage_probe() -> None:

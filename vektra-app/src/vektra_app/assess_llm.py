@@ -101,6 +101,73 @@ def check_safeguard_locality(settings: VektraAssessSettings) -> None:
     )
 
 
+def check_model_credentials(
+    settings: VektraAssessSettings,
+    *,
+    process: str,
+    validate: Callable[..., Any] | None = None,
+) -> None:
+    """Refuse to start a process that would call the discussion model with no API key.
+
+    Run by the API (step 13) and by the worker: each reads ``VEKTRA_LLM_API_KEY`` from its OWN
+    environment, so a key given to one process only is caught at startup, not by the first
+    student turn (which would be refused, ``auth_error``).
+
+    Detection is litellm's ``validate_environment`` (the provider's own required variables),
+    applied only where it is reliable:
+
+    - ``VEKTRA_LLM_API_KEY`` set, or no ``*_API_KEY`` variable missing (Ollama, vLLM's
+      ``hosted_vllm/``, a provider litellm does not know): passes;
+    - a provider ``*_API_KEY`` missing (``openai/``, ``anthropic/``, ``gemini/``, ...) and no
+      ``VEKTRA_ASSESS_LLM_API_BASE``: refused, naming ``VEKTRA_LLM_API_KEY``;
+    - a ``*_API_KEY`` missing WITH ``VEKTRA_ASSESS_LLM_API_BASE`` set: a warning only (an
+      OpenAI-compatible server on the institution's hardware may need no key, and litellm still
+      lists ``OPENAI_API_KEY`` for it);
+    - other credentials missing (AWS keys for ``bedrock/``, Azure's base and version) or the
+      check itself failing: a warning only, detection is not reliable there.
+    """
+    import structlog
+
+    log = structlog.get_logger(__name__)
+    model = settings.llm_model
+    if not model or settings.llm_api_key is not None:
+        return
+    if validate is None:
+        import litellm
+
+        validate = litellm.validate_environment
+    try:
+        found = validate(model=str(model), api_base=settings.llm_api_base)
+        missing = [str(k) for k in found.get("missing_keys", [])]
+    except Exception as exc:
+        log.warning(
+            "assess_llm_key_unverified", step=STEP, error_type=type(exc).__name__
+        )
+        return
+    keys = [k for k in missing if k.endswith("_API_KEY")]
+    if keys and not settings.llm_api_base:
+        raise StartupValidationError(
+            step=STEP,
+            detail=(
+                f"VEKTRA_ASSESS_LLM_MODEL={model} needs an API key and the {process} has none "
+                f"(VEKTRA_LLM_API_KEY unset; litellm also finds no {', '.join(keys)})"
+            ),
+            remediation=(
+                f"Set VEKTRA_LLM_API_KEY in the {process}'s environment: the API and the "
+                "worker each read their own, and both call the model."
+            ),
+        )
+    if missing:
+        log.warning(
+            "assess_llm_key_unverified",
+            step=STEP,
+            detail=(
+                f"litellm reports {', '.join(missing)} unset for VEKTRA_ASSESS_LLM_MODEL; not "
+                "refused (a custom API base, or a provider whose detection is not reliable)"
+            ),
+        )
+
+
 def build_assess_llm(settings: VektraAssessSettings) -> LLMProvider:
     from vektra_core.providers.litellm_provider import LitellmProvider
     from vektra_shared.config import LLMConfig
@@ -369,6 +436,8 @@ async def step_13_assess_llm_check(
             remediation="Unset it, and activate the model through the NFR-023 endpoint.",
         )
     check_safeguard_locality(settings)
+    # before anything is built: a model with no key fails every turn (auth_error)
+    check_model_credentials(settings, process="API")
     app.state.assess_safeguard = build_assess_safeguard(
         settings, factory=safeguard_factory
     )

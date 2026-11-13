@@ -61,6 +61,7 @@ PLAN_KEYS = frozenset(
 OPERATIONAL_KEYS = frozenset(
     {
         "error_type",
+        "audit_error_type",  # a second exception TYPE name (the audit write's own failure)
         "pool",
         "tick",
         "step",

@@ -65,7 +65,10 @@ async def close_over_cap(acquire: AcquireDb, *, batch: int = 200) -> int:
                 ).scalar()
         closed += bool(ok)
     if closed:
-        log.warning("assess_sessions_service_failure", count=closed, cause="outage_cap")
+        # reason_code, the allowlisted key: a bare "cause" was logged as "[dropped]"
+        log.warning(
+            "assess_sessions_service_failure", count=closed, reason_code="outage_cap"
+        )
     return closed
 
 

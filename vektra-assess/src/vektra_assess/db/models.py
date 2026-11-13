@@ -604,6 +604,10 @@ class ErasureRecordOrm(Base):
     subject_userids: Mapped[list[int] | None] = mapped_column(ARRAY(BIGINT))
     outcome: Mapped[str | None] = mapped_column(TEXT)  # erased | failed
     error_code: Mapped[str | None] = mapped_column(TEXT)
+    #: revision a0003 (OQ-033): set when the erasure_overdue operator alert was queued, so a
+    #: request is reported once (the sweep's partial index lives in the migration only, like
+    #: every index of this schema)
+    overdue_alerted_at: Mapped[datetime | None] = _ts(nullable=True)
 
 
 class PrivacyConfigOrm(Base):

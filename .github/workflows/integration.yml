@@ -357,7 +357,9 @@ jobs:
     # 30 was hit by PR #154: the job already took 28 min on develop, ~21 of them in
     # vektra-admin/tests/test_integration.py (~30 s per test); the assess lifecycle suite
     # adds ~8 min. Speeding up the admin suite is tracked separately.
-    timeout-minutes: 60
+    # 60 was hit on 2026-11-13 (PR #213 cancelled at 99%): develop's runs already took 55-59 min
+    # once the admin suite ran on both migration layouts (#206) and the RLS suites landed (#209).
+    timeout-minutes: 90
 
     # The vektra-app startup test (NFR-004) builds the real providers in process: the
     # embedding model and the default cross-encoder reranker come from this cache, not

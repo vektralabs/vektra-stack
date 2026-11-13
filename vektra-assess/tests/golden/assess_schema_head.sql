@@ -823,6 +823,7 @@ CREATE TABLE public.assess_erasure_records (
     subject_userids bigint[],
     outcome text,
     error_code text,
+    overdue_alerted_at timestamp with time zone,
     CONSTRAINT ck_assess_erasure_records_cleared CHECK (((completed_at IS NULL) OR ((subject_userids IS NULL) AND (subject_userid_hash IS NULL)))),
     CONSTRAINT ck_assess_erasure_records_outcome CHECK ((outcome = ANY (ARRAY['erased'::text, 'failed'::text]))),
     CONSTRAINT ck_assess_erasure_records_scope CHECK ((scope = ANY (ARRAY['subject'::text, 'activity'::text]))),
@@ -1790,6 +1791,8 @@ CREATE INDEX idx_dashboard_tokens_hash ON public.dashboard_tokens USING btree (t
 CREATE INDEX ix_api_keys_expires ON public.api_keys USING btree (expires_at) WHERE ((expires_at IS NOT NULL) AND (revoked_at IS NULL));
 
 CREATE INDEX ix_assess_deliveries_due ON public.assess_deliveries USING btree (status, not_before);
+
+CREATE INDEX ix_assess_erasure_records_overdue_open ON public.assess_erasure_records USING btree (requested_at, id) WHERE ((completed_at IS NULL) AND (overdue_alerted_at IS NULL));
 
 CREATE INDEX ix_assess_jobs_kind_claim ON public.assess_jobs USING btree (kind, not_before) WHERE (state = ANY (ARRAY['ready'::text, 'leased'::text]));
 

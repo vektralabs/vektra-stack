@@ -24,6 +24,17 @@ rest (its pre-flight finds nothing and completes). Then, in ONE transaction:
    back and the request is recorded ``failed`` (alert ``erasure_verification_failed``);
 5. the record is completed with its counts and the user ids it carried are cleared.
 
+Operator alerts (OQ-033). The LMS cannot leave its own privacy request failed (its
+privacy manager catches a provider's exception and completes the request anyway), so Vektra tells the
+operator (the names are ``vektra_assess.erasure_alerts``): a request recorded ``failed`` by its
+run queues one ``operator_notify`` (``erasure_verification_failed``) in the transaction that
+records it; the worker's ``delivery_retry`` tick queues one ``erasure_overdue`` for a request
+still not completed ``VEKTRA_ASSESS_ERASURE_ALERT_AFTER_S`` after it was made, and marks it
+(``overdue_alerted_at``, revision a0003) in the same transaction; the daily purge, recording a
+day-old open request ``failed`` (``abandoned``), queues ``erasure_abandoned``. Once per request
+is the request's own state, never a job row (the job retention may prune it). The job carries
+the site, the request id and the scope: no user id, subject hash or cmid.
+
 Teacher-entered recipient addresses are not a subject's data in this model (REQ-082 as amended:
 the teacher types them, nothing maps a student id to an address), so nothing is removed from
 the sealed configuration. Audit rows stay (content-free, append-only: REQ-085); they name the
@@ -42,12 +53,16 @@ import structlog
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection
 
+from vektra_assess import erasure_alerts as alerts
 from vektra_assess.audit import AssessAuditEvent, write_event
+from vektra_assess.jobs import JobKind, enqueue_job
 from vektra_assess.privacy.purge import (
     IN_FLIGHT,
+    LEFT_TABLES,
     Connect,
     leftover,
     shred_sessions,
+    tables_left,
     write_tombstones,
 )
 from vektra_assess.privacy.subject import ERASED_REF, SUBJECT_TABLES, subject_ref
@@ -56,7 +71,12 @@ log = structlog.get_logger(__name__)
 
 
 class ErasureVerificationFailed(RuntimeError):
-    """Rows were left after the deletion: the transaction is rolled back."""
+    """Rows were left after the deletion: the transaction is rolled back. ``tables``: the
+    rows left per table (logged through ``purge.tables_left``, kept on the failed record)."""
+
+    def __init__(self, message: str, tables: dict[str, int] | None = None) -> None:
+        super().__init__(message)
+        self.tables: dict[str, int] = dict(tables or {})
 
 
 class SessionWentLive(RuntimeError):
@@ -107,7 +127,7 @@ _RECORD = text(
 _COMPLETE = text(
     "UPDATE assess_erasure_records SET completed_at = now(), outcome = :o, error_code = :e, "
     "rows_deleted = CAST(:counts AS jsonb), subject_userids = NULL, subject_userid_hash = NULL "
-    "WHERE id = :i"
+    "WHERE id = :i AND completed_at IS NULL"
 )
 #: a transcript copy whose attempt started recently and has no outcome yet: maybe on the wire
 _SENDING = text(
@@ -219,7 +239,7 @@ async def erase_scope(
     if jobs:
         left["assess_jobs"] = jobs
     if left:
-        raise ErasureVerificationFailed(json.dumps(left, sort_keys=True))
+        raise ErasureVerificationFailed(json.dumps(left, sort_keys=True), left)
     return result
 
 
@@ -369,24 +389,107 @@ async def run_erasure(connect: Connect, erasure_id: int) -> str:
             )
             return "erased"
     except ErasureVerificationFailed as exc:
+        left = exc.tables
         log.error(
             "assess.erasure.alert",
-            alert="erasure_verification_failed",
+            alert=alerts.FAILED,
             erasure_id=int(erasure_id),
-            left=str(exc)[:200],
+            tables_left=tables_left(left),
         )
-    # the deletion rolled back: record the failure (and drop the ids it carried) on its own
+    return await record_failure(connect, erasure_id, left)
+
+
+def _validated(left: dict[str, int]) -> dict[str, int]:
+    """The rows left per table, keyed by names of ``LEFT_TABLES`` only (else ``other``)."""
+    out: dict[str, int] = {}
+    for table, n in left.items():
+        name = table if table in LEFT_TABLES else "other"
+        out[name] = out.get(name, 0) + (int(n) if isinstance(n, int) else 0)
+    return out
+
+
+async def record_failure(
+    connect: Connect, erasure_id: int, left: dict[str, int] | None = None
+) -> str:
+    """The deletion rolled back: record the failure (and drop the ids it carried) on its own,
+    with the operator's alert in the same transaction (OQ-033). A request another run already
+    completed is left as it is and alerts nothing (``done``), like the other two steps.
+    ``rows_deleted`` keeps ``{"left": {table: rows}}`` (validated table names only): nothing was
+    deleted, and the operator's runbook reads what was left from the record when the log line
+    is gone."""
     async with connect() as conn, conn.begin():
+        rec = (await conn.execute(_RECORD, {"i": erasure_id})).first()
+        if rec is None or rec.completed_at is not None:
+            return "done"
         await conn.execute(
             _COMPLETE,
             {
                 "i": erasure_id,
                 "o": "failed",
                 "e": "verification_failed",
-                "counts": "{}",
+                "counts": json.dumps({"left": _validated(left or {})}, sort_keys=True),
             },
         )
+        await queue_operator_alert(
+            conn, alerts.FAILED, rec.site_id, int(erasure_id), str(rec.scope)
+        )
     return "failed"
+
+
+#: the open requests past the threshold that were not reported yet (the partial index of
+#: revision a0003); locked so two sweeps never report the same request
+_OVERDUE = text(
+    "SELECT id, site_id, scope FROM assess_erasure_records WHERE completed_at IS NULL "
+    "AND overdue_alerted_at IS NULL AND requested_at < now() - make_interval(secs => :after) "
+    "ORDER BY id LIMIT :n FOR UPDATE SKIP LOCKED"
+)
+_MARK_OVERDUE = text(
+    "UPDATE assess_erasure_records SET overdue_alerted_at = now() WHERE id = ANY(:ids)"
+)
+#: one sweep reports at most this many requests; the next tick takes the rest
+OVERDUE_BATCH = 100
+
+
+async def queue_operator_alert(
+    conn: AsyncConnection, alert: str, site_id: UUID, erasure_id: int, scope: str
+) -> None:
+    """Queue the ``operator_notify`` of one erasure alert (``erasure_alerts``), in the caller's
+    transaction: ids and codes only. Once per request is the caller's state (the completion of
+    a failed or abandoned request, the overdue marker), never a job row that may be pruned."""
+    await enqueue_job(
+        conn,
+        JobKind.OPERATOR_NOTIFY,
+        {
+            "site_id": str(site_id),
+            "kind": alert,
+            "erasure_id": int(erasure_id),
+            "scope": scope,
+        },
+        dedupe_key=f"operator_notify:{alert}:{erasure_id}",
+    )
+
+
+async def alert_overdue_erasures(connect: Connect, *, after_s: int) -> int:
+    """The ``delivery_retry`` tick's sweep: one ``erasure_overdue`` alert per request still not
+    completed ``after_s`` seconds after it was made, marked on the request in the same
+    transaction. Returns the requests reported now."""
+    async with connect() as conn, conn.begin():
+        rows = (
+            await conn.execute(_OVERDUE, {"after": after_s, "n": OVERDUE_BATCH})
+        ).all()
+        for row in rows:
+            await queue_operator_alert(
+                conn, alerts.OVERDUE, row.site_id, int(row.id), str(row.scope)
+            )
+            log.error(
+                "assess.erasure.alert",
+                alert=alerts.OVERDUE,
+                erasure_id=int(row.id),
+                erasure_scope=str(row.scope),
+            )
+        if rows:
+            await conn.execute(_MARK_OVERDUE, {"ids": [int(row.id) for row in rows]})
+    return len(rows)
 
 
 def make_erasure_handler(connect: Connect) -> Callable[[Any], Any]:

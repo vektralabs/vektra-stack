@@ -92,6 +92,12 @@ OPERATIONAL_KEYS = frozenset(
         "retention_h",
         "round_trip_ms",
         "signal",
+        # the erasure and purge alerts (OQ-033): the request id, its scope (subject | activity)
+        # and the tables with rows left, as ``table=count`` pairs built from the erasure's own
+        # table list only (``privacy.purge.tables_left``), never from exception text
+        "erasure_id",
+        "erasure_scope",
+        "tables_left",
     }
 )
 # ... plus why a provider call failed (the Start pre-flight's Part B outage line): a closed cause

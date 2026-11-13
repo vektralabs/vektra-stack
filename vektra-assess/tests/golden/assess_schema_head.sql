@@ -565,6 +565,20 @@ CREATE FUNCTION public.assess_snapshots_immutable() RETURNS trigger
 
 ALTER FUNCTION public.assess_snapshots_immutable() OWNER TO <owner>;
 
+CREATE FUNCTION public.assess_transcript_job_states(p_site uuid, p_sids uuid[]) RETURNS TABLE(session_id uuid, state text)
+    LANGUAGE sql STABLE SECURITY DEFINER
+    SET search_path TO 'pg_catalog', 'pg_temp'
+    AS $$
+        SELECT DISTINCT ON (s.id) s.id, j.state
+        FROM public.assess_sessions s
+        JOIN public.assess_jobs j ON j.kind = 'transcript_generate'
+         AND j.args->>'session_id' = s.id::text
+        WHERE s.site_id = p_site AND s.id = ANY(p_sids)
+        ORDER BY s.id, j.id DESC
+    $$;
+
+ALTER FUNCTION public.assess_transcript_job_states(p_site uuid, p_sids uuid[]) OWNER TO vektra_assess_definer;
+
 CREATE FUNCTION public.get_session_material(p_sid uuid, p_epoch integer) RETURNS TABLE(sealed_dek bytea, handoff_kid text, snapshot_ciphertext bytea, snapshot_hash text, seq integer, turn_nos integer[], turn_roles text[], turn_kinds text[], turn_ciphertexts bytea[], turn_hashes text[])
     LANGUAGE sql STABLE SECURITY DEFINER
     SET search_path TO 'pg_catalog', 'pg_temp'
@@ -2035,6 +2049,9 @@ GRANT ALL ON FUNCTION public.assess_rollback_starting(p_sid uuid) TO vektra_asse
 REVOKE ALL ON FUNCTION public.assess_sessions_drop_handoff_on_close() FROM PUBLIC;
 
 REVOKE ALL ON FUNCTION public.assess_sessions_require_opening_turn() FROM PUBLIC;
+
+REVOKE ALL ON FUNCTION public.assess_transcript_job_states(p_site uuid, p_sids uuid[]) FROM PUBLIC;
+GRANT ALL ON FUNCTION public.assess_transcript_job_states(p_site uuid, p_sids uuid[]) TO vektra_assess_api;
 
 REVOKE ALL ON FUNCTION public.get_session_material(p_sid uuid, p_epoch integer) FROM PUBLIC;
 GRANT ALL ON FUNCTION public.get_session_material(p_sid uuid, p_epoch integer) TO vektra_assess_api;

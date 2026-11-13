@@ -40,7 +40,7 @@ ENTRYPOINT = ROOT / "docker" / "entrypoint.sh"
 REGEN = os.environ.get("VEKTRA_REGEN_SCHEMA_GOLDEN") == "1"
 
 #: what the assess head has (the goldens say exactly which; these are the sizes)
-TABLES, ROLES, FUNCTIONS = 37, 3, 17
+TABLES, ROLES, FUNCTIONS = 37, 3, 18
 
 COUNTS = (
     "SELECT (SELECT count(*) FROM pg_tables WHERE schemaname = 'public' "

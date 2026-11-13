@@ -69,7 +69,10 @@ def test_the_assess_branch_names_no_lms() -> None:
 
 
 def test_the_grant_matrix_is_the_rendered_one() -> None:
-    mod = _load(_revisions()[0], "assess_base_grants")
+    """The newest revision that carries the matrix carries today's rendering of it."""
+    holders = [p for p in _revisions() if "GRANT_STATEMENTS = (" in p.read_text()]
+    assert holders, "no revision carries the grant matrix"
+    mod = _load(holders[-1], "assess_latest_grants")
     assert list(mod.GRANT_STATEMENTS) == g.render_statements()
 
 

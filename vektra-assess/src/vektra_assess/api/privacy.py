@@ -508,6 +508,49 @@ _ACT_MINT_COURSE = text(
     "AND student_userid = :u AND cmid = ANY(:c) AND courseid_hint IS NOT NULL "
     "ORDER BY cmid, minted_at DESC"
 )
+#: why a closed session's turns are not in the export (``turns_unavailable``), from what exists:
+#: its ``transcript_generate`` job queued or running, or ended failed / dead; a retention
+#: tombstone (the content was purged); otherwise no job and no transcript
+TRANSCRIPT_PENDING = "transcript_pending"
+TRANSCRIPT_FAILED = "transcript_failed"
+TRANSCRIPT_PURGED = "transcript_purged"
+TRANSCRIPT_MISSING = "transcript_missing"
+_JOB_REASON = {
+    "ready": TRANSCRIPT_PENDING,
+    "leased": TRANSCRIPT_PENDING,
+    "failed": TRANSCRIPT_FAILED,
+    "dead": TRANSCRIPT_FAILED,
+}
+#: the API cannot read ``assess_jobs``: a definer function answers one state per session (a0004)
+_JOB_STATES = text(
+    "SELECT session_id, state FROM assess_transcript_job_states(:s, :sids)"
+)
+_PURGED_SESSIONS = text(
+    "SELECT DISTINCT session_id FROM assess_purge_records WHERE site_id = :s "
+    "AND session_id = ANY(:sids)"
+)
+
+
+async def _why_missing(
+    conn: Any, site: Any, missing: dict[UUID, dict[str, Any]]
+) -> None:
+    sids = list(missing)
+    purged = {
+        r[0] for r in (await conn.execute(_PURGED_SESSIONS, {"s": site, "sids": sids}))
+    }
+    states = {
+        r.session_id: str(r.state)
+        for r in (await conn.execute(_JOB_STATES, {"s": site, "sids": sids})).all()
+    }
+    for sid, session in missing.items():
+        if sid in purged:
+            session["turns_unavailable"] = TRANSCRIPT_PURGED
+        else:
+            session["turns_unavailable"] = _JOB_REASON.get(
+                states.get(sid, ""), TRANSCRIPT_MISSING
+            )
+
+
 #: one page is read in one snapshot: every table agrees with the others
 _PAGE_SNAPSHOT = {"isolation_level": "REPEATABLE READ", "postgresql_readonly": True}
 
@@ -636,6 +679,7 @@ async def _fill_page(
                 item.update(values)
             else:
                 item[how.into].append(values)
+    missing: dict[UUID, dict[str, Any]] = {}
     for row in (await conn.execute(_ACT_SESSION_EXTRA, params)).all():
         item = items[int(row.cmid)]
         session = next(
@@ -648,12 +692,17 @@ async def _fill_page(
             session["transcript_id"] = str(row.transcript_id)
         elif session["state"] in ("ACTIVE", "OUTAGE"):
             session["turns"] = await _live_turns(request, conn, row.id, int(row.epoch))
+            if session["turns"] is None:  # closed after the page's snapshot
+                session["turns_unavailable"] = TRANSCRIPT_PENDING
         elif session["state"] == "STARTING":
             session["turns"] = []  # nothing written yet
         else:
-            session["turns"] = (
-                None  # closed, transcript not generated (yet): see the docs
-            )
+            # closed without a transcript: the API holds no key to its turns (ADR-0031), so
+            # the export says why they are missing
+            session["turns"] = None
+            missing[row.id] = session
+    if missing:
+        await _why_missing(conn, params["s"], missing)
     for row in (await conn.execute(_ACT_MINT_COURSE, params)).all():
         item = items[int(row.cmid)]
         if item["course_id"] is None:

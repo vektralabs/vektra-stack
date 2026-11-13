@@ -478,6 +478,9 @@ FUNCTIONS: Mapping[str, tuple[str, ...]] = {
     "assess_audit_sealed_change()": (),
     # revision 0041 (plan 12b): the content-free counts behind the API's /metrics collector
     "assess_metrics_snapshot()": (API,),
+    # revision a0004 (#215): the subject export says why a closed session's turns are missing
+    # (its transcript job pending or failed); the API reads no job row itself
+    "assess_transcript_job_states(uuid,uuid[])": (API,),
 }
 
 

@@ -302,6 +302,82 @@ async def test_the_course_is_the_sessions_else_the_latest_mints(pg, worker) -> N
         assert got == {with_session: 42, mint_only: 51, none: None}
 
 
+async def _closed_without_transcript(w, worker) -> Any:  # type: ignore[no-untyped-def]
+    """A CLOSED session whose transcript is not generated: the close queued its
+    ``transcript_generate`` job (``assess_close_session``), no worker ran it."""
+    s = await seed_session(w, worker, "CLOSED")
+    jobs = await w.pg.run(
+        "super",
+        "SELECT state FROM assess_jobs WHERE kind = 'transcript_generate' "
+        "AND args->>'session_id' = :s",
+        {"s": str(s.session_id)},
+    )
+    assert [j[0] for j in jobs] == ["ready"]
+    return s
+
+
+async def _session_of(w, s) -> dict[str, Any]:  # type: ignore[no-untyped-def]
+    items = (await _get(w, s.sub)).json()["items"]
+    (item,) = [i for i in items if i["cmid"] == s.cmid]
+    (session,) = item["sessions"]
+    return session
+
+
+@pytest.mark.parametrize(
+    ("job_state", "code"),
+    [
+        ("ready", "transcript_pending"),
+        ("leased", "transcript_pending"),
+        ("failed", "transcript_failed"),
+        ("dead", "transcript_failed"),
+    ],
+)
+async def test_missing_turns_say_why(pg, worker, job_state: str, code: str) -> None:  # type: ignore[no-untyped-def]
+    """The coordinator's decision on finding 1: a closed session without a transcript has
+    ``turns: null`` and ``turns_unavailable`` from its transcript job: pending while queued or
+    running (retry later), failed when generation ended failed or dead."""
+    async with world(pg) as w:
+        await _privacy_key(w, "assess:privacy-export", "export")
+        s = await _closed_without_transcript(w, worker)
+        await pg.run(
+            "super",
+            "UPDATE assess_jobs SET state = :st WHERE kind = 'transcript_generate' "
+            "AND args->>'session_id' = :s",
+            {"st": job_state, "s": str(s.session_id)},
+        )
+        session = await _session_of(w, s)
+        assert session["state"] == "CLOSED" and "transcript_id" not in session
+        assert session["turns"] is None
+        assert session["turns_unavailable"] == code
+
+
+async def test_a_purged_session_says_purged_and_a_present_transcript_says_nothing(
+    pg, worker
+) -> None:  # type: ignore[no-untyped-def]
+    async with world(pg) as w:
+        await _privacy_key(w, "assess:privacy-export", "export")
+        s = await _closed_without_transcript(w, worker)
+        await pg.run(
+            "super",
+            "INSERT INTO assess_purge_records (site_id, subject_ref, session_id, session_no, "
+            "cmid, reason) VALUES (:s, :ref, :sid, 1, :c, 'retention')",
+            {
+                "s": w.site,
+                "ref": subj.subject_ref(w.site, s.sub),
+                "sid": s.session_id,
+                "c": s.cmid,
+            },
+        )
+        session = await _session_of(w, s)
+        assert session["turns"] is None
+        assert session["turns_unavailable"] == "transcript_purged"
+    async with world(pg) as w:
+        await _privacy_key(w, "assess:privacy-export", "export")
+        a, _ = await ready(w, worker)
+        session = await _session_of(w, a)
+        assert "turns_unavailable" not in session and "turns" not in session
+
+
 async def test_pages_follow_the_cursor(pg, worker) -> None:  # type: ignore[no-untyped-def]
     from vektra_assess.api.privacy import EXPORT_PAGE
 

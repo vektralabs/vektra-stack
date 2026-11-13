@@ -1,7 +1,7 @@
 # Implementation Plan: Separating `vektra-assess` from the LMS (the `LmsProvider` Protocol)
 
 **ID**: 20261111-185453-assess-lms-separation
-**Status**: in_progress (every code task is merged: #201 ADR, 2a-1 #203, 2a-2 #205, 2a-3 #206, 2a-4 #207, 3.1 #204, 3.2 #209, 2b.2/2b.3 #210; 2b.1 in vektra-moodle-discuss #6 and #7, releases `provider-v0.9.0.dev1` and `provider-v0.9.0.dev2`; the LMS boundary baseline has 0 entries. Two items remain, see Notes 2026-11-13: the `.s2s/architecture.md` update of phase 4, and the deploy VM read-only check of 2a-3.9)
+**Status**: in_progress (every code task is merged: #201 ADR, 2a-1 #203, 2a-2 #205, 2a-3 #206, 2a-4 #207, 3.1 #204, 3.2 #209, 2b.2/2b.3 #210; 2b.1 in vektra-moodle-discuss #6 and #7, releases `provider-v0.9.0.dev1` and `provider-v0.9.0.dev2`; the LMS boundary baseline has 0 entries; the phase 4 `.s2s/architecture.md` update done in #218. One item remains, see Notes 2026-11-13: the deploy VM read-only check of 2a-3.9, for someone with server access)
 **Branch**: `docs/assess-lms-separation-adr` (phase 4), `feat/lms-provider-protocol` (2a-1, stacked on #201). Each later PR has its own branch, listed in the PR split below.
 **Created**: 2026-11-11T18:54:53Z
 **Updated**: 2026-11-13T14:00:00Z
@@ -89,7 +89,7 @@ Regrouped by the product owner on 2026-11-11 (relayed by the coordinator): phase
 - [x] Annotate ADR-0027 "Amended by ADR-0033"
 - [x] Add the Separation section to `INDEX-ASSESS.md` and a one-line pointer to `.s2s/CONTEXT.md`
 - [x] Product owner answers OD-1 to OD-6 (2026-11-11); ADR-0033 set to `accepted`, with the answers recorded in its section 6
-- [ ] `.s2s/architecture.md`: ARCH-039 says 11 Protocols and lists the `lms` slot; the ARCH-065 and ARCH-073 rows point at ADR-0033 (on acceptance). **Open** (checked 2026-11-13: `architecture.md` still says "10 Protocol interfaces" at lines 197, 228, 567, 569, 573 and 2093, and names no ADR-0033)
+- [x] `.s2s/architecture.md`: ARCH-039 says 11 Protocols and lists the `lms` slot; the ARCH-065 and ARCH-073 rows point at ADR-0033 (on acceptance). Done in #218 (2026-11-13): every "10 Protocol" count is now 11; section 8.3 has an `LmsProvider` entry; ARCH-039, ARCH-065 and ARCH-073 point at ADR-0033; Appendix B gains B.7 (LMS separation: the assess Alembic branch, RLS for `vektra_assess_api`, D9.2). `.s2s/CONTEXT.md` counts fixed the same way (11 Protocols, 79 decisions, 33 ADRs)
 
 ### Phase 2a, PR 2a-1 (#203): Protocol and neutral types
 - [x] 2a-1.1 `vektra-shared/src/vektra_shared/lms/__init__.py`, `types.py`: `Reading`, `Readable`, `Unreadable`, `UnreadableReason`, `ShapeEvidence` (moved from `vektra-assess/src/vektra_assess/readable.py`, with the field `wsfunction` renamed `call`), and the neutral types of ADR-0033 D2. `readable.py` becomes a re-export until 2a-2b deletes it.
@@ -471,6 +471,5 @@ Each criterion is checked against the guard's data file. A status line or a gree
   - **Merged**: #201 (phase 4), #203 (2a-1), #204 (3.1), #205 (2a-2), #206 (2a-3), #207 (2a-4), #209 (3.2), #210 (2b.2, 2b.3). In vektra-moodle-discuss: #6 (2b.1, `provider-v0.9.0.dev1`), #7 (`provider-v0.9.0.dev2`, the version `develop` pins).
   - **Baseline**: 0 `[[entry]]` lines on `develop`; the guard passes (17 tests). Both ratchets are closed.
   - **Note on OD-1's validity condition**: vektra-moodle-discuss now has tags, `provider-v0.9.0.dev1` and `provider-v0.9.0.dev2`. They came after the 2a-3 cut, where 2a-3.0 measured none, and they are provider wheels, not plugin releases. The plugin release `0.2.0` is not tagged.
-  - **What remains before `completed`**:
-    1. phase 4, the `.s2s/architecture.md` update (ARCH-039 to 11 Protocols with the `lms` slot; ARCH-065 and ARCH-073 pointing at ADR-0033). Not done in this PR, which is tracking only;
-    2. 2a-3.9, the deploy VM read-only check (a request to the internal-ops session). The local F1 database is done: it is at `a0004` with 37 `assess_*` tables (read-only count, 2026-11-13).
+  - **What remains before `completed`**: the phase 4 `.s2s/architecture.md` update was added to this PR at the coordinator's request and is done. One item remains:
+    - 2a-3.9, the deploy VM read-only check (a request to the internal-ops session, for someone with server access). The local F1 database is done: it is at `a0004` with 37 `assess_*` tables (read-only count, 2026-11-13).

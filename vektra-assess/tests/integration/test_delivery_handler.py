@@ -181,7 +181,9 @@ async def test_each_recipient_gets_the_downloaded_bytes_once(
         assert got is not None and got.sent == 2
         sent = await rows(pg, s.session_id)
         assert {r.status for r in sent} == {"SENT"} and len(sent) == 2
-        token = (await mint(w, s.session_id, sub=s.sub)).json()["token"]
+        r = await mint(w, s.session_id, sub=s.sub, cmid=s.cmid)
+        assert r.status_code == 201, r.text
+        token = r.json()["token"]
         downloaded = (await download(w, s.session_id, token)).content
         stored = (
             await pg.run(

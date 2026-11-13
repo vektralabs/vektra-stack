@@ -390,6 +390,11 @@ no log files fails rather than passing.
 >   records `presented_notice_version`. `/state` and a resume ignore the claim. **Plugin: send it
 >   on the Start mint** (harmless on the `/state` and resume mints). The operator's PUT refuses a
 >   change to a shown field under the same `notice_version` (`must_change`).
+>   **Minimum raised (2026-11-13, branch `feat/assess-plugin-min-020`):** `local_vektradiscuss`
+>   0.2.0 sends `privacy_notice_version` on the Start mint; the default
+>   `VEKTRA_ASSESS_MIN_PLUGIN_VERSION` is now `0.2.0`, so an older plugin is refused at mint
+>   (`403 ERR-ASSESS-016`) and can no longer Start. The field stays optional at mint: the same
+>   mint serves `/state` and a resume, where the plugin may omit it by design.
 
 > **12b, the items moved from 12a (2026-11-10).**
 > - `delivery_retry` safety net for the notification chains (`delivery.notify.rescue_dead_chains`,

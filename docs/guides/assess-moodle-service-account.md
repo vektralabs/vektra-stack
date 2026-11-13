@@ -118,7 +118,8 @@ No API route creates a site or binds a key to it. Both are rows the operator wri
    that, so use an identifier you can trace to the LMS site (which value the plugin expects there,
    if any, is not verified in this repository). `lms_origin` is the framing origin
    ([framing](operators/assess-framing.md)). `min_plugin_version` (optional) raises the minimum
-   plugin release for this site above `VEKTRA_ASSESS_MIN_PLUGIN_VERSION`.
+   plugin release for this site above `VEKTRA_ASSESS_MIN_PLUGIN_VERSION`; it cannot lower it
+   (both minimums apply, and the deployment's cannot go below the contract floor, 0.2.0).
 2. **Four API keys**, one per purpose, each with a single `assess:*` scope (an `assess:*` scope
    cannot be combined with `admin`, `ingest` or `query` on one key). With an `admin` key:
 

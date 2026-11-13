@@ -22,6 +22,39 @@ from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 from vektra_assess.privacy_text import notice_version_error
 
+# --- the plugin version rule (ARCH-067), shared with the mint (``api/deps.py``) -------------
+# Here for the same reason as the address rules below: the settings validate the minimum with it.
+
+#: the lowest ``local_vektradiscuss`` release that speaks this API's contract: it sends the page
+#: ``cmid`` the transcript routes require. ``VEKTRA_ASSESS_MIN_PLUGIN_VERSION`` cannot go below it.
+PLUGIN_CONTRACT_FLOOR = "0.2.0"
+
+
+def parse_version(raw: str) -> tuple[int, ...] | None:
+    """``1.2.3`` -> ``(1, 2, 3)``; a suffix after ``-`` or ``+`` is ignored; junk -> None."""
+    core = raw.strip().split("-", 1)[0].split("+", 1)[0]
+    parts = core.split(".")
+    if not 1 <= len(parts) <= 4 or not all(
+        p.isascii() and p.isdigit() and len(p) <= 10 for p in parts
+    ):
+        return None
+    nums = [int(p) for p in parts]
+    return tuple(nums + [0] * (4 - len(nums)))
+
+
+def version_at_least(raw: str, *minimums: str | None) -> bool:
+    got = parse_version(raw)
+    if got is None:
+        return False
+    for minimum in minimums:
+        if minimum is None:
+            continue
+        need = parse_version(minimum)
+        if need is None or got < need:
+            return False  # an unparsable minimum fails closed
+    return True
+
+
 # --- pure rules shared with vektra_assess.delivery (plan transcript-delivery 10b) -------------
 # They live HERE, not in vektra_assess.delivery: validating the settings must not import a
 # module outside the parser's import ceiling (the parser sidecar loads this class too).
@@ -459,11 +492,26 @@ class VektraAssessSettings(BaseSettings):
         description="Seconds after the deadline an in-flight reply may still finish (REQ-070).",
     )
     min_plugin_version: str = Field(
-        "0.1.0",
+        "0.2.0",
         min_length=1,
         alias="VEKTRA_ASSESS_MIN_PLUGIN_VERSION",
-        description="Lowest local_vektradiscuss release accepted at mint (ARCH-067); a site's own minimum applies when higher.",
+        description="Lowest local_vektradiscuss release accepted at mint (ARCH-067); a site's own minimum applies when higher. Never below the contract floor (PLUGIN_CONTRACT_FLOOR).",
     )
+
+    @field_validator("min_plugin_version")
+    @classmethod
+    def _min_plugin_version_floor(cls, value: str) -> str:
+        """The contract floor, not a free knob (review #1): the transcript routes require the
+        page ``cmid``, which no plugin release before the floor sends. The message names the
+        rule, never the rejected value."""
+        if not version_at_least(value, PLUGIN_CONTRACT_FLOOR):
+            raise ValueError(
+                "VEKTRA_ASSESS_MIN_PLUGIN_VERSION must be a version (e.g. 0.2.0) at least "
+                f"{PLUGIN_CONTRACT_FLOOR}: the API contract requires the page cmid on the "
+                f"transcript routes, which local_vektradiscuss sends from {PLUGIN_CONTRACT_FLOOR}"
+            )
+        return value
+
     start_t_s: int = Field(
         60,
         ge=20,
@@ -702,6 +750,21 @@ class VektraAssessSettings(BaseSettings):
         description=(
             "How long an erasure request waits for the worker before answering 503 "
             "ERR-ASSESS-027 pending (the same request again is idempotent)."
+        ),
+    )
+    erasure_alert_after_s: int = Field(
+        3600,
+        # never below the purge's IN_FLIGHT (15 min, ``privacy.purge``; the unit test ties the
+        # two): an erasure legitimately waits that long for a transcript copy that may be on the
+        # wire, and alerting sooner would report a request working as designed
+        ge=900,
+        le=43_200,
+        alias="VEKTRA_ASSESS_ERASURE_ALERT_AFTER_S",
+        description=(
+            "An erasure request still not completed this many seconds after it was made "
+            "queues one operator_notify (erasure_overdue, OQ-033: the LMS cannot fail its own "
+            "request). At least 900 s, the wait for a transcript copy in flight; at most 12 h: "
+            "the daily purge records a request older than a day as failed (abandoned)."
         ),
     )
     db_backup_retention_days: int | None = Field(

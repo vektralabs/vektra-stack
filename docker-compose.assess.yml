@@ -144,6 +144,10 @@ services:
       VEKTRA_ASSESS_OPERATOR_EMAIL: ${VEKTRA_ASSESS_OPERATOR_EMAIL:-}
       # how long database backups are kept (crypto-shredding scope, ARCH-079); empty: a warning
       VEKTRA_ASSESS_DB_BACKUP_RETENTION_DAYS: ${VEKTRA_ASSESS_DB_BACKUP_RETENTION_DAYS:-}
+      # an erasure request still open this long emails the operator once (OQ-033; 900-43200)
+      VEKTRA_ASSESS_ERASURE_ALERT_AFTER_S: ${VEKTRA_ASSESS_ERASURE_ALERT_AFTER_S:-3600}
+      # the discussion model's traces: the pre-flight's Part B writes them like the API's turns
+      VEKTRA_ASSESS_STORE_TRACES: ${VEKTRA_ASSESS_STORE_TRACES:-true}
     secrets:
       - { source: assess_handoff_public, <<: *secret }
       - { source: assess_transcript_kek, <<: *secret }

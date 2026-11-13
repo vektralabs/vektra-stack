@@ -172,6 +172,24 @@ The model must also have a passing NFR-023 activation for its `prompt_version`
 one the API starts degraded and the pre-flight refuses every discussion. See the
 [API reference](../../reference/api.md#assess-model-activation-nfr-023).
 
+**A reasoning model needs its reasoning turned down, or a larger `VEKTRA_ASSESS_LLM_MAX_TOKENS`.**
+The completion budget (default 600) covers the reasoning and the answer. A reasoning model that
+spends it all on reasoning returns no text, and every Start is rolled back with
+`provider_unavailable`; the worker log line `assess_preflight_provider_outage` then says
+`outage_cause=max_tokens_exhausted` (a discussion turn logs `assess_turn_provider_failure` and is
+refused, not an OUTAGE). Prefer lowering the reasoning: set `VEKTRA_ASSESS_LLM_EXTRA_BODY` to
+`{"reasoning_effort": "low"}` (OpenAI reasoning models) or
+`{"chat_template_kwargs": {"enable_thinking": false}}` (Qwen3 on vLLM). Raising the budget instead
+lengthens the reasoning, which happens before the first token and counts against
+`VEKTRA_ASSESS_OUTAGE_TIMEOUT_S`: see
+[Reasoning models (assess)](../../reference/configuration.md#reasoning-models-assess).
+
+Reading `outage_cause`: `http_5xx`, `connection_error` and the `*_timeout` codes of the HTTP
+client (`read_timeout`, `connect_timeout`, ...) point at the provider or the network. A
+`first_token_timeout` does too, **unless** the model reasons: after a `VEKTRA_ASSESS_LLM_MAX_TOKENS`
+raise with reasoning still on, it usually means the reasoning outlasted the first-token deadline.
+`http_4xx` is the provider answering (a wrong key or model, a rate limit, a rejected request).
+
 ## The assess schema: a migration branch of its own
 
 The assess tables, the three `vektra_assess_*` roles and the `SECURITY DEFINER` functions are
@@ -231,6 +249,88 @@ then recreate the service that holds that password (`... up -d --force-recreate 
 `vektra-assess-worker`): Compose bind-mounts the secret file, and a restarted container keeps
 the old file if the replacement wrote a new one.
 
+## Row-level security for the API role
+
+Assess serves several LMS sites from one database. Each route already filters on its site, and
+the database enforces it as well: the assess revision `a0002`
+(`vektra-assess/src/vektra_assess/migrations/versions/a0002_assess_api_rls.py`, ADR-0033 D9.2)
+puts a row-level-security policy for `vektra_assess_api` on the 20 site-scoped tables that role
+reads. The API sets `app.assess_site_id` at the start of every request transaction, from the
+site its credential is bound to (the site in a student or download token, the site of an
+`assess:*` key in `assess_site_keys`, or the site in an admin route's path once it has been
+checked). A transaction of the API role reads and writes only that site's rows. With the setting
+unset or empty, it reads **no rows** and can write none.
+
+- **The worker is not restricted.** `vektra_assess_worker` serves every site by design, and
+  `vektra_assess_definer` (the owner of the `SECURITY DEFINER` functions) has its own
+  unconditional policy, so the definer functions work as before.
+- **The migration user is not restricted.** It owns the tables, and the revision enables RLS
+  without `FORCE`, so the migrations see every row.
+- **Backups and reports need a role that sees every row.** Only a superuser, the tables' owner
+  (the migration user) or a role with `BYPASSRLS` sees every row. For any other role:
+  - **`pg_dump` fails.** Run by a role without these rights, it stops with
+    `query would be affected by row-level security policy for table "assess_sessions"`.
+    (`pg_dump` turns row security off for its session, and PostgreSQL refuses that for such a
+    role.)
+  - **`pg_dump --enable-row-security` is no workaround.** It completes, but dumps only the rows
+    that role's policies show, which for a role with no policy is none. Do not use it for a
+    backup.
+  - **The recipe.** Dump as the migration user, or create a dedicated backup or report role:
+    `CREATE ROLE vektra_backup LOGIN BYPASSRLS PASSWORD '...'`, with `SELECT` on the assess
+    tables. The trade-off: `BYPASSRLS` turns off every policy for that role, so it reads every
+    site's rows. Keep it read-only, give it to backup and reporting only, and never to an
+    application process.
+  - **The NFR report needs such a role too.** `scripts/assess_nfr_report.py` refuses a role
+    that RLS restricts (exit 3, naming the tables), rather than reporting an empty campaign.
+- **The cross-site reads go through definer functions.** A few API reads need no site or cover
+  every site, and each is a `SECURITY DEFINER` function returning ids or counts:
+  `assess_site_of_key` (resolving a key's site, before anything is bound),
+  `assess_live_session_count` (the deployment-wide admission cap), `assess_configured_site_count`
+  (`/health/assess`), `assess_pending_replies` (the API's pending-turn poller, which then binds
+  each answer to its session's site), `assess_transcript_site` (an operator's transcript
+  resend) and `assess_session_exists` (one boolean, so that the audit still records a cross-site
+  session probe as an ownership mismatch; the HTTP answer is the same not-found envelope).
+- **The assess roles must stay `NOBYPASSRLS`.** A role with `BYPASSRLS`, or a superuser, ignores every
+  policy. `vektra-assess-db-init` creates the roles `NOBYPASSRLS`; keep it that way on managed
+  Postgres too.
+- **Connection poolers.** The setting is transaction-local (`set_config(..., true)`), so it works
+  behind a pooler in transaction mode and never carries over to the next transaction on the same
+  connection.
+
+A route that forgot to bind its site gets an empty result, not an error: a 404 or an empty list.
+The test suite treats that as a bug. Every route test runs under a guard that fails when a
+statement reaches a site-scoped table before the site is bound
+(`vektra-assess/tests/support/binding_guard.py`).
+
+To check a deployment, as a superuser or the migration user:
+
+```sql
+-- 20 tables with RLS on and none forced
+SELECT count(*) FILTER (WHERE relrowsecurity), count(*) FILTER (WHERE relforcerowsecurity)
+FROM pg_class WHERE relnamespace = 'public'::regnamespace AND relname LIKE 'assess\_%';
+
+-- the two policies on each table: one for the API role, one for the worker and the definer
+SELECT tablename, policyname, roles FROM pg_policies WHERE tablename LIKE 'assess\_%' ORDER BY 1, 2;
+
+-- no assess role can bypass RLS
+SELECT rolname, rolsuper, rolbypassrls FROM pg_roles WHERE rolname LIKE 'vektra\_assess\_%';
+```
+
+And as `vektra_assess_api` (for example with `psql` and the role's password), unbound, then bound
+to a site:
+
+```sql
+SELECT count(*) FROM assess_sessions;                       -- 0: nothing is bound
+BEGIN;
+SELECT set_config('app.assess_site_id', '<site uuid>', true);
+SELECT count(DISTINCT site_id) FROM assess_sessions;        -- 1 at most: that site only
+ROLLBACK;
+```
+
+The automated proof is `vektra-assess/tests/integration/test_api_rls.py`: it runs a route's
+statement with its `site_id` predicate removed, as the API role bound to site A, and reads 0 rows
+of site B.
+
 ## Connection budget
 
 Postgres `max_connections` is 100; the shipped defaults use 65 and
@@ -289,6 +389,52 @@ by it.
 `healthy` without a fresh worker heartbeat row. Its `details` and the `vektra_assess_*` series of
 `/metrics` are described in the [API reference](../../reference/api.md#get-healthcomponent);
 example alert rules are in `deploy/prometheus/assess-alerts.yml.example`.
+
+## Erasure alerts
+
+An erasure request comes from the LMS's privacy API (OQ-033). The LMS cannot leave its own
+request failed: its privacy manager catches whatever the plugin's provider raises, tells
+the site's DPOs and completes the request anyway. So a request that does not complete on the
+Vektra side would go unnoticed there, and Vektra emails the operator instead
+(`operator_notify`, to `VEKTRA_ASSESS_OPERATOR_EMAIL` through the transcript relay):
+
+| Alert | When | Sent |
+|---|---|---|
+| `erasure_verification_failed` | the worker's count after the deletion found rows left: the deletion was rolled back and the request recorded `failed` (`error_code` `verification_failed`) | once per request, in the transaction that records the failure (a run that finds the request already completed by another run records and sends nothing) |
+| `erasure_overdue` | the request is still not completed `VEKTRA_ASSESS_ERASURE_ALERT_AFTER_S` (default 3600 s, at least 900 s) after it was made: its job is waiting for work in flight, retrying, or dead | once per request, from the worker's `delivery_retry` tick (every 30 s), marked on the request (`overdue_alerted_at`) in the same transaction, so pruned job rows never bring a second email. At send time it is dropped only if the request has since been **erased**; a request that ended `failed` is still reported |
+| `erasure_abandoned` | the request is still open a day after it was made: the daily purge records it `failed` (`error_code` `abandoned`) and drops the ids it carried | once per request, in the purge's transaction; the request was already reported overdue |
+
+The threshold is never below 900 s: an erasure waits up to 15 minutes for a transcript copy that
+may be on the wire, and alerting sooner would report a request working as designed. It is at most
+12 h, under the purge's one day.
+
+The email and the job carry the site id, the request id (`assess_erasure_records.id`) and the
+scope (`subject` or `activity`): never a user id, the subject's hash or the activity. The worker
+also logs `assess.erasure.alert` with the same `alert` name; a failure of the overdue sweep
+itself is logged `assess_erasure_overdue_sweep_failed` and does not stop the rest of the tick.
+The alerts need the relay (`VEKTRA_ASSESS_SMTP_*`) and `VEKTRA_ASSESS_OPERATOR_EMAIL`, like every
+operator notification.
+
+What to do:
+
+1. Find the request: `SELECT id, scope, requested_at, completed_at, outcome, error_code FROM
+   assess_erasure_records WHERE id = <request id>`, and its job: `SELECT state, attempts,
+   last_error_code FROM assess_jobs WHERE kind = 'erasure' AND (args->>'erasure_id')::bigint =
+   <request id>`.
+2. `erasure_overdue` with a live job: the erasure waits while a session of the scope is live
+   or a transcript send is in flight (at most 15 minutes after the send started); check the
+   worker's log and `GET /health/assess`. A dead job is queued again by the plugin's retry of
+   the same request.
+3. `erasure_verification_failed`: nothing was deleted. The worker's `assess.erasure.alert` line
+   carries `erasure_id`, `erasure_scope` and `tables_left`, the rows still present per table
+   (for example `turns=2,snapshots=1`; only names from the erasure's own table list, anything
+   else counts as `other`). If the log line is gone, the request's own record keeps the same
+   counts: `SELECT rows_deleted->'left' FROM assess_erasure_records WHERE id = <request id>`.
+   Fix the cause, then have the DPO repeat the request from the LMS (a new request; the failed
+   one stays recorded). A retention purge that fails its count logs `assess.purge.alert`
+   `purge_verification_failed` with the same `tables_left`.
+4. `erasure_abandoned`: nothing was deleted and the request will not run again. Fix what kept
+   it from running (step 2), then have the DPO repeat the request from the LMS.
 
 ## TLS and the two public origins
 

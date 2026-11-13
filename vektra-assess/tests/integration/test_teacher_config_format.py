@@ -108,7 +108,7 @@ async def test_unset_or_cleared_recipients_read_as_none_configured(pg) -> None: 
             store_sealed_field,
         )
 
-        async with pg.conn("api") as conn:
+        async with pg.conn("api", site=site) as conn:
             await store_sealed_field(
                 conn, pub, site, 13, TRANSCRIPT_RECIPIENTS, None, actor_userid=2
             )

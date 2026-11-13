@@ -55,7 +55,9 @@ async def put_report(pg, site, items, status="done", release=REL):
 
 
 async def api_conn_call(pg, fn, *args, **kw):
-    async with pg.conn("api") as c:
+    """``fn(conn, site, ...)`` as the API runs it: inside a request bound to ``site`` (RLS,
+    ADR-0033 D9.2)."""
+    async with pg.conn("api", site=args[0]) as c:
         return await fn(c, *args, **kw)
 
 
@@ -234,14 +236,17 @@ async def test_api_cannot_write_the_matrix_or_read_the_probe_manifest(pg):
         "SELECT probe_manifest FROM assess_sites",
     ):
         with pytest.raises(DBAPIError) as exc:
-            await pg.run("api", sql, {"s": site} if ":s" in sql else None)
+            # bound to the site, so the refusal is the privilege's, never the RLS policy's
+            await pg.run("api", sql, {"s": site} if ":s" in sql else None, site=site)
         assert exc.value.orig.sqlstate == "42501", sql
-    # but it can queue a setup check and read it back, content-free
+    # but it can queue a setup check and read it back, content-free (in a transaction bound
+    # to the site, as the route does: ADR-0033 D9.2)
     rid = (
         await pg.run(
             "api",
             "INSERT INTO assess_setup_check_reports (site_id) VALUES (:s) RETURNING id",
             {"s": site},
+            site=site,
         )
     )[0][0]
     row = (
@@ -249,6 +254,7 @@ async def test_api_cannot_write_the_matrix_or_read_the_probe_manifest(pg):
             "api",
             "SELECT status, items FROM assess_setup_check_reports WHERE id=:i",
             {"i": rid},
+            site=site,
         )
     )[0]
     assert (row[0], row[1]) == ("queued", [])

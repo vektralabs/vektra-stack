@@ -1,4 +1,5 @@
-"""Per-process state of the student routes: settings, the token service, the bearer token.
+"""Per-process state of the student routes: settings, the token service, the bearer token. The
+request's site binding (ADR-0033 D9.2) is ``vektra_assess.api.site_binding``.
 
 ``bearer_token`` reads the ``Authorization`` header and nothing else: never the query string,
 never a cookie (ADR-0030). A request carrying ``?token=`` or ``?access_token=`` without the header
@@ -12,6 +13,8 @@ from fastapi import Request
 from vektra_assess.api.common import fail
 from vektra_assess.api.material import DekCache
 from vektra_assess.config import VektraAssessSettings
+from vektra_assess.config import parse_version as parse_version
+from vektra_assess.config import version_at_least as version_at_least
 from vektra_assess.errors import assess_unavailable, token_invalid
 from vektra_assess.keys import AssessKeyring
 from vektra_assess.tokens import SIGNING_SECRET, AssessTokens
@@ -64,28 +67,3 @@ def bearer_token(request: Request) -> str:
     if scheme.lower() != "bearer" or not value.strip():
         raise fail(token_invalid())
     return value.strip()
-
-
-def parse_version(raw: str) -> tuple[int, ...] | None:
-    """``1.2.3`` -> ``(1, 2, 3)``; a suffix after ``-`` or ``+`` is ignored; junk -> None."""
-    core = raw.strip().split("-", 1)[0].split("+", 1)[0]
-    parts = core.split(".")
-    if not 1 <= len(parts) <= 4 or not all(
-        p.isascii() and p.isdigit() and len(p) <= 10 for p in parts
-    ):
-        return None
-    nums = [int(p) for p in parts]
-    return tuple(nums + [0] * (4 - len(nums)))
-
-
-def version_at_least(raw: str, *minimums: str | None) -> bool:
-    got = parse_version(raw)
-    if got is None:
-        return False
-    for minimum in minimums:
-        if minimum is None:
-            continue
-        need = parse_version(minimum)
-        if need is None or got < need:
-            return False  # an unparsable minimum fails closed
-    return True

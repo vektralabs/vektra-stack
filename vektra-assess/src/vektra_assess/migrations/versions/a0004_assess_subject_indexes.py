@@ -6,18 +6,19 @@
    ``expires_at``) and ``assess_render_checks`` (only a partial unique index on the pending
    checks, so every completed check was a sequential scan). Both get
    ``(site_id, student_userid, cmid)``.
-2. ``assess_transcript_job_states(site, sids)``, SECURITY DEFINER, EXECUTE for the API only. For
+2. ``assess_transcript_job_states(sids)``, SECURITY DEFINER, EXECUTE for the API only. For
    a closed session with no transcript the export says why its turns are missing: the state of
    its ``transcript_generate`` job (the latest), so the DPO and the plugin can tell a transcript
    still being generated from one whose generation failed. The API role cannot read
-   ``assess_jobs`` (it only inserts), and this returns one state per given session of the given
-   site, nothing else: no argument, no error, no other job.
+   ``assess_jobs`` (it only inserts), and this returns one state per given session of the site
+   the transaction is BOUND to (``a0002``'s ``app.assess_site_id``, the same expression as its
+   policies): no site argument a caller could choose, nothing when unbound, no argument, no
+   error, no other job.
 3. ``GRANT_STATEMENTS``: today's rendering of ``vektra_assess.db.grants`` (the function's
    EXECUTE added), applied whole as every matrix-carrying revision does.
 
-Revision id ``a0004``: ``a0002`` (RLS) and ``a0003`` (erasure alerts) belong to parallel
-branches; this one chains after the assess head of its own base and is re-pointed at merge time
-(``down_revision``, and the newest matrix-carrying revision re-renders the matrix).
+Chained after ``a0003`` (erasure alerts), itself after ``a0002`` (RLS for the API role); the
+matrix below is rendered on top of both.
 """
 
 from __future__ import annotations
@@ -26,7 +27,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "a0004"
-down_revision = "a0001"
+down_revision = "a0003"
 branch_labels = None
 depends_on = None
 
@@ -45,7 +46,7 @@ INDEXES = (
 )
 
 FUNCTION = r"""
-CREATE FUNCTION public.assess_transcript_job_states(p_site uuid, p_sids uuid[]) RETURNS TABLE(session_id uuid, state text)
+CREATE FUNCTION public.assess_transcript_job_states(p_sids uuid[]) RETURNS TABLE(session_id uuid, state text)
     LANGUAGE sql STABLE SECURITY DEFINER
     SET search_path TO 'pg_catalog', 'pg_temp'
     AS $$
@@ -53,11 +54,12 @@ CREATE FUNCTION public.assess_transcript_job_states(p_site uuid, p_sids uuid[]) 
         FROM public.assess_sessions s
         JOIN public.assess_jobs j ON j.kind = 'transcript_generate'
          AND j.args->>'session_id' = s.id::text
-        WHERE s.site_id = p_site AND s.id = ANY(p_sids)
+        WHERE s.site_id = NULLIF(pg_catalog.current_setting('app.assess_site_id', true), '')::uuid
+          AND s.id = ANY(p_sids)
         ORDER BY s.id, j.id DESC
     $$
 """
-SIGNATURE = "public.assess_transcript_job_states(p_site uuid, p_sids uuid[])"
+SIGNATURE = "public.assess_transcript_job_states(p_sids uuid[])"
 
 #: the rendering of ``vektra_assess.db.grants`` at this revision (the unit test compares)
 GRANT_STATEMENTS = (
@@ -240,12 +242,15 @@ GRANT_STATEMENTS = (
     "GRANT INSERT ON assess_outage_incidents TO vektra_assess_definer",
     "GRANT SELECT ON assess_outage_incidents TO vektra_assess_definer",
     "GRANT UPDATE (ended_at, credited_s) ON assess_outage_incidents TO vektra_assess_definer",
+    "GRANT SELECT (site_id, notice_url) ON assess_privacy_config TO vektra_assess_definer",
     "GRANT DELETE ON assess_session_handoff TO vektra_assess_definer",
     "GRANT SELECT ON assess_session_handoff TO vektra_assess_definer",
     "GRANT SELECT (session_id) ON assess_session_keys TO vektra_assess_definer",
     "GRANT DELETE ON assess_sessions TO vektra_assess_definer",
     "GRANT SELECT ON assess_sessions TO vektra_assess_definer",
     "GRANT UPDATE (seq, last_activity_at, state, close_reason, closed_at, pending_reply_since, epoch, credited_outage_s, deadline_at) ON assess_sessions TO vektra_assess_definer",
+    "GRANT SELECT (site_id, api_key_id, purpose) ON assess_site_keys TO vektra_assess_definer",
+    "GRANT SELECT (id, min_plugin_version, disabled_at) ON assess_sites TO vektra_assess_definer",
     "GRANT SELECT ON assess_snapshots TO vektra_assess_definer",
     "GRANT INSERT ON assess_start_attempts TO vektra_assess_definer",
     "GRANT SELECT ON assess_start_attempts TO vektra_assess_definer",
@@ -260,18 +265,30 @@ GRANT_STATEMENTS = (
     "REVOKE ALL ON FUNCTION public.assess_close_session(uuid,integer,text) FROM PUBLIC, vektra_assess_api, vektra_assess_worker",
     "GRANT EXECUTE ON FUNCTION public.assess_close_session(uuid,integer,text) TO vektra_assess_api",
     "GRANT EXECUTE ON FUNCTION public.assess_close_session(uuid,integer,text) TO vektra_assess_worker",
+    "REVOKE ALL ON FUNCTION public.assess_configured_site_count() FROM PUBLIC, vektra_assess_api, vektra_assess_worker",
+    "GRANT EXECUTE ON FUNCTION public.assess_configured_site_count() TO vektra_assess_api",
     "REVOKE ALL ON FUNCTION public.assess_end_outage(uuid,integer) FROM PUBLIC, vektra_assess_api, vektra_assess_worker",
     "GRANT EXECUTE ON FUNCTION public.assess_end_outage(uuid,integer) TO vektra_assess_worker",
     "REVOKE ALL ON FUNCTION public.assess_enqueue_resend(uuid,text,integer) FROM PUBLIC, vektra_assess_api, vektra_assess_worker",
     "GRANT EXECUTE ON FUNCTION public.assess_enqueue_resend(uuid,text,integer) TO vektra_assess_api",
     "REVOKE ALL ON FUNCTION public.assess_enter_outage(uuid,integer,timestamp with time zone,text) FROM PUBLIC, vektra_assess_api, vektra_assess_worker",
     "GRANT EXECUTE ON FUNCTION public.assess_enter_outage(uuid,integer,timestamp with time zone,text) TO vektra_assess_api",
+    "REVOKE ALL ON FUNCTION public.assess_live_session_count() FROM PUBLIC, vektra_assess_api, vektra_assess_worker",
+    "GRANT EXECUTE ON FUNCTION public.assess_live_session_count() TO vektra_assess_api",
     "REVOKE ALL ON FUNCTION public.assess_metrics_snapshot() FROM PUBLIC, vektra_assess_api, vektra_assess_worker",
     "GRANT EXECUTE ON FUNCTION public.assess_metrics_snapshot() TO vektra_assess_api",
+    "REVOKE ALL ON FUNCTION public.assess_pending_replies(double precision,integer) FROM PUBLIC, vektra_assess_api, vektra_assess_worker",
+    "GRANT EXECUTE ON FUNCTION public.assess_pending_replies(double precision,integer) TO vektra_assess_api",
     "REVOKE ALL ON FUNCTION public.assess_rollback_starting(uuid) FROM PUBLIC, vektra_assess_api, vektra_assess_worker",
     "GRANT EXECUTE ON FUNCTION public.assess_rollback_starting(uuid) TO vektra_assess_api",
-    "REVOKE ALL ON FUNCTION public.assess_transcript_job_states(uuid,uuid[]) FROM PUBLIC, vektra_assess_api, vektra_assess_worker",
-    "GRANT EXECUTE ON FUNCTION public.assess_transcript_job_states(uuid,uuid[]) TO vektra_assess_api",
+    "REVOKE ALL ON FUNCTION public.assess_session_exists(uuid) FROM PUBLIC, vektra_assess_api, vektra_assess_worker",
+    "GRANT EXECUTE ON FUNCTION public.assess_session_exists(uuid) TO vektra_assess_api",
+    "REVOKE ALL ON FUNCTION public.assess_site_of_key(uuid,text) FROM PUBLIC, vektra_assess_api, vektra_assess_worker",
+    "GRANT EXECUTE ON FUNCTION public.assess_site_of_key(uuid,text) TO vektra_assess_api",
+    "REVOKE ALL ON FUNCTION public.assess_transcript_job_states(uuid[]) FROM PUBLIC, vektra_assess_api, vektra_assess_worker",
+    "GRANT EXECUTE ON FUNCTION public.assess_transcript_job_states(uuid[]) TO vektra_assess_api",
+    "REVOKE ALL ON FUNCTION public.assess_transcript_site(uuid) FROM PUBLIC, vektra_assess_api, vektra_assess_worker",
+    "GRANT EXECUTE ON FUNCTION public.assess_transcript_site(uuid) TO vektra_assess_api",
     "REVOKE ALL ON FUNCTION public.get_session_material(uuid,integer) FROM PUBLIC, vektra_assess_api, vektra_assess_worker",
     "GRANT EXECUTE ON FUNCTION public.get_session_material(uuid,integer) TO vektra_assess_api",
 )

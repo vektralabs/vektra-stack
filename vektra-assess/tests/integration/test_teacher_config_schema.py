@@ -39,7 +39,7 @@ async def _audits(pg, site: uuid.UUID) -> list:  # type: ignore[no-untyped-def]
 
 
 async def _store(pg, pub, site, field, value, actor, **kw) -> None:  # type: ignore[no-untyped-def]
-    async with pg.conn("api") as conn:
+    async with pg.conn("api", site=site) as conn:
         await store_sealed_field(
             conn, pub, site, 40, field, value, actor_userid=actor, **kw
         )
@@ -56,6 +56,7 @@ async def test_the_api_writes_a_sealed_field_and_cannot_read_it_back(pg) -> None
         "SELECT field, is_set, item_count, updated_by FROM assess_activity_config_sealed "
         "WHERE site_id = :s AND cmid = 40",
         {"s": site},
+        site=site,
     )
     assert [tuple(r) for r in rows] == [(SOLUTION, True, None, 9)]
     for sql in (
@@ -70,7 +71,7 @@ async def test_the_api_writes_a_sealed_field_and_cannot_read_it_back(pg) -> None
         "DELETE FROM assess_activity_config_sealed",
     ):
         with pytest.raises(DBAPIError) as exc:
-            await pg.run("api", sql)
+            await pg.run("api", sql, site=site)  # bound: the refusal is the privilege
         assert getattr(exc.value.orig, "sqlstate", None) == "42501", sql
     # and the plaintext is nowhere in the row (sealed, not stored)
     raw = await pg.run(
@@ -143,7 +144,7 @@ async def test_the_recipient_count_matches_the_refs(pg) -> None:  # type: ignore
     site = await make_site(pg)
     await configure_activity(pg, site, 42)
     pub, _ = config_pair()
-    async with pg.conn("api") as conn:
+    async with pg.conn("api", site=site) as conn:
         with pytest.raises(
             IntegrityError, match="ck_assess_activity_config_sealed_refs"
         ):
@@ -166,6 +167,7 @@ async def test_a_direct_api_write_that_skips_updated_at_is_still_audited(pg) -> 
         "UPDATE assess_activity_config_sealed SET sealed_blob = NULL, kid = NULL "
         "WHERE site_id = :s AND cmid = 40 AND field = 'solution'",
         {"s": site},
+        site=site,
     )
     rows = await _audits(pg, site)
     assert len(rows) == before + 1

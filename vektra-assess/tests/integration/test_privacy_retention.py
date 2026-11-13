@@ -22,7 +22,7 @@ from sqlalchemy.ext.asyncio import create_async_engine
 from support.preflight import PASSING_FACTS, FakeSource
 from support.recipients import configure_recipients
 from support.sessions import Seeded, seed_session
-from support.world import auth, default_settings, err, make_key, world
+from support.world import auth, bind, default_settings, err, make_key, world
 
 from integration.test_session_preflight import _reset
 from integration.test_session_state import render
@@ -258,7 +258,7 @@ async def test_the_purge_removes_every_content_row_and_keeps_the_control(
         ]
         got = await w.client.post(
             f"/api/v1/assess/transcripts/{target.session_id}/download-token",
-            json={"sub": target.sub},
+            json={"sub": target.sub, "cmid": target.cmid},
             headers=auth("mint"),
         )
         assert got.status_code == 410, got.text
@@ -267,14 +267,14 @@ async def test_the_purge_removes_every_content_row_and_keeps_the_control(
         # another student asking for that id learns nothing
         other = await w.client.post(
             f"/api/v1/assess/transcripts/{target.session_id}/download-token",
-            json={"sub": target.sub + 1},
+            json={"sub": target.sub + 1, "cmid": target.cmid},
             headers=auth("mint"),
         )
         assert other.status_code == 404, other.text
         # neither does a grader: the purged session's facts are gone, nothing can be verified
         grader = await w.client.post(
             f"/api/v1/assess/transcripts/{target.session_id}/download-token",
-            json={"actor_userid": 12},
+            json={"actor_userid": 12, "cmid": target.cmid},
             headers=auth("teacher"),
         )
         assert grader.status_code == 404, grader.text
@@ -776,6 +776,8 @@ async def test_settings_are_written_by_the_operator_and_gate_everything(
     async with world(pg) as w:
         url = f"/api/v1/assess/sites/{w.site}/privacy"
         async with w.engine.connect() as conn:
+            # the API role reads its settings bound to the site
+            await bind(conn, w.site)
             assert await privacy_config.is_configured(conn, w.site) is False
         bad = await w.client.put(
             url, json={**SETTINGS, "retention_days": 0, "notice_url": "http://x.example"},
@@ -795,6 +797,7 @@ async def test_settings_are_written_by_the_operator_and_gate_everything(
         assert ok.json()["configured"] is True
         assert ok.json()["mailbox_notice"] == privacy_config.MAILBOX_SENTENCE
         async with w.engine.connect() as conn:
+            await bind(conn, w.site)
             assert await privacy_config.is_configured(conn, w.site) is True
             assert (
                 await privacy_config.current_notice_version(conn, w.site) == "2026-11"

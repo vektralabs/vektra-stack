@@ -8,15 +8,18 @@ outside it.
 
 from __future__ import annotations
 
+import asyncio
 import importlib.util
 import sys
 import uuid
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import ModuleType
+from typing import Any
 
 import pytest
 from sqlalchemy import text
+from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import create_async_engine
 
 pytestmark = pytest.mark.integration
@@ -207,3 +210,161 @@ async def test_advisory_refusals_are_read_from_the_audit_events(pg) -> None:  # 
     assert (
         item["verdict"] == "FAIL"
     )  # 98% < 99%: the worker outage is the service's fault
+
+
+async def test_a_role_that_rls_restricts_is_refused_not_reported(pg, tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """Review of #209 finding 2: under RLS (revision a0002) the API role, or any read-only role
+    without BYPASSRLS, reads 0 rows of the sessions and attempts without an error. The script
+    refuses it by name (exit 3, nothing written) instead of a BLOCKED report on empty data; the
+    worker (unconditional policy) and the superuser still read."""
+
+    def cfg(url: str) -> Any:
+        return r.Config(
+            dsn=url.replace("postgresql+asyncpg://", "postgresql://"),
+            since=T0,
+            until=T0 + timedelta(hours=1),
+            label="db-rls",
+        )
+
+    with pytest.raises(r.RowSecurityRefusal) as exc:
+        await r.load(cfg(pg.url("api")))
+    assert exc.value.tables == ["assess_sessions", "assess_start_attempts"]
+    assert "BYPASSRLS" in str(exc.value)
+    # positive control: a role that sees every row is not refused
+    await r.load(cfg(pg.super_url))
+    # and a role with BYPASSRLS, the recipe of the operator doc, is not either
+    role = f"nfr_reader_{uuid.uuid4().hex[:8]}"
+    await pg.run(
+        "super", f"CREATE ROLE {role} LOGIN PASSWORD 'reader-password-0123' BYPASSRLS"
+    )
+    await pg.run(
+        "super",
+        "GRANT SELECT ON assess_sessions, assess_turns, assess_start_attempts, "
+        f"assess_audit_events TO {role}",
+    )
+    url = (
+        make_url(pg.super_url)
+        .set(username=role, password="reader-password-0123")
+        .render_as_string(hide_password=False)
+    )
+    await r.load(cfg(url))
+    # CodeRabbit on #209: a role WITHOUT BYPASSRLS that an unconditional permissive policy opens
+    # is accepted, unless a restrictive read policy that is not unconditional also applies to
+    # it (PostgreSQL ANDs it with the permissive one: a partial campaign)
+    reader = f"nfr_policy_{uuid.uuid4().hex[:8]}"
+    await pg.run("super", f"CREATE ROLE {reader} LOGIN PASSWORD 'reader-password-0123'")
+    await pg.run(
+        "super",
+        "GRANT SELECT ON assess_sessions, assess_turns, assess_start_attempts, "
+        f"assess_audit_events TO {reader}",
+    )
+    policies = [
+        (f"nfr_open_{t}", t) for t in ("assess_sessions", "assess_start_attempts")
+    ]
+    restrictive = "nfr_restrict_assess_sessions"
+    try:
+        for name, table in policies:
+            await pg.run(
+                "super",
+                f"CREATE POLICY {name} ON {table} AS PERMISSIVE FOR SELECT TO {reader} "
+                "USING (true)",
+            )
+        reader_url = (
+            make_url(pg.super_url)
+            .set(username=reader, password="reader-password-0123")
+            .render_as_string(hide_password=False)
+        )
+        await r.load(cfg(reader_url))  # unconditional: accepted
+        await pg.run(
+            "super",
+            f"CREATE POLICY {restrictive} ON assess_sessions AS RESTRICTIVE FOR SELECT "
+            f"TO {reader} USING (cmid > 0)",
+        )
+        with pytest.raises(r.RowSecurityRefusal) as exc:
+            await r.load(cfg(reader_url))
+        assert exc.value.tables == ["assess_sessions"]
+        # a restrictive policy that is provably unconditional does not refuse
+        await pg.run("super", f"DROP POLICY {restrictive} ON assess_sessions")
+        await pg.run(
+            "super",
+            f"CREATE POLICY {restrictive} ON assess_sessions AS RESTRICTIVE FOR SELECT "
+            f"TO {reader} USING (true)",
+        )
+        await r.load(cfg(reader_url))
+        # CodeRabbit 4558599990: a restrictive policy with no USING clause (WITH CHECK only:
+        # qual NULL, here on FOR ALL, which the read filter considers) filters no read, so it
+        # does not refuse either
+        await pg.run("super", f"DROP POLICY {restrictive} ON assess_sessions")
+        await pg.run(
+            "super",
+            f"CREATE POLICY {restrictive} ON assess_sessions AS RESTRICTIVE FOR ALL "
+            f"TO {reader} WITH CHECK (cmid > 0)",
+        )
+        qual = await pg.run(
+            "super",
+            "SELECT qual FROM pg_policies WHERE policyname = :p",
+            {"p": restrictive},
+        )
+        assert qual == [(None,)]
+        await r.load(cfg(reader_url))
+    finally:
+        await pg.run("super", f"DROP POLICY IF EXISTS {restrictive} ON assess_sessions")
+        for name, table in policies:
+            await pg.run("super", f"DROP POLICY IF EXISTS {name} ON {table}")
+    # CodeRabbit on #209 (second round): PostgreSQL applies a policy to every role that
+    # inherits the policy's role. A login role whose policies all name a group it inherits:
+    group, member = (
+        f"nfr_group_{uuid.uuid4().hex[:8]}",
+        f"nfr_member_{uuid.uuid4().hex[:8]}",
+    )
+    await pg.run("super", f"CREATE ROLE {group} NOLOGIN")
+    await pg.run(
+        "super",
+        f"CREATE ROLE {member} LOGIN INHERIT PASSWORD 'reader-password-0123' IN ROLE {group}",
+    )
+    await pg.run(
+        "super",
+        "GRANT SELECT ON assess_sessions, assess_turns, assess_start_attempts, "
+        f"assess_audit_events TO {group}",
+    )
+    member_url = (
+        make_url(pg.super_url)
+        .set(username=member, password="reader-password-0123")
+        .render_as_string(hide_password=False)
+    )
+    inherited = [
+        (f"nfr_gopen_{t}", t) for t in ("assess_sessions", "assess_start_attempts")
+    ]
+    group_restrictive = "nfr_grestrict_assess_sessions"
+    try:
+        # no policy at all for the member or its group: refused on both tables
+        with pytest.raises(r.RowSecurityRefusal) as exc:
+            await r.load(cfg(member_url))
+        assert exc.value.tables == ["assess_sessions", "assess_start_attempts"]
+        # an inherited-only permissive unconditional policy: accepted
+        for name, table in inherited:
+            await pg.run(
+                "super",
+                f"CREATE POLICY {name} ON {table} AS PERMISSIVE FOR SELECT TO {group} "
+                "USING (true)",
+            )
+        await r.load(cfg(member_url))
+        # an inherited restrictive policy that is not unconditional: refused
+        await pg.run(
+            "super",
+            f"CREATE POLICY {group_restrictive} ON assess_sessions AS RESTRICTIVE "
+            f"FOR SELECT TO {group} USING (cmid > 0)",
+        )
+        with pytest.raises(r.RowSecurityRefusal) as exc:
+            await r.load(cfg(member_url))
+        assert exc.value.tables == ["assess_sessions"]
+    finally:
+        await pg.run(
+            "super", f"DROP POLICY IF EXISTS {group_restrictive} ON assess_sessions"
+        )
+        for name, table in inherited:
+            await pg.run("super", f"DROP POLICY IF EXISTS {name} ON {table}")
+    # through the entry point: exit 3, verdict REFUSED, no report file
+    code, res = await asyncio.to_thread(r.run, cfg(pg.url("api")), tmp_path)
+    assert (code, res["verdict"]) == (3, "REFUSED")
+    assert list(tmp_path.iterdir()) == []

@@ -253,6 +253,24 @@ real-time run guards against clock-injection bugs.
 
 ## Notes
 
+> **Page cmid on the transcript routes (plugin request, 2026-11-13, PR #212).** The
+> download-token mint and the grader's resend take the plugin page's `cmid`; a transcript of
+> another activity gets the unknown-transcript 404, audited. It is optional for now: a grader
+> call without it is logged and counted (`vektra_assess_transcript_cmid_missing_total`).
+> **Follow-up:** make `cmid` required on the `assess:teacher` path once the plugin's minimum
+> version (`VEKTRA_ASSESS_MIN_PLUGIN_VERSION` / the site minimum) includes a release that sends
+> it. Pre-existing, not changed here: without `cmid`, a non-grader's 403 against an unknown
+> id's 404 tells that a transcript exists.
+> **Done (2026-11-13, branch `feat/assess-plugin-min-020`):** `local_vektradiscuss` 0.2.0 sends
+> `cmid` on the student and the grader download-token mint and on the grader's resend, and the
+> default `VEKTRA_ASSESS_MIN_PLUGIN_VERSION` is now `0.2.0`. `cmid` is required on all three
+> (`400 ERR-ASSESS-014` `missing:cmid`); the operator's resend still refuses it
+> (`extra_forbidden:cmid`). The counter and its log line are removed: no accepted call can omit
+> `cmid` any more, so it could only ever read 0. `VEKTRA_ASSESS_MIN_PLUGIN_VERSION` cannot go
+> below the contract floor 0.2.0 (startup refusal). **Still open (possible follow-up):** the
+> `cmid` check does not hide existence; within the same activity a non-grader's 403 against an
+> unknown id's 404 still tells that a transcript exists.
+
 - OQ-029 (exactly-once vs crash window): the design default is implemented; product/QA
   confirmation is still needed for the REQ-075 criterion. Blocker for pilot sign-off, not for
   implementation.

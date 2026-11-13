@@ -317,6 +317,26 @@ def test_a_busy_pool_answers_pending_on_time() -> None:
     assert exc.value.detail["error"]["details"] == {"reason": "pending"}
 
 
+def test_the_overdue_threshold_is_never_below_the_in_flight_wait() -> None:
+    """Review finding 7: an erasure legitimately waits up to ``IN_FLIGHT`` for a send that may
+    be on the wire; alerting before that would report a request working as designed."""
+    from pydantic import ValidationError
+
+    from vektra_assess.privacy.purge import IN_FLIGHT
+
+    low = int(IN_FLIGHT.total_seconds())
+    field = VektraAssessSettings.model_fields["erasure_alert_after_s"]
+    assert low in [getattr(m, "ge", None) for m in field.metadata]
+    with pytest.raises(ValidationError):
+        VektraAssessSettings.model_validate(
+            {"VEKTRA_ASSESS_ERASURE_ALERT_AFTER_S": low - 1}
+        )
+    ok = VektraAssessSettings.model_validate(
+        {"VEKTRA_ASSESS_ERASURE_ALERT_AFTER_S": low}
+    )
+    assert ok.erasure_alert_after_s == low
+
+
 @pytest.mark.parametrize(
     ("value", "code"),
     [
@@ -442,3 +462,40 @@ def test_the_notice_changed_error_is_a_409() -> None:
     e = privacy_notice_changed()
     assert e.code == "ERR-ASSESS-029" and http_status_for(e) == 409
     assert e.details == {"reason": "privacy_notice_changed"}
+
+
+def test_the_rows_left_are_logged_from_known_table_names_only() -> None:
+    """CodeRabbit 4558071155: the alert's ``tables_left`` is built from the erasure's own table
+    list (anything else counts as ``other``), never from exception text, and stays under the
+    log value cap."""
+    from vektra_assess.privacy.purge import LEFT_TABLES, tables_left
+
+    assert tables_left({}) == "none"
+    assert (
+        tables_left({"assess_turns": 2, "assess_snapshots": 1}) == "snapshots=1,turns=2"
+    )
+    hostile = {"assess_turns": 1, "x'; DROP TABLE t; --": 3, "student text": 4}
+    assert tables_left(hostile) == "other=7,turns=1"
+    every = tables_left(dict.fromkeys(LEFT_TABLES, 123_456))
+    assert len(every) <= 200 and every.endswith(",...")
+
+
+def test_the_alert_keys_survive_the_log_allowlist() -> None:
+    """CodeRabbit 4558071155: the operator reads ``tables_left``, ``erasure_id`` and
+    ``erasure_scope`` from the worker's log, so the allowlist processor must keep them."""
+    from vektra_assess.privacy.purge import tables_left
+    from vektra_shared.log_safety import DROPPED, scrub_event_dict
+
+    event = scrub_event_dict(
+        {
+            "event": "assess.erasure.alert",
+            "alert": "erasure_verification_failed",
+            "erasure_id": 41,
+            "erasure_scope": "subject",
+            "tables_left": tables_left({"assess_turns": 2}),
+            "left": "anything",
+        }
+    )
+    assert event["tables_left"] == "turns=2"
+    assert event["erasure_id"] == 41 and event["erasure_scope"] == "subject"
+    assert event["left"] == DROPPED

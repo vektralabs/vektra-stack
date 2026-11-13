@@ -12,6 +12,7 @@ import uuid
 from typing import Any
 
 import pytest
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
 from support.world import make_site
 
@@ -59,6 +60,11 @@ async def check(pg, site, cmid, actor=EDITOR, hint=(COURSE, "assign")):  # type:
     engine = create_async_engine(pg.url("api"))
     try:
         async with engine.begin() as conn:
+            # bound to the site, as the teacher routes are (RLS, ADR-0033 D9.2)
+            await conn.execute(
+                text("SELECT set_config('app.assess_site_id', :s, true)"),
+                {"s": str(site)},
+            )
             return await check_fresh_teacher(
                 conn,
                 site=site,

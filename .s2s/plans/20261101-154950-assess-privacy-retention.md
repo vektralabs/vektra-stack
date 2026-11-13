@@ -227,6 +227,18 @@ no log files fails rather than passing.
 
 ## Notes
 
+> **OQ-033, the LMS cannot fail an erasure request (2026-11-13, branch
+> `feat/assess-erasure-operator-alert`).** Moodle's
+> `core_privacy\manager::handled_component_class_callback()` catches any Throwable from a
+> provider, notifies the site DPOs and completes the `tool_dataprivacy` request anyway: a
+> failure on the Vektra side never reaches the LMS as a failed request. Vektra alerts the
+> operator instead: `operator_notify` `erasure_verification_failed` when a run records a request
+> failed, `erasure_overdue` when one is still open after `VEKTRA_ASSESS_ERASURE_ALERT_AFTER_S`
+> (default 3600 s, at least the 900 s in-flight wait; marker `overdue_alerted_at`, revision
+> `a0003`) and `erasure_abandoned` when the daily purge records a day-old one failed; each once
+> per request, held by the request's own state; ids and codes only. The module has no erasure metrics, so none were added (the log alert and the email are
+> the signals).
+
 - OQ-020 (DPO): retention value, legal basis, notice text, erasure mode and REQ-092 approval are
   inputs; the mechanism ships fail closed until they are set. Blocker for pilot, not for build.
 - **Open DPO question (OQ-020), 2026-11-13:** are the texts and identities a teacher enters
@@ -396,6 +408,11 @@ no log files fails rather than passing.
 >   records `presented_notice_version`. `/state` and a resume ignore the claim. **Plugin: send it
 >   on the Start mint** (harmless on the `/state` and resume mints). The operator's PUT refuses a
 >   change to a shown field under the same `notice_version` (`must_change`).
+>   **Minimum raised (2026-11-13, branch `feat/assess-plugin-min-020`):** `local_vektradiscuss`
+>   0.2.0 sends `privacy_notice_version` on the Start mint; the default
+>   `VEKTRA_ASSESS_MIN_PLUGIN_VERSION` is now `0.2.0`, so an older plugin is refused at mint
+>   (`403 ERR-ASSESS-016`) and can no longer Start. The field stays optional at mint: the same
+>   mint serves `/state` and a resume, where the plugin may omit it by design.
 
 > **12b, the items moved from 12a (2026-11-10).**
 > - `delivery_retry` safety net for the notification chains (`delivery.notify.rescue_dead_chains`,

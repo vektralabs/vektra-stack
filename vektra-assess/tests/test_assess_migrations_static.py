@@ -1,10 +1,11 @@
 """The assess migration branch, statically (ADR-0033 D7, plan 2a-3).
 
 What the branch must be, read from its files without a database: one base revision on the
-``assess`` branch depending on the platform's 0009, naming no LMS (the LMS boundary guard's own
-matcher), carrying the rendered grant matrix, and refusing a migration user without CREATEROLE
-with a message that names all three roles. The database side is
-``integration/test_schema_branch.py``.
+``assess`` branch depending on the platform's 0009 (then a straight line of later revisions:
+``a0002``, RLS for the API role), naming no LMS (the LMS boundary guard's own matcher), the
+newest matrix-carrying revision carrying the rendered grant matrix, and refusing a migration user
+without CREATEROLE with a message that names all three roles. The database side is
+``integration/test_schema_branch.py`` and ``integration/test_api_rls.py``.
 """
 
 from __future__ import annotations
@@ -38,6 +39,8 @@ def test_one_base_revision_on_the_assess_branch() -> None:
     revs = _revisions()
     assert [p.name for p in revs] == [
         "a0001_assess_base.py",
+        "a0002_assess_api_rls.py",  # ADR-0033 D9.2: RLS for the API role
+        "a0003_assess_erasure_alerts.py",  # OQ-033: the overdue-erasure alert marker
         "a0004_assess_subject_indexes.py",  # the subject export's per-subject reads
     ]
     mod = _load(revs[0], "assess_base")
@@ -52,6 +55,25 @@ def test_one_base_revision_on_the_assess_branch() -> None:
         assert later.down_revision == previous, path.name
         assert later.branch_labels is None and later.depends_on is None, path.name
         previous = later.revision
+
+
+def _latest_grants() -> Path:
+    holders = [p for p in _revisions() if "GRANT_STATEMENTS = (" in p.read_text()]
+    assert holders, "no revision carries the grant matrix"
+    return holders[-1]
+
+
+def test_the_rls_revision_scans_pending_replies_with_the_claim_rule_of_the_api() -> (
+    None
+):
+    """``assess_pending_replies`` (a0002) carries the live-reply claim test as text: it must be
+    the one ``turn_markers.reply_claimed_sql`` writes, or the PendingTurnDriver would answer a
+    turn another driver holds."""
+    from vektra_assess.turn_markers import reply_claimed_sql
+
+    mod = _load(VERSIONS / "a0002_assess_api_rls.py", "assess_rls_claim")
+    (pending,) = [f for f in mod.FUNCTIONS if "assess_pending_replies" in f]
+    assert "AND NOT " + reply_claimed_sql("s.id") in pending
 
 
 def test_the_assess_branch_names_no_lms() -> None:
@@ -70,9 +92,7 @@ def test_the_assess_branch_names_no_lms() -> None:
 
 def test_the_grant_matrix_is_the_rendered_one() -> None:
     """The newest revision that carries the matrix carries today's rendering of it."""
-    holders = [p for p in _revisions() if "GRANT_STATEMENTS = (" in p.read_text()]
-    assert holders, "no revision carries the grant matrix"
-    mod = _load(holders[-1], "assess_latest_grants")
+    mod = _load(_latest_grants(), "assess_latest_grants")
     assert list(mod.GRANT_STATEMENTS) == g.render_statements()
 
 

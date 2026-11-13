@@ -34,6 +34,7 @@ from sqlalchemy.ext.asyncio import AsyncConnection
 from vektra_assess.api.common import engine_of, fail
 from vektra_assess.api.deps import settings_of
 from vektra_assess.api.material import MaterialUnavailable
+from vektra_assess.api.site_binding import bind_site
 from vektra_assess.audit import AssessAuditEvent, write_event
 from vektra_assess.errors import (
     assess_unavailable,
@@ -55,6 +56,7 @@ _ROW = (
     "pending_reply_since, credited_outage_s, created_at, tokens_used, now() AS server_now "
     "FROM assess_sessions WHERE id = :sid"
 )
+_EXISTS = text("SELECT assess_session_exists(:sid)")
 _ROW_LOCKED = text(_ROW + " FOR UPDATE")
 _ROW_PLAIN = text(_ROW)
 
@@ -173,11 +175,23 @@ async def gate(
             "sid_mismatch",
             AssessAuditEvent.OWNERSHIP_MISMATCH_REJECTED,
         )
-    # 3. the live row, matching owner, site and activity (and number and epoch for a session token)
+    # 3. the live row, matching owner, site and activity (and number and epoch for a session token).
+    #    Read in a transaction bound to the token's site (ADR-0033 D9.2): the verifier bound the
+    #    request already; binding here too makes the gate hold on its own, whoever calls it
+    await bind_site(conn, claims.site)
     raw = (
         await conn.execute(_ROW_LOCKED if lock else _ROW_PLAIN, {"sid": sid})
     ).first()
     if raw is None:
+        # RLS hid the row or there is none. The answer is the same not-found envelope; only the
+        # audit tells the two apart, as it did before RLS: a session of another site is an
+        # ownership mismatch (assess_session_exists, a definer function, one boolean)
+        if (await conn.execute(_EXISTS, {"sid": sid})).scalar():
+            raise GateRejected(
+                session_not_found(),
+                "not_owner",
+                AssessAuditEvent.OWNERSHIP_MISMATCH_REJECTED,
+            )
         raise GateRejected(session_not_found(), "not_found")
     row = SessionRow(**raw._mapping)
     if (row.site_id, row.student_userid, row.cmid) != (

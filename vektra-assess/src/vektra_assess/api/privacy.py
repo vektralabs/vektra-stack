@@ -56,6 +56,7 @@ from vektra_assess.api.common import (
 )
 from vektra_assess.api.deps import dek_cache_of, handoff_private_of, settings_of
 from vektra_assess.api.material import MaterialUnavailable, load_material
+from vektra_assess.api.site_binding import bind_site
 from vektra_assess.api.state import limiter_of
 from vektra_assess.api.teachers import ascii_id, header_int, path_id
 from vektra_assess.api.transcripts import transcript_key_of
@@ -146,6 +147,8 @@ async def put_privacy(
     async with engine_of(request).begin() as conn:
         if (await conn.execute(_SITE, {"s": site})).scalar() is None:
             raise fail(bad_request("unknown_site"))
+        # ADR-0033 D9.2: an operator's key spans sites; the checked path site is bound
+        await bind_site(conn, site)
         old = (await conn.execute(_CURRENT, {"s": site})).first()
         if old is not None and privacy_config.version_must_change(old, doc):
             raise fail(privacy_config_invalid(privacy_config.MUST_CHANGE))
@@ -192,6 +195,7 @@ async def get_privacy(
     async with engine_of(request).connect() as conn:
         if (await conn.execute(_SITE, {"s": site})).scalar() is None:
             raise fail(bad_request("unknown_site"))
+        await bind_site(conn, site)  # ADR-0033 D9.2, as in put_privacy
         row = (await conn.execute(privacy_config.READ, {"s": site})).first()
     return JSONResponse(content=_view(row))
 
@@ -522,9 +526,7 @@ _JOB_REASON = {
     "dead": TRANSCRIPT_FAILED,
 }
 #: the API cannot read ``assess_jobs``: a definer function answers one state per session (a0004)
-_JOB_STATES = text(
-    "SELECT session_id, state FROM assess_transcript_job_states(:s, :sids)"
-)
+_JOB_STATES = text("SELECT session_id, state FROM assess_transcript_job_states(:sids)")
 _PURGED_SESSIONS = text(
     "SELECT DISTINCT session_id FROM assess_purge_records WHERE site_id = :s "
     "AND session_id = ANY(:sids)"
@@ -540,7 +542,7 @@ async def _why_missing(
     }
     states = {
         r.session_id: str(r.state)
-        for r in (await conn.execute(_JOB_STATES, {"s": site, "sids": sids})).all()
+        for r in (await conn.execute(_JOB_STATES, {"sids": sids})).all()
     }
     for sid, session in missing.items():
         if sid in purged:

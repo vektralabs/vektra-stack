@@ -24,7 +24,7 @@ from support.teacher_ops import (
     teacher,
     with_transcript_key,
 )
-from support.world import configure_activity, err, world
+from support.world import bind, configure_activity, err, world
 
 from integration.test_session_preflight import _reset
 
@@ -381,6 +381,7 @@ async def test_extra_time_waits_for_an_in_flight_start_and_then_refuses(pg) -> N
         params = {"s": w.site, "c": 905}
         async with w.engine.connect() as starting:
             tx = await starting.begin()
+            await bind(starting, w.site)  # as the Start route's transaction is bound
             await starting.execute(start_route.ACTIVITY_LOCK, params)
             put = asyncio.create_task(
                 w.client.put(

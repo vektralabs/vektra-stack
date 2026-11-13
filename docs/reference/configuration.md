@@ -217,10 +217,10 @@ printed, because some settings carry connection strings.
 | `VEKTRA_LLM_API_KEY` (assess use) | secret str | - | The discussion model's endpoint key is the SAME variable the RAG pipeline uses (OQ-026 decision of 2026-11-06: one key for the on-prem vLLM, no separate assess secret). The API reads it from `.env`; the worker, which has no `env_file`, gets it through its `environment` in `docker-compose.assess.yml`. Empty means no key. Never logged (SecretStr). |
 | `VEKTRA_ASSESS_LLM_EXTRA_BODY` | JSON object | - | Passed as `extra_body` on every discussion-model call, in the API and in the worker (Part B). For Qwen3 on vLLM: `{"chat_template_kwargs": {"enable_thinking": false}}`. Empty or unset: none. The RAG's `VEKTRA_LLM_EXTRA_BODY` is never used for assess. Invalid JSON or a non-object refuses startup. |
 | `VEKTRA_ASSESS_LLM_TEMPERATURE` | float | `0.2` | Sampling temperature of the discussion model (REQ-100 determinism). |
-| `VEKTRA_ASSESS_LLM_MAX_TOKENS` | int | `600` | Completion tokens per reply, reserved out of the context window before history is kept. |
+| `VEKTRA_ASSESS_LLM_MAX_TOKENS` | int | `600` | Completion tokens per reply, reserved out of the context window before history is kept. With a reasoning model it covers the reasoning **and** the answer: see [Reasoning models (assess)](#reasoning-models-assess). |
 | `VEKTRA_ASSESS_LLM_CONTEXT_WINDOW` | int | `8192` | Context window of the model. History is trimmed oldest first; the context bundle is never trimmed (a bundle that does not fit is an error). Range `2048`..`1048576`. |
 | `VEKTRA_ASSESS_LLM_SEED` | int | - | Passed to providers that support a seed. Range `0`..`2147483647`. |
-| `VEKTRA_ASSESS_OUTAGE_TIMEOUT_S` | float | `45` | No first token within this time is a provider outage (REQ-086); a slow stream that keeps producing is not. |
+| `VEKTRA_ASSESS_OUTAGE_TIMEOUT_S` | float | `45` | No first token within this time is a provider outage (REQ-086); a slow stream that keeps producing is not. An empty or whitespace-only chunk (a reasoning model's reasoning) is not a first token: the reasoning time counts against this deadline ([Reasoning models (assess)](#reasoning-models-assess)). |
 | `VEKTRA_ASSESS_OUTAGE_G_S` | int | `20` | REQ-086 G. An outage moves the session to OUTAGE (timer frozen, input locked); the worker probes the provider every 5-10 s with one `max_tokens=1` call while any session is in OUTAGE. At the first success the outage ends: an interval of at least G seconds is credited in full, a shorter one earns nothing, and the cumulative credit never exceeds C = min(15 min, half the session duration). Cumulative outage above C, or a third consecutive failed call, closes the session `service_failure`. |
 | `VEKTRA_ASSESS_PRIVACY_NOTICE_URL` | url | unset | URL of the privacy notice, returned to the plugin in `GET /state` `pre_session.privacy.notice_url` (with `VEKTRA_ASSESS_PRIVACY_NOTICE_VERSION`). |
 | `VEKTRA_ASSESS_RETRY_RPM` | int | `6` | `POST /sessions/{sid}/retry` calls per minute per session; above it 429 (`retry_rate`). The retry only makes the API try the pending turn now; it never ends an OUTAGE or changes the state. |
@@ -242,7 +242,7 @@ printed, because some settings carry connection strings.
 | `VEKTRA_ASSESS_PRESESSION_TTL_S` | int | `120` | Lifetime of a pre-session token minted by `POST /tokens`, 10-120 s; a value above 120 refuses startup. |
 | `VEKTRA_ASSESS_SESSION_TOKEN_TTL_S` | int | `900` | Upper bound of a session-bound token's lifetime; it also never outlives the session deadline plus `VEKTRA_ASSESS_REPLY_GRACE_S`. Resume (`GET /sessions/{sid}` with a fresh pre-session token) re-mints it. |
 | `VEKTRA_ASSESS_REPLY_GRACE_S` | int | `60` | Seconds after the deadline an in-flight reply may still finish (REQ-070); session tokens expire at deadline plus this grace at the latest. |
-| `VEKTRA_ASSESS_MIN_PLUGIN_VERSION` | str | `0.1.0` | Lowest `local_vektradiscuss` release accepted at mint (ARCH-067). A site's own `assess_sites.min_plugin_version` applies when it is higher. |
+| `VEKTRA_ASSESS_MIN_PLUGIN_VERSION` | str | `0.2.0` | Lowest `local_vektradiscuss` release accepted at mint (ARCH-067; below it, `403 ERR-ASSESS-016`). 0.2.0 is the first release that sends the transcript routes' required `cmid` and the Start mint's `privacy_notice_version`. Compared numerically per component (`0.10.0` > `0.2.0`); a `-`/`+` suffix is ignored. **Contract floor, not a free knob:** a value below `0.2.0` (or not a version) refuses startup, because the API contract (the required `cmid`) needs at least 0.2.0; raise it, never lower it. A site's own `assess_sites.min_plugin_version` applies as well (both must pass), so it can only raise the minimum: a site value below the floor has no effect. |
 | `VEKTRA_ASSESS_START_T_S` | int | `60` | REQ-071 commit window T: a Start not committed within T of the request is rolled back (pre-flight guard, budget cancellation and STARTING reaper). The pre-flight job's budget and lease are derived from it. The worker reads it too: `docker-compose.assess.yml` passes the `.env` value (default 60) to the worker's environment, as it does for `VEKTRA_ASSESS_ADMISSION_K`, `VEKTRA_ASSESS_RENDER_FRESH_S` and the model parameters. |
 | `VEKTRA_ASSESS_ADMISSION_K` | int | `10` | NFR-020 admission limit: live sessions (ACTIVE, OUTAGE, and STARTING sessions already in pre-flight) admitted at once. The API refuses a Start at or over K before writing anything; the worker pre-flight re-checks under a lock and is authoritative. 10 until the burst test sets it with evidence. |
 | `VEKTRA_ASSESS_PRIVACY_NOTICE_VERSION` | str | `1` | Version of the privacy notice shown before Start for a site with no privacy settings (development), recorded on the session row and on the `start` audit event. Checked at startup with the rule of the stored `notice_version`: 1 to 40 characters, not blank, no control character (C0 other than tab and newline, DEL, C1); an invalid value refuses the start. |
@@ -273,6 +273,7 @@ printed, because some settings carry connection strings.
 | `VEKTRA_ASSESS_PRIVACY_ALLOW_UNSET` | bool | `false` | Development and CI only: let the Start gate BR-006 (h) pass while the REQ-089 privacy configuration does not exist yet (its store arrives with plan assess-privacy-retention). Without it every Start is rolled back with `privacy_not_configured` (fail closed). Honoured only with `VEKTRA_ENV=development`; the worker refuses to start with it set elsewhere. The dev overlay `docker-compose.assess.dev.yml` sets it. |
 | `VEKTRA_ASSESS_ERASURE_MODE` | `erase` \| `retain_exam_evidence` | - | API. The DPO's decision on an erasure request (OQ-033, OQ-020): `erase` deletes the subject's discussions (see `DELETE /privacy/subjects/{userid}`); `retain_exam_evidence` keeps them under the site's configured legal basis and answers `outcome=retained`, audited, nothing deleted. Mandatory while assess is enabled outside development: the API refuses to start without it (no implicit choice). |
 | `VEKTRA_ASSESS_ERASURE_WAIT_S` | float | `4` | API. How long an erasure request waits for the worker before answering `503 ERR-ASSESS-027` `pending` (0.5-30; the same request again is idempotent). |
+| `VEKTRA_ASSESS_ERASURE_ALERT_AFTER_S` | int | `3600` | Worker. An erasure request still not completed this many seconds after it was made queues one `operator_notify` (`erasure_overdue`), once per request (900-43200: never below the 15-minute wait for a transcript copy in flight, and under the daily purge, which records a request older than a day as failed `abandoned` and alerts `erasure_abandoned`). See [erasure alerts](../guides/operators/assess-deployment.md#erasure-alerts). |
 | `VEKTRA_ASSESS_PRIVACY_RPM` | int | `30` | API. Privacy export, listing and erasure requests per minute per key; 429 beyond it. |
 | `VEKTRA_ASSESS_DB_BACKUP_RETENTION_DAYS` | int | unset | Worker. How long database backups are kept. Crypto-shredding removes a session's wrapped key from the database, not from a backup taken before the purge: the purge covers a backup only once that backup has expired (ARCH-079, amended by plan 12). Unset: a startup warning. |
 | `VEKTRA_ASSESS_JUDGE_MODEL` / `VEKTRA_ASSESS_JUDGE_API_BASE` | str | - | Judge model of `make eval-assess` only (never read by the API or the worker). |
@@ -297,6 +298,56 @@ development (decided by the product owner on 2026-11-11):
 `VEKTRA_ENV=development`; a production deployment sets `VEKTRA_ENV=production`. Set the three in
 the deployment `.env`. The exact startup error and
 its fix are in the [deployment guide](../guides/operators/assess-deployment.md#the-safeguard-and-the-models-locality).
+
+#### Reasoning models (assess)
+
+`VEKTRA_ASSESS_LLM_MAX_TOKENS` is the provider's completion budget, and a reasoning model spends
+its reasoning tokens out of it before it writes any answer. When the reasoning uses the whole
+budget, the stream ends with `finish_reason=length` and no text. Measured with an OpenAI reasoning
+model at the default of 600, three runs out of three: the Part B (the opening of the
+discussion) on a realistic context spent all 600 tokens on reasoning and ended after about 9 s
+with no text.
+
+**Reasoning time counts against the first-token deadline.** The reasoning reaches Vektra as
+chunks with empty content, and an empty (or whitespace-only) chunk is not a first token: it does
+**not** reset `VEKTRA_ASSESS_OUTAGE_TIMEOUT_S` (default 45 s). The whole reasoning phase must fit
+inside that deadline, or the call ends as `first_token_timeout`.
+
+What happens when the budget runs out before any text:
+
+- **Start (Part B):** no opening, so the Start is rolled back (`provider_unavailable`). The
+  worker logs `assess_preflight_provider_outage` with `outage_cause=max_tokens_exhausted`, the
+  configured `max_tokens` and `remediation_code=raise_llm_max_tokens_or_lower_reasoning_effort`;
+  the `assess_start_rollback` audit row carries `cause=max_tokens_exhausted`.
+- **Discussion turn:** a configuration problem, not an outage. The session does not enter
+  OUTAGE; the attempt ends with the interrupted turn (`provider_refused`), logged as
+  `assess_turn_provider_failure` with the same fields.
+- **An answer cut at max_tokens after some text** (`finish_reason=length`) is delivered as the
+  post-check or the Part B rules allow, and logged as `assess_llm_answer_truncated` with
+  `outage_cause=max_tokens_truncated`, `max_tokens` and the same remediation code.
+
+Pick one of the two fixes, in this order:
+
+1. **Lower the reasoning effort, or turn reasoning off**, through `VEKTRA_ASSESS_LLM_EXTRA_BODY`,
+   and keep the default `VEKTRA_ASSESS_LLM_MAX_TOKENS=600` (Part B is capped at a few sentences,
+   a turn is short). This fixes both the token budget and the first-token deadline:
+   - OpenAI reasoning models: `{"reasoning_effort": "low"}` (or `"minimal"` where the model
+     accepts it);
+   - Qwen3 on vLLM: `{"chat_template_kwargs": {"enable_thinking": false}}`, the same switch the
+     RAG uses ([Using a local vLLM instance](#using-a-local-vllm-instance)). It applies to any
+     vLLM model whose chat template reads `enable_thinking`.
+2. **Keep reasoning on and raise `VEKTRA_ASSESS_LLM_MAX_TOKENS`** so that reasoning plus answer
+   fit: start from 2048. A larger budget means a longer reasoning phase before the first text, so
+   `VEKTRA_ASSESS_OUTAGE_TIMEOUT_S` must cover the longest reasoning time you measure, or the
+   calls that used to end as `max_tokens_exhausted` now end as `first_token_timeout`. For a Start,
+   that time must also fit the Start window: the opening has at most `VEKTRA_ASSESS_START_T_S`
+   minus 5 s minus what the LMS reads took (about 50 s at the default T of 60), and beyond it the
+   Start is rolled back `start_timeout`. The budget is reserved out of
+   `VEKTRA_ASSESS_LLM_CONTEXT_WINDOW` (it must stay below it), so it also leaves less room for
+   the discussion history. Check the outage lines and `make eval-assess` with your model.
+
+Either change is a configuration change of the discussion model: run `make eval-assess` again
+before you rely on it.
 
 #### Connection budget (assess)
 

@@ -61,6 +61,7 @@ PLAN_KEYS = frozenset(
 OPERATIONAL_KEYS = frozenset(
     {
         "error_type",
+        "audit_error_type",  # a second exception TYPE name (the audit write's own failure)
         "pool",
         "tick",
         "step",
@@ -91,9 +92,33 @@ OPERATIONAL_KEYS = frozenset(
         "retention_h",
         "round_trip_ms",
         "signal",
+        # the erasure and purge alerts (OQ-033): the request id, its scope (subject | activity)
+        # and the tables with rows left, as ``table=count`` pairs built from the erasure's own
+        # table list only (``privacy.purge.tables_left``), never from exception text
+        "erasure_id",
+        "erasure_scope",
+        "tables_left",
     }
 )
-ALLOWED_KEYS = PLAN_KEYS | OPERATIONAL_KEYS
+# ... plus why a provider call failed (the Start pre-flight's Part B outage line): a closed cause
+# code, an integer HTTP status, a closed budget name, timings, the configured max_tokens and a
+# closed remediation code. Dedicated names, not a generic
+# ``reason`` or ``cause``, which other callers could fill with exception text. A rollback reason
+# is logged under ``reason_code``, already above.
+PROVIDER_KEYS = frozenset(
+    {
+        "outage_cause",
+        "http_status",
+        "expired_budget",
+        "first_token_ms",
+        "part_b_ms",
+        "remaining_s",
+        "timeout_s",
+        "max_tokens",
+        "remediation_code",
+    }
+)
+ALLOWED_KEYS = PLAN_KEYS | OPERATIONAL_KEYS | PROVIDER_KEYS
 # structlog's own bookkeeping keys, added by the processors that run before this one
 # (add_log_level sets "level", TimeStamper "timestamp"). Not "logger" nor "log_level": no
 # processor in the chain adds them, so a value there came from the caller

@@ -146,8 +146,13 @@ async def test_timeout_and_failure_are_counted_and_the_lock_is_released(
     async def hang() -> None:
         await asyncio.sleep(30)
 
+    # The canary has no digits on purpose: the check below scans the whole record, and a numeric
+    # canary ("4711") also matched the record's own clock fields (created, msecs,
+    # relativeCreated) whenever the timestamp happened to contain those digits.
+    canary = "student-canary-qxz private text"
+
     async def boom() -> None:
-        raise ValueError("student 4711 private text")
+        raise ValueError(canary)
 
     sch = TickScheduler(
         locks, [_tick("hang", hang, 1, timeout_s=0.05), _tick("boom", boom, 2)]
@@ -163,9 +168,13 @@ async def test_timeout_and_failure_are_counted_and_the_lock_is_released(
     assert locks.held == set()
     failed = [r for r in caplog.records if r.getMessage() == "assess_tick_failed"]
     assert failed and all(r.__dict__["error_type"] == "ValueError" for r in failed)
-    assert all("4711" not in repr(r.__dict__) for r in caplog.records), (
+    assert all(r.exc_info is None and r.exc_text is None for r in caplog.records), (
+        "no traceback in logs"
+    )
+    assert all("canary-qxz" not in repr(r.__dict__) for r in caplog.records), (
         "no exception text in logs"
     )
+    assert "canary-qxz" not in caplog.text
 
 
 async def test_startup_ticks_run_once_in_order_and_are_awaited() -> None:

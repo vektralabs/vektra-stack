@@ -216,7 +216,7 @@ async def test_reseal_teacher_configs_and_rewrap_transcript_deks(pg):
         "VALUES (:s, 3, 'quiz')",
         {"s": site},
     )
-    async with pg.conn("api") as c:
+    async with pg.conn("api", site=site) as c:
         for field in teacher_config.FIELDS:
             plain = (
                 '["a@uni.example"]'

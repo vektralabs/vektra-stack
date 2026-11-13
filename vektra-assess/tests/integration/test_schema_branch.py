@@ -40,8 +40,8 @@ ENTRYPOINT = ROOT / "docker" / "entrypoint.sh"
 REGEN = os.environ.get("VEKTRA_REGEN_SCHEMA_GOLDEN") == "1"
 
 #: what the assess head has (the goldens say exactly which; these are the sizes)
-#: (a0002, RLS for the API role, adds six SECURITY DEFINER functions)
-TABLES, ROLES, FUNCTIONS = 37, 3, 23
+#: (a0002, RLS for the API role, adds six SECURITY DEFINER functions; a0004 one more)
+TABLES, ROLES, FUNCTIONS = 37, 3, 24
 
 COUNTS = (
     "SELECT (SELECT count(*) FROM pg_tables WHERE schemaname = 'public' "
@@ -149,7 +149,7 @@ async def test_a_with_assess_off_the_entrypoint_creates_no_assess_object(
     await check_database_schema(url, ini, branches=("platform",))
     with pytest.raises(StartupValidationError) as exc:
         await check_database_schema(url, ini, branches=("platform", "assess"))
-    assert "a0003" in exc.value.detail and "assess@head" in exc.value.remediation
+    assert "a0004" in exc.value.detail and "assess@head" in exc.value.remediation
     # a database recorded at a revision of the replaced chain is refused, by name
     await _sql(url, "UPDATE alembic_version SET version_num = '0044'")
     try:
@@ -166,7 +166,7 @@ async def test_b_with_assess_on_the_entrypoint_migrates_both_branches(
     url = await _database(server, "assess_on")
     _entrypoint(url, assess="true")
     # Alembic records the assess head only: a0001 and the 0009 it depends on are implied
-    assert [r[0] for r in await _sql(url, VERSIONS)] == ["a0003"]
+    assert [r[0] for r in await _sql(url, VERSIONS)] == ["a0004"]
     assert await _counts(url) == (TABLES, ROLES, FUNCTIONS)
     # the startup schema step agrees: both branches at head, and a disabled deployment that
     # keeps the assess schema is still accepted

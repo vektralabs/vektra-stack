@@ -622,6 +622,21 @@ CREATE FUNCTION public.assess_snapshots_immutable() RETURNS trigger
 
 ALTER FUNCTION public.assess_snapshots_immutable() OWNER TO <owner>;
 
+CREATE FUNCTION public.assess_transcript_job_states(p_sids uuid[]) RETURNS TABLE(session_id uuid, state text)
+    LANGUAGE sql STABLE SECURITY DEFINER
+    SET search_path TO 'pg_catalog', 'pg_temp'
+    AS $$
+        SELECT DISTINCT ON (s.id) s.id, j.state
+        FROM public.assess_sessions s
+        JOIN public.assess_jobs j ON j.kind = 'transcript_generate'
+         AND j.args->>'session_id' = s.id::text
+        WHERE s.site_id = NULLIF(pg_catalog.current_setting('app.assess_site_id', true), '')::uuid
+          AND s.id = ANY(p_sids)
+        ORDER BY s.id, j.id DESC
+    $$;
+
+ALTER FUNCTION public.assess_transcript_job_states(p_sids uuid[]) OWNER TO vektra_assess_definer;
+
 CREATE FUNCTION public.assess_transcript_site(p_tid uuid) RETURNS uuid
     LANGUAGE sql STABLE SECURITY DEFINER
     SET search_path TO 'pg_catalog', 'pg_temp'
@@ -1804,6 +1819,8 @@ CREATE INDEX ix_assess_purge_records_subject ON public.assess_purge_records USIN
 
 CREATE INDEX ix_assess_purge_records_transcript ON public.assess_purge_records USING btree (transcript_id) WHERE (transcript_id IS NOT NULL);
 
+CREATE INDEX ix_assess_render_checks_subject ON public.assess_render_checks USING btree (site_id, student_userid, cmid);
+
 CREATE INDEX ix_assess_setup_check_reports_site ON public.assess_setup_check_reports USING btree (site_id, created_at DESC);
 
 CREATE INDEX ix_assess_start_attempts_student ON public.assess_start_attempts USING btree (site_id, student_userid, cmid, created_at);
@@ -1811,6 +1828,8 @@ CREATE INDEX ix_assess_start_attempts_student ON public.assess_start_attempts US
 CREATE INDEX ix_assess_terminations_activity ON public.assess_terminations USING btree (site_id, cmid);
 
 CREATE INDEX ix_assess_token_jti_expires ON public.assess_token_jti USING btree (expires_at);
+
+CREATE INDEX ix_assess_token_jti_subject ON public.assess_token_jti USING btree (site_id, student_userid, cmid);
 
 CREATE INDEX ix_assess_transcripts_generated_live ON public.assess_transcripts USING btree (generated_at) WHERE (ciphertext IS NOT NULL);
 
@@ -2237,6 +2256,9 @@ REVOKE ALL ON FUNCTION public.assess_sessions_require_opening_turn() FROM PUBLIC
 
 REVOKE ALL ON FUNCTION public.assess_site_of_key(p_key_id uuid, p_purpose text) FROM PUBLIC;
 GRANT ALL ON FUNCTION public.assess_site_of_key(p_key_id uuid, p_purpose text) TO vektra_assess_api;
+
+REVOKE ALL ON FUNCTION public.assess_transcript_job_states(p_sids uuid[]) FROM PUBLIC;
+GRANT ALL ON FUNCTION public.assess_transcript_job_states(p_sids uuid[]) TO vektra_assess_api;
 
 REVOKE ALL ON FUNCTION public.assess_transcript_site(p_tid uuid) FROM PUBLIC;
 GRANT ALL ON FUNCTION public.assess_transcript_site(p_tid uuid) TO vektra_assess_api;

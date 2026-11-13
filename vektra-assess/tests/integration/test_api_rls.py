@@ -449,6 +449,53 @@ async def test_through_a_route_a_missing_predicate_reads_the_key_site_only(
         assert both[0][0] == 2
 
 
+async def test_the_transcript_job_states_answer_for_the_bound_site_only(pg: Pg) -> None:
+    """``assess_transcript_job_states`` (a0004, #215) takes no site: it answers for the site the
+    transaction is bound to, so a site-A request naming site B's session learns nothing of it,
+    and an unbound call learns nothing at all."""
+    a, b, sid_a, sid_b = await _two_sites(pg)
+    for sid in (sid_a, sid_b):
+        await pg.run(
+            "super",
+            "INSERT INTO assess_jobs (kind, args, dedupe_key, state) VALUES "
+            "('transcript_generate', jsonb_build_object('session_id', CAST(:s AS text)), "
+            ":k, 'dead')",
+            {"s": str(sid), "k": f"transcript_generate:{sid}:{uuid.uuid4().hex}"},
+        )
+    sql = "SELECT session_id, state FROM assess_transcript_job_states(:sids)"
+    both = [sid_a, sid_b]
+    assert [tuple(r) for r in await _as_api(pg, a, sql, sids=both)] == [(sid_a, "dead")]
+    assert [tuple(r) for r in await _as_api(pg, b, sql, sids=both)] == [(sid_b, "dead")]
+    assert await _as_api(pg, None, sql, sids=both) == []
+
+
+async def test_the_subject_activities_route_lists_the_key_site_only(pg: Pg) -> None:
+    """``GET /privacy/subjects/{userid}/activities`` (#215) under RLS: the export key's site is
+    bound, the same user id's rows in another site never appear, and every read ran bound (the
+    runtime binding guard saw nothing unbound)."""
+    async with world(pg) as w:
+        for name, site in (("export", w.site), ("export_b", w.other_site)):
+            info = await make_key(pg, ["assess:privacy-export"], site, "privacy-export")
+            w.app.state.registry.get("key_store", "default").table[name] = info
+        user = 880_050
+        for site, cmid in ((w.site, 774_001), (w.other_site, 774_002)):
+            await pg.run(
+                "super",
+                "INSERT INTO assess_extra_time (site_id, cmid, student_userid, extra_seconds) "
+                "VALUES (:s, :c, :u, 300)",
+                {"s": site, "c": cmid, "u": user},
+            )
+        guard = w.extra["binding_guard"]
+        guard.take()
+        for key, want in (("export", [774_001]), ("export_b", [774_002])):
+            r = await w.client.get(
+                f"/api/v1/assess/privacy/subjects/{user}/activities", headers=auth(key)
+            )
+            assert r.status_code == 200, r.text
+            assert [i["cmid"] for i in r.json()["items"]] == want
+        assert guard.take() == []
+
+
 async def test_binding_a_second_site_in_one_request_is_refused(pg: Pg) -> None:
     """One request, one site: rebinding to another site is a programming error, never a
     silent switch."""

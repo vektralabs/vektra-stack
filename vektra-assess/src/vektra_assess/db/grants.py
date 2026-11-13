@@ -500,6 +500,9 @@ FUNCTIONS: Mapping[str, tuple[str, ...]] = {
     # the session gate: whether a sid the bound read cannot see exists in another site (the
     # ownership-mismatch audit), one boolean
     "assess_session_exists(uuid)": (API,),
+    # revision a0004 (#215): the subject export says why a closed session's turns are missing
+    # (its transcript job pending or failed); the API reads no job row itself
+    "assess_transcript_job_states(uuid[])": (API,),
 }
 
 

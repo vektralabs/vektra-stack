@@ -241,6 +241,24 @@ no log files fails rather than passing.
 
 - OQ-020 (DPO): retention value, legal basis, notice text, erasure mode and REQ-092 approval are
   inputs; the mechanism ships fail closed until they are set. Blocker for pilot, not for build.
+- **Open DPO question (OQ-020), 2026-11-13:** are the texts and identities a teacher enters
+  (a reset's reason, a teacher note on a turn, the grader recorded as having granted extra time)
+  the student's personal data to export? `GET /privacy/subjects/{userid}/activities` (plugin
+  request, CodeRabbit on the plugin's PR #9) leaves them out until the DPO decides. It exports
+  the sessions (a transcript id, or the decrypted turns of a live session), resets, extra time,
+  purged-session counts and per-table counts of the technical rows. The activity set and the
+  projection are `privacy.subject` (`SUBJECT_TABLES`, `SUBJECT_EXPORT`); a schema-scan test
+  (`integration/test_privacy_subject_activities.py`) fails on a subject table nobody declared.
+  Turns carry no `created_at` (the API's material function does not return it).
+- **Open point (OQ-020, and the erasure), 2026-11-13:** a session closed without a transcript
+  exports `turns: null` with `turns_unavailable` (`transcript_pending`, `transcript_failed`,
+  `transcript_purged`, `transcript_missing`; the job state comes from the definer function
+  `assess_transcript_job_states`, revision a0004). The API holds no key to a closed session's
+  turns (`assess_kek` is the worker's, ADR-0031), so in the pending window and after a failed
+  generation its content cannot be exported; an erasure of that subject in the meantime deletes
+  content the DPO could not export first. Coordinator's decision 2026-11-13: make the gap
+  explicit, no KEK in the API. **Possible follow-up:** a worker-side export job (the API queues
+  it and waits, as the erasure does; the worker decrypts with `assess_kek`).
 - OQ-033: erasure default implemented; `retain_exam_evidence` mode exists so the DPO decision is a
   setting, not a code change.
 - Drift / risk: crypto-shredding vs backups (see Design Notes) — ARCH-079's claim is conditional on

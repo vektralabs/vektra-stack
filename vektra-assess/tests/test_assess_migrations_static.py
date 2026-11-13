@@ -41,6 +41,7 @@ def test_one_base_revision_on_the_assess_branch() -> None:
         "a0001_assess_base.py",
         "a0002_assess_api_rls.py",  # ADR-0033 D9.2: RLS for the API role
         "a0003_assess_erasure_alerts.py",  # OQ-033: the overdue-erasure alert marker
+        "a0004_assess_subject_indexes.py",  # the subject export's per-subject reads
     ]
     mod = _load(revs[0], "assess_base")
     assert mod.revision == "a0001"

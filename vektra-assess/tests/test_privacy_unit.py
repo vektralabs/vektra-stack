@@ -198,6 +198,9 @@ PRIVACY_ROUTES = {
     ("/api/v1/assess/privacy/subjects/{userid}/transcripts", "GET"): (
         "require_exact_scope_assess:privacy-export"
     ),
+    ("/api/v1/assess/privacy/subjects/{userid}/activities", "GET"): (
+        "require_exact_scope_assess:privacy-export"
+    ),
     ("/api/v1/assess/privacy/activities/{cmid}/subjects", "GET"): (
         "require_exact_scope_assess:privacy-export"
     ),
@@ -225,6 +228,28 @@ def test_every_privacy_route_requires_exactly_its_scope() -> None:
     assert set(found) == set(PRIVACY_ROUTES)
     for key, scope in PRIVACY_ROUTES.items():
         assert found[key] == [scope], key
+
+
+def test_every_subject_table_declares_its_export() -> None:
+    """Findings 2+3 (#215): a table the erasure deletes cannot ship without saying how the
+    subject export shows it (detail columns, or a count)."""
+    from vektra_assess.privacy import subject
+
+    assert set(subject.SUBJECT_EXPORT) == set(subject.SUBJECT_TABLES)
+    for table, how in subject.SUBJECT_EXPORT.items():
+        assert isinstance(how, subject.Detail | subject.Count), table
+        q = subject.export_query(table)
+        assert q.startswith("SELECT cmid, ") and f"FROM {table} " in q
+        assert "student_userid = :u" in q and "cmid = ANY(:c)" in q
+    # no free text: the reset reason and the grader's identity stay out (OQ-020)
+    exported = {
+        col
+        for how in subject.SUBJECT_EXPORT.values()
+        if isinstance(how, subject.Detail)
+        for col, _ in how.columns
+    }
+    assert not exported & {"reason_ct", "reason_kid", "granted_by"}
+    assert not set(subject.EXPORT_EXCLUDED) & set(subject.SUBJECT_TABLES)
 
 
 def test_activity_erasure_body_is_strict() -> None:

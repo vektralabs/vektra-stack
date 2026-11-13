@@ -18,6 +18,13 @@
     REQ-093 (b): the subject's transcripts of this site, whatever the enrolment or course access
     now, as the exact bytes the in-course download serves (base64, with their SHA-256), at most
     ``EXPORT_PAGE`` per page, the cursor in ``X-Assess-Cursor``. Audited with counts only.
+``GET /api/v1/assess/privacy/subjects/{userid}/activities`` (exact ``assess:privacy-export``)
+    Every activity of this site where the subject has any row the subject erasure deletes
+    (``privacy.subject.SUBJECT_TABLES``, the erasure's own list), with its sessions (number,
+    state, close reason, times), resets (after which session, when) and extra time: the plugin's
+    ``get_contexts_for_userid`` and the export of what has no transcript. Ids, states, codes and
+    times only: no reset reason, no teacher note. ``EXPORT_PAGE`` activities per page, the cmid
+    cursor in ``X-Assess-Cursor``. Audited with counts only.
 ``GET /api/v1/assess/privacy/activities/{cmid}/subjects`` (exact ``assess:privacy-export``)
     The user ids with any assess row for that activity of this site (the plugin's
     ``get_users_in_context``).
@@ -47,7 +54,8 @@ from vektra_assess.api.common import (
     read_capped_body,
     site_of_key,
 )
-from vektra_assess.api.deps import settings_of
+from vektra_assess.api.deps import dek_cache_of, handoff_private_of, settings_of
+from vektra_assess.api.material import MaterialUnavailable, load_material
 from vektra_assess.api.site_binding import bind_site
 from vektra_assess.api.state import limiter_of
 from vektra_assess.api.teachers import ascii_id, header_int, path_id
@@ -63,6 +71,7 @@ from vektra_assess.errors import (
 )
 from vektra_assess.jobs import JobKind, enqueue_job
 from vektra_assess.privacy import config as privacy_config
+from vektra_assess.privacy import subject
 from vektra_assess.privacy.subject import ACTIVITY_SUBJECTS, subject_ref
 from vektra_assess.transcript import store
 from vektra_shared.auth import ApiKeyInfo, require_exact_scope
@@ -472,7 +481,12 @@ async def export_subject(
             AssessAuditEvent.PRIVACY_EXPORT,
             actor="api",
             site_id=site,
-            data={"transcripts": len(items), "page_more": more, "key_id": key.key_id},
+            data={
+                "kind": "transcripts",
+                "transcripts": len(items),
+                "page_more": more,
+                "key_id": key.key_id,
+            },
         )
     return JSONResponse(
         content={
@@ -483,6 +497,222 @@ async def export_subject(
     )
 
 
+#: the session fields the export needs besides the declared ones: the transcript (if any), the
+#: epoch a live session's material is read at, the course hint
+_ACT_SESSION_EXTRA = text(
+    "SELECT s.cmid, s.session_no, s.id, s.epoch, s.courseid_hint, t.id AS transcript_id "
+    "FROM assess_sessions s LEFT JOIN assess_transcripts t ON t.session_id = s.id "
+    "AND t.ciphertext IS NOT NULL AND t.shredded_at IS NULL "
+    "WHERE s.site_id = :s AND s.student_userid = :u AND s.cmid = ANY(:c) "
+    "ORDER BY s.cmid, s.session_no"
+)
+#: the course of an activity with no session hint: the latest mint's hint
+_ACT_MINT_COURSE = text(
+    "SELECT DISTINCT ON (cmid) cmid, courseid_hint FROM assess_token_jti WHERE site_id = :s "
+    "AND student_userid = :u AND cmid = ANY(:c) AND courseid_hint IS NOT NULL "
+    "ORDER BY cmid, minted_at DESC"
+)
+#: why a closed session's turns are not in the export (``turns_unavailable``), from what exists:
+#: its ``transcript_generate`` job queued or running, or ended failed / dead; a retention
+#: tombstone (the content was purged); otherwise no job and no transcript
+TRANSCRIPT_PENDING = "transcript_pending"
+TRANSCRIPT_FAILED = "transcript_failed"
+TRANSCRIPT_PURGED = "transcript_purged"
+TRANSCRIPT_MISSING = "transcript_missing"
+_JOB_REASON = {
+    "ready": TRANSCRIPT_PENDING,
+    "leased": TRANSCRIPT_PENDING,
+    "failed": TRANSCRIPT_FAILED,
+    "dead": TRANSCRIPT_FAILED,
+}
+#: the API cannot read ``assess_jobs``: a definer function answers one state per session (a0004)
+_JOB_STATES = text("SELECT session_id, state FROM assess_transcript_job_states(:sids)")
+_PURGED_SESSIONS = text(
+    "SELECT DISTINCT session_id FROM assess_purge_records WHERE site_id = :s "
+    "AND session_id = ANY(:sids)"
+)
+
+
+async def _why_missing(
+    conn: Any, site: Any, missing: dict[UUID, dict[str, Any]]
+) -> None:
+    sids = list(missing)
+    purged = {
+        r[0] for r in (await conn.execute(_PURGED_SESSIONS, {"s": site, "sids": sids}))
+    }
+    states = {
+        r.session_id: str(r.state)
+        for r in (await conn.execute(_JOB_STATES, {"sids": sids})).all()
+    }
+    for sid, session in missing.items():
+        if sid in purged:
+            session["turns_unavailable"] = TRANSCRIPT_PURGED
+        else:
+            session["turns_unavailable"] = _JOB_REASON.get(
+                states.get(sid, ""), TRANSCRIPT_MISSING
+            )
+
+
+#: one page is read in one snapshot: every table agrees with the others
+_PAGE_SNAPSHOT = {"isolation_level": "REPEATABLE READ", "postgresql_readonly": True}
+
+
+def _cursor_int(request: Request) -> int:
+    """An integer ``X-Assess-Cursor`` (a cmid or a user id), 0 when absent; 400 when malformed."""
+    after = header_int(request, "X-Assess-Cursor") or 0
+    if request.headers.get("X-Assess-Cursor") and not after:
+        raise fail(bad_request("cursor"))
+    return after
+
+
+def _value(v: Any) -> Any:
+    return iso_time(v) if hasattr(v, "isoformat") else v
+
+
+def _empty_item(cmid: int) -> dict[str, Any]:
+    item: dict[str, Any] = {"cmid": cmid, "course_id": None}
+    for how in subject.SUBJECT_EXPORT.values():
+        if isinstance(how, subject.Detail):
+            if how.into is None:
+                item.update(how.defaults)
+            else:
+                item[how.into] = []
+    item["purged_sessions"] = 0
+    item["technical_records"] = {
+        t: 0
+        for t, how in subject.SUBJECT_EXPORT.items()
+        if isinstance(how, subject.Count)
+    }
+    return item
+
+
+async def _live_turns(request: Request, conn: Any, sid: UUID, epoch: int) -> Any:
+    """A live session's turns, decrypted through the API's one material path; ``None`` when the
+    session is no longer live at that epoch (closed meanwhile: its transcript will carry them)."""
+    try:
+        material = await load_material(
+            conn, sid, epoch, handoff_private_of(request), dek_cache_of(request)
+        )
+    except MaterialUnavailable:
+        return None
+    return [
+        {
+            "turn_no": t.turn_no,
+            "role": t.role,
+            "kind": t.kind,
+            "text": material.text_of(t),
+        }
+        for t in material.turns
+    ]
+
+
+@router.get("/privacy/subjects/{userid}/activities")
+async def subject_activities(
+    userid: str, request: Request, key: ApiKeyInfo = Depends(_export)
+) -> JSONResponse:
+    user = path_id(userid, "userid")
+    after = _cursor_int(request)
+    _limit(request, key)
+    engine = engine_of(request)
+    async with engine.connect() as raw:
+        conn = await raw.execution_options(**_PAGE_SNAPSHOT)
+        async with conn.begin():
+            site = await site_of_key(conn, key, "privacy-export")
+            params: dict[str, Any] = {
+                "s": site,
+                "u": user,
+                "ref": subject_ref(site, user),
+            }
+            cmids = [
+                int(c)
+                for c in (
+                    await conn.execute(
+                        subject.SUBJECT_ACTIVITIES,
+                        {**params, "after": after, "n": EXPORT_PAGE + 1},
+                    )
+                ).scalars()
+            ]
+            more = len(cmids) > EXPORT_PAGE
+            cmids = cmids[:EXPORT_PAGE]
+            items = {c: _empty_item(c) for c in cmids}
+            if cmids:
+                params["c"] = cmids
+                await _fill_page(request, conn, params, items)
+    async with engine.begin() as conn:
+        await site_of_key(conn, key, "privacy-export")
+        await write_event(
+            conn,
+            AssessAuditEvent.PRIVACY_EXPORT,
+            actor="api",
+            site_id=site,
+            data={
+                "kind": "activities",
+                "activities": len(cmids),
+                "page_more": more,
+                "key_id": key.key_id,
+            },
+        )
+    return JSONResponse(
+        content={
+            "items": [items[c] for c in cmids],
+            "next_cursor": str(cmids[-1]) if more and cmids else None,
+        },
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+async def _fill_page(
+    request: Request,
+    conn: Any,
+    params: dict[str, Any],
+    items: dict[int, dict[str, Any]],
+) -> None:
+    """Every declared table of ``subject.SUBJECT_EXPORT`` for the page's activities, then the
+    sessions' transcripts or live turns, the course and the tombstones."""
+    for table, how in subject.SUBJECT_EXPORT.items():
+        rows = (await conn.execute(text(subject.export_query(table)), params)).all()
+        for row in rows:
+            item = items[int(row.cmid)]
+            if isinstance(how, subject.Count):
+                item["technical_records"][table] = int(row.n)
+                continue
+            values = {name: _value(getattr(row, col)) for col, name in how.columns}
+            if how.into is None:
+                item.update(values)
+            else:
+                item[how.into].append(values)
+    missing: dict[UUID, dict[str, Any]] = {}
+    for row in (await conn.execute(_ACT_SESSION_EXTRA, params)).all():
+        item = items[int(row.cmid)]
+        session = next(
+            x for x in item["sessions"] if x["session_no"] == int(row.session_no)
+        )
+        if row.courseid_hint is not None:
+            item["course_id"] = int(row.courseid_hint)  # the latest session's hint wins
+        if row.transcript_id is not None:
+            # its content is the transcript: GET /privacy/subjects/{userid}/transcripts
+            session["transcript_id"] = str(row.transcript_id)
+        elif session["state"] in ("ACTIVE", "OUTAGE"):
+            session["turns"] = await _live_turns(request, conn, row.id, int(row.epoch))
+            if session["turns"] is None:  # closed after the page's snapshot
+                session["turns_unavailable"] = TRANSCRIPT_PENDING
+        elif session["state"] == "STARTING":
+            session["turns"] = []  # nothing written yet
+        else:
+            # closed without a transcript: the API holds no key to its turns (ADR-0031), so
+            # the export says why they are missing
+            session["turns"] = None
+            missing[row.id] = session
+    if missing:
+        await _why_missing(conn, params["s"], missing)
+    for row in (await conn.execute(_ACT_MINT_COURSE, params)).all():
+        item = items[int(row.cmid)]
+        if item["course_id"] is None:
+            item["course_id"] = int(row.courseid_hint)
+    for row in (await conn.execute(subject.SUBJECT_PURGED, params)).all():
+        items[int(row.cmid)]["purged_sessions"] = int(row.n)
+
+
 SUBJECTS_PAGE = 500
 
 
@@ -491,9 +721,7 @@ async def activity_subjects(
     cmid: str, request: Request, key: ApiKeyInfo = Depends(_export)
 ) -> JSONResponse:
     activity = path_id(cmid, "cmid")
-    after = header_int(request, "X-Assess-Cursor") or 0
-    if request.headers.get("X-Assess-Cursor") and not after:
-        raise fail(bad_request("cursor"))
+    after = _cursor_int(request)
     _limit(request, key)
     async with engine_of(request).begin() as conn:
         site = await site_of_key(conn, key, "privacy-export")

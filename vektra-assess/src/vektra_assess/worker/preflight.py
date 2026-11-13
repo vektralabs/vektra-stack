@@ -211,10 +211,17 @@ class _AmbiguousCommit(Exception):
 
 
 class _Rollback(Exception):
-    def __init__(self, reason: str, extra: AssessAuditEvent | None = None) -> None:
+    def __init__(
+        self,
+        reason: str,
+        extra: AssessAuditEvent | None = None,
+        data: dict[str, str | int] | None = None,
+    ) -> None:
         super().__init__(reason)
         self.reason = reason
         self.extra = extra
+        #: codes added to the ``assess_start_rollback`` audit data (e.g. the outage ``cause``)
+        self.data = data
 
 
 # --- SQL -------------------------------------------------------------------------------------
@@ -312,12 +319,14 @@ async def rollback_start(
     actor: str = "worker",
     extra: AssessAuditEvent | None = None,
     limits: StartLimits | None = None,
+    data: dict[str, str | int] | None = None,
 ) -> bool:
     """Delete a STARTING session and everything under it, in the CALLER's transaction.
 
     Returns False when there was nothing to roll back (already committed, already rolled back).
     Raises ``RollbackLeftovers`` if any session, snapshot, key, turn or hand-off row survives the
-    delete (verified by count, never assumed from the cascade).
+    delete (verified by count, never assumed from the cascade). ``data`` (content-free codes)
+    is added to the ``assess_start_rollback`` event's data, not to ``extra``'s.
     """
     row = (await conn.execute(_DELETE, {"sid": session_id})).first()
     if row is None:
@@ -348,6 +357,12 @@ async def rollback_start(
     for event in (AssessAuditEvent.START_ROLLBACK, extra):
         if event is None:
             continue
+        payload: dict[str, str | int] = {
+            "cmid": int(row.cmid),
+            "session_no": int(row.session_no),
+        }
+        if event is AssessAuditEvent.START_ROLLBACK and data:
+            payload = {**data, **payload}
         await write_event(
             conn,
             event,
@@ -355,7 +370,7 @@ async def rollback_start(
             site_id=row.site_id,
             session_id=session_id,
             reason_code=reason,
-            data={"cmid": int(row.cmid), "session_no": int(row.session_no)},
+            data=payload,
         )
     return True
 
@@ -366,16 +381,19 @@ async def _rollback(
     reason: str,
     extra: AssessAuditEvent | None = None,
     limits: StartLimits | None = None,
+    data: dict[str, str | int] | None = None,
 ) -> None:
     async with acquire() as conn:
         async with conn.begin():
             done = await rollback_start(
-                conn, session_id, reason, extra=extra, limits=limits
+                conn, session_id, reason, extra=extra, limits=limits, data=data
             )
+    # ``reason_code``, the allowlisted key (vektra_shared.log_safety): a bare ``reason`` is not
+    # on the allowlist and was logged as "[dropped]". The value is a closed ``Reason`` / gate code
     log.info(
         "assess_preflight_rolled_back",
         session_id=str(session_id),
-        reason=reason,
+        reason_code=reason,
         deleted=done,
     )
 
@@ -669,7 +687,7 @@ def make_preflight_handler(
         try:
             await _run(deps, ctx.acquire, sid)
         except _Rollback as rb:
-            await _rollback(ctx.acquire, sid, rb.reason, rb.extra, limits)
+            await _rollback(ctx.acquire, sid, rb.reason, rb.extra, limits, rb.data)
         except _AmbiguousCommit:
             await _resolve_ambiguous(ctx.acquire, sid, limits)
         except asyncio.CancelledError:
@@ -683,6 +701,31 @@ def make_preflight_handler(
     return handle
 
 
+def _log_part_b_outage(
+    deps: PreflightDeps,
+    sid: UUID,
+    exc: ProviderOutageError,
+    remaining_s: float | None,
+    spent_s: float | None,
+) -> None:
+    """One content-free line on why the opening call failed: the closed cause code, the
+    exception's TYPE name and HTTP status (never its message: it can echo the prompt), the
+    failed call's timings, the budget that expired, and the Part B generation it ended.
+
+    ``max_tokens_exhausted`` (a reasoning model spent the whole completion budget before any
+    text) is a configuration problem, not an outage: the line names the configured max_tokens
+    and a closed remediation code (raise ``VEKTRA_ASSESS_LLM_MAX_TOKENS``, or lower the
+    reasoning effort through ``VEKTRA_ASSESS_LLM_EXTRA_BODY``)."""
+    log.warning(
+        "assess_preflight_provider_outage",
+        session_id=str(sid),
+        **exc.log_fields(deps.settings.llm_max_tokens),
+        part_b_ms=None if spent_s is None else int(spent_s * 1000),
+        remaining_s=None if remaining_s is None else round(remaining_s, 1),
+        timeout_s=deps.settings.outage_timeout_s,
+    )
+
+
 async def _run(deps: PreflightDeps, acquire: AcquireDb, sid: UUID) -> None:
     t_load = deps.clock()
     admitted = await _admit(deps, acquire, sid)
@@ -694,6 +737,8 @@ async def _run(deps: PreflightDeps, acquire: AcquireDb, sid: UUID) -> None:
     # future): one second less keeps the record never newer than the observation, and never
     # newer than a re-check written right after the commit
     observed_at = db.now - 1
+    remaining: float | None = None  # the Part B budget, once it is computed
+    t_part_b: float | None = None
     try:
         facts: LmsGateFacts = await _within(
             deps.source.gate_facts(target), _remaining(deps, elapsed, t_load)
@@ -724,6 +769,7 @@ async def _run(deps: PreflightDeps, acquire: AcquireDb, sid: UUID) -> None:
         )
         part_a = render_part_a(bundle, session_facts).text
         remaining = _remaining(deps, elapsed, t_load)
+        t_part_b = deps.clock()
         part_b: TurnResult = await _within(
             deps.runner.run_part_b(bundle, remaining_s=remaining), remaining
         )
@@ -732,8 +778,12 @@ async def _run(deps: PreflightDeps, acquire: AcquireDb, sid: UUID) -> None:
         raise
     except PartBRejectedError:
         raise _Rollback(Reason.PART_B_REJECTED) from None
-    except ProviderOutageError:
-        raise _Rollback(Reason.PROVIDER_UNAVAILABLE) from None
+    except ProviderOutageError as exc:
+        spent = None if t_part_b is None else deps.clock() - t_part_b
+        _log_part_b_outage(deps, sid, exc, remaining, spent)
+        raise _Rollback(
+            Reason.PROVIDER_UNAVAILABLE, data={"cause": exc.cause}
+        ) from None
     except RagNotAvailableError:
         raise _Rollback(Reason.RAG_NOT_AVAILABLE) from None
     except Exception as exc:  # any other server-side failure rolls back, by type only

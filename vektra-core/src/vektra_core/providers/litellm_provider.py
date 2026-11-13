@@ -112,7 +112,10 @@ class LitellmProvider:
             content = (delta.content or "") if delta else ""
             finish = chunk.choices[0].finish_reason
             yield CompletionChunk(
-                content=content, done=finish is not None, model=resolved_model
+                content=content,
+                done=finish is not None,
+                model=resolved_model,
+                finish_reason=finish if isinstance(finish, str) else None,
             )
 
     async def health_check(self) -> HealthStatus:

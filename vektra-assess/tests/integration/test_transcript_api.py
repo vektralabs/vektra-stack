@@ -456,3 +456,215 @@ async def test_a_transcript_key_not_loaded_is_503_and_keeps_the_token(
         assert r.status_code == 503 and err(r)["code"] == "ERR-ASSESS-001"
         w.app.state.assess_keys[store.KEYRING] = ring  # the key arrives
         assert (await download(w, s.session_id, token)).status_code == 200
+
+
+def _same_refusal(a, b) -> None:  # type: ignore[no-untyped-def]
+    """Two refusals a caller cannot tell apart: status and envelope, bar the request id."""
+    assert a.status_code == b.status_code == 404, (a.text, b.text)
+    ea = {k: v for k, v in err(a).items() if k != "request_id"}
+    eb = {k: v for k, v in err(b).items() if k != "request_id"}
+    assert ea == eb and ea["code"] == "ERR-ASSESS-017"
+
+
+async def resend(w, tid, key: str = "teacher", **body: Any):  # type: ignore[no-untyped-def]
+    return await w.client.post(
+        f"/api/v1/assess/transcripts/{tid}/resend", json=body, headers=auth(key)
+    )
+
+
+async def test_the_page_cmid_scopes_the_grader_routes(pg, worker) -> None:  # type: ignore[no-untyped-def]
+    """Plugin request: the plugin checks the capability on its PAGE's cmid, Vektra on the
+    transcript's activity. With ``cmid`` in the body, a transcript of another activity is
+    refused exactly as an unknown transcript (404 ERR-ASSESS-017, same envelope), audited;
+    the same activity passes; absent ``cmid`` is unchanged. Both grader routes, both keys."""
+    import uuid
+
+    async with world(pg) as w:
+        s, _ = await _ready(w, worker)
+        await _graders(
+            w, s
+        )  # 12 grades the transcript's activity: only the cmid can refuse
+        other = s.cmid + 1
+        unknown = uuid.uuid4()
+        audit_sql = (
+            "SELECT data FROM assess_audit_events WHERE event = "
+            "'assess_ownership_mismatch_rejected' AND session_id = :s AND reason_code = :r "
+            "ORDER BY id"
+        )
+
+        # download-token, grader path
+        same = await mint(w, s.session_id, key="teacher", actor_userid=12, cmid=s.cmid)
+        assert same.status_code == 201, same.text
+        absent = await mint(w, s.session_id, key="teacher", actor_userid=12)
+        assert absent.status_code == 201, absent.text
+        tokens_sql = (
+            "SELECT count(*) FROM assess_transcript_download_tokens "
+            "WHERE transcript_id = :t"
+        )
+        tokens_before = await count(pg, tokens_sql, t=s.session_id)
+        cross = await mint(w, s.session_id, key="teacher", actor_userid=12, cmid=other)
+        _same_refusal(
+            cross, await mint(w, unknown, key="teacher", actor_userid=12, cmid=other)
+        )
+        assert await count(pg, tokens_sql, t=s.session_id) == tokens_before
+        # the owner path takes it too, with the same refusal
+        assert (await mint(w, s.session_id, sub=s.sub, cmid=s.cmid)).status_code == 201
+        _same_refusal(
+            await mint(w, s.session_id, sub=s.sub, cmid=other),
+            await mint(w, unknown, sub=s.sub, cmid=other),
+        )
+        # audited with who asked and the cmid (review finding 5)
+        rows = [
+            r[0]
+            for r in await pg.run(
+                "super",
+                audit_sql,
+                {"s": s.session_id, "r": "transcript_download_token_cmid"},
+            )
+        ]
+        assert rows == [
+            {
+                "role": "grader",
+                "key_id": str(w.keys["teacher"].key_id),
+                "actor_userid": 12,
+                "cmid": other,
+            },
+            {
+                "role": "owner",
+                "key_id": str(w.keys["mint"].key_id),
+                "sub": s.sub,
+                "cmid": other,
+            },
+        ]
+
+        # resend, grader path
+        cross = await resend(w, s.session_id, actor_userid=12, cmid=other)
+        _same_refusal(cross, await resend(w, unknown, actor_userid=12, cmid=other))
+        rows = [
+            r[0]
+            for r in await pg.run(
+                "super", audit_sql, {"s": s.session_id, "r": "transcript_resend_cmid"}
+            )
+        ]
+        assert rows == [
+            {
+                "role": "grader",
+                "key_id": str(w.keys["teacher"].key_id),
+                "actor_userid": 12,
+                "cmid": other,
+            }
+        ]
+        assert (
+            await count(
+                pg,
+                "SELECT count(*) FROM assess_deliveries WHERE transcript_id = :t "
+                "AND round > 1",
+                t=s.session_id,
+            )
+            == 0
+        )
+        await _age_rounds(pg, s)
+        r = await resend(w, s.session_id, actor_userid=12, cmid=s.cmid)
+        assert r.status_code == 202 and r.json()["round"] == 2, r.text
+        await _age_rounds(pg, s)
+        r = await resend(w, s.session_id, actor_userid=12)  # absent: unchanged
+        assert r.status_code == 202 and r.json()["round"] == 3, r.text
+
+
+async def test_the_operator_resend_takes_no_cmid(pg, worker) -> None:  # type: ignore[no-untyped-def]
+    """Review: a cmid means something only within a site, and the admin key has none: the
+    operator's resend refuses the field as unknown, and works without it."""
+    async with world(pg) as w:
+        s, _ = await _ready(w, worker)
+        r = await resend(w, s.session_id, key="admin", cmid=s.cmid)
+        assert r.status_code == 400 and err(r)["code"] == "ERR-ASSESS-014", r.text
+        assert err(r)["details"]["reason"] == "extra_forbidden:cmid"
+        await _age_rounds(pg, s)
+        r = await resend(w, s.session_id, key="admin")
+        assert r.status_code == 202, r.text
+
+
+async def test_a_php_string_cmid_is_accepted(pg, worker) -> None:  # type: ignore[no-untyped-def]
+    """Review: the same lax integer as ``POST /tokens`` (PHP json_encode may send "501")."""
+    async with world(pg) as w:
+        s, _ = await _ready(w, worker)
+        await _graders(w, s)
+        r = await mint(
+            w, s.session_id, key="teacher", actor_userid=12, cmid=str(s.cmid)
+        )
+        assert r.status_code == 201, r.text
+        r = await mint(
+            w, s.session_id, key="teacher", actor_userid=12, cmid=str(s.cmid + 1)
+        )
+        assert r.status_code == 404, r.text
+
+
+async def test_a_purged_transcript_of_another_activity_is_unknown(pg, worker) -> None:  # type: ignore[no-untyped-def]
+    """Review: the owner of a purged transcript learns it expired (410) only from the page of
+    its own activity; from another activity's page it is unknown (404)."""
+    import uuid
+
+    from vektra_assess.privacy.subject import subject_ref
+
+    async with world(pg) as w:
+        s, _ = await _ready(w, worker)
+        for sql in (
+            "DELETE FROM assess_deliveries WHERE transcript_id = :t",
+            "DELETE FROM assess_transcript_download_tokens WHERE transcript_id = :t",
+            "DELETE FROM assess_transcripts WHERE id = :t",
+        ):
+            await pg.run("super", sql, {"t": s.session_id})
+        await pg.run(
+            "super",
+            "INSERT INTO assess_purge_records (site_id, subject_ref, session_id, "
+            "transcript_id, session_no, cmid, reason) VALUES (:s, :ref, :t, :t, 1, :c, "
+            "'retention')",
+            {
+                "s": w.site,
+                "ref": subject_ref(w.site, s.sub),
+                "t": s.session_id,
+                "c": s.cmid,
+            },
+        )
+        assert (await mint(w, s.session_id, sub=s.sub)).status_code == 410
+        assert (await mint(w, s.session_id, sub=s.sub, cmid=s.cmid)).status_code == 410
+        _same_refusal(
+            await mint(w, s.session_id, sub=s.sub, cmid=s.cmid + 1),
+            await mint(w, uuid.uuid4(), sub=s.sub, cmid=s.cmid + 1),
+        )
+
+
+async def test_a_grader_without_cmid_is_counted(pg, worker) -> None:  # type: ignore[no-untyped-def]
+    """Review: the opt-in gap stays visible until the plugin minimum makes cmid required on the
+    teacher path: a counter per route; the owner path and a cmid-carrying call do not count."""
+    from vektra_assess import metrics
+
+    async with world(pg) as w:
+        s, _ = await _ready(w, worker)
+        await _graders(w, s)
+        before = metrics.transcript_cmid_missing()
+        await mint(w, s.session_id, key="teacher", actor_userid=12)
+        await mint(w, s.session_id, key="teacher", actor_userid=12, cmid=s.cmid)
+        await mint(w, s.session_id, sub=s.sub)
+        await _age_rounds(pg, s)
+        await resend(w, s.session_id, actor_userid=12)
+        await _age_rounds(pg, s)
+        await resend(w, s.session_id, key="admin")
+        after = metrics.transcript_cmid_missing()
+        assert after["download_token"] - before["download_token"] == 1
+        assert after["resend"] - before["resend"] == 1
+
+
+@pytest.mark.parametrize("bad", [0, -1, "x", 1.5, 2**53, [1]])
+async def test_an_invalid_page_cmid_is_a_400(pg, worker, bad) -> None:  # type: ignore[no-untyped-def]
+    async with world(pg) as w:
+        s, _ = await _ready(w, worker)
+        await _graders(w, s)
+        r = await mint(w, s.session_id, key="teacher", actor_userid=12, cmid=bad)
+        assert r.status_code == 400 and err(r)["code"] == "ERR-ASSESS-014", r.text
+        reason = err(r)["details"]["reason"]
+        assert reason.endswith(":cmid") and not reason.startswith("extra_forbidden")
+        r = await resend(w, s.session_id, actor_userid=12, cmid=bad)
+        assert r.status_code == 400 and err(r)["code"] == "ERR-ASSESS-014", r.text
+        reason = err(r)["details"]["reason"]
+        assert reason.endswith(":cmid") and not reason.startswith("extra_forbidden")

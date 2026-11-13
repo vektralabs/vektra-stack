@@ -1,88 +1,181 @@
-"""The outage probe's call (REQ-086): a budget a reasoning model accepts, the deployment's
-extra body, and any completed answer counts as "up".
+"""The outage probe's call mirrors a discussion turn's (REQ-086).
 
-Bug of the first live run with a reasoning model: the probe asked for ``max_tokens=1``, which an
-OpenAI reasoning model refuses with a 400, so a session in OUTAGE could never recover.
+Bug of the first live run: the probe was a non-streamed ``max_tokens=1`` call, which an OpenAI
+reasoning model refuses (400), so an OUTAGE never ended. Review of #219: a fixed small budget is
+not the turn's either. The probe now sends what a turn sends (streamed, the turn's max_tokens,
+temperature and seed, through the same provider, so its extra body too), and stops at the first
+text or at completion.
 """
 
 from __future__ import annotations
 
+import asyncio
+from collections.abc import AsyncIterator
 from typing import Any
 
 import pytest
+from fakes import RecordingAuditSink as _Audit
+from fakes import RecordingSafeguard as Guard
+from fakes import RecordingTraceWriter as _Trace
+from fakes import TimedLLM
+from support.litellm_errors import litellm_error
+from test_llm_runner import _visible_bundle, settings
 
-from vektra_assess.worker.outage_probe import PROBE_MAX_TOKENS, make_llm_probe
-from vektra_shared.types import CompletionResponse
+from vektra_assess.llm import DiscussionTurnRunner, StudentTurn
+from vektra_assess.worker.outage_probe import make_llm_probe
+from vektra_shared.types import CompletionChunk
 
 
-class ReasoningLlm:
-    """Refuses a completion budget below ``floor`` like an OpenAI reasoning model (400), and
-    otherwise answers with no text and ``finish_reason=length``: the budget went on reasoning."""
+class TurnShapedLlm:
+    """A provider that accepts only a turn-shaped call: streamed (``complete`` is refused, as a
+    deployment may allow streaming only), and ``max_tokens`` at least ``floor`` (a reasoning
+    model refuses a budget too small for its reasoning). Answers with ``chunks``."""
 
-    def __init__(self, floor: int = 16) -> None:
+    def __init__(
+        self,
+        floor: int = 64,
+        chunks: tuple[tuple[str, str | None], ...] = (("", None), ("Ciao", None)),
+    ) -> None:
         self.floor = floor
+        self.chunks = chunks
         self.calls: list[dict[str, Any]] = []
-        self.temperatures: list[float] = []
+        self.read = 0
+        self.closed = False
 
-    async def complete(  # type: ignore[no-untyped-def]
+    async def complete(self, *a: Any, **kw: Any) -> Any:
+        raise litellm_error("BadRequestError", 400)
+
+    async def stream(  # type: ignore[no-untyped-def]
         self, messages, model, temperature=0.7, max_tokens=None, **kw
-    ) -> CompletionResponse:
-        self.temperatures.append(temperature)
-        self.calls.append({"model": model, "max_tokens": max_tokens, "kw": kw})
-        if max_tokens is not None and max_tokens < self.floor:
-            litellm = pytest.importorskip("litellm")
-            raise litellm.BadRequestError(
-                message="max_tokens too small", model=model, llm_provider="openai"
-            )
-        return CompletionResponse(
-            content="",
-            model=model,
-            prompt_tokens=1,
-            completion_tokens=max_tokens or 0,
-            total_tokens=1 + (max_tokens or 0),
+    ) -> AsyncIterator[CompletionChunk]:
+        self.calls.append(
+            {"model": model, "temperature": temperature, "max_tokens": max_tokens, **kw}
         )
+        if max_tokens is None or max_tokens < self.floor:
+            raise litellm_error("BadRequestError", 400)
+        outer = self
+
+        async def gen() -> AsyncIterator[CompletionChunk]:
+            try:
+                for content, finish in outer.chunks:
+                    outer.read += 1
+                    yield CompletionChunk(
+                        content=content, done=finish is not None, finish_reason=finish
+                    )
+            finally:
+                outer.closed = True
+
+        return gen()
 
 
-def test_the_probe_budget_is_small_but_not_one() -> None:
-    # 64 is the floor of VEKTRA_ASSESS_LLM_MAX_TOKENS
-    assert 16 <= PROBE_MAX_TOKENS <= 64
+def _probe(llm: Any, **kw: Any) -> Any:
+    args = {"timeout_s": 1.0, "max_tokens": 600, "temperature": 0.2, "seed": None}
+    return make_llm_probe(llm, "openai/reasoner", **{**args, **kw})
 
 
-async def test_the_probe_succeeds_on_a_reasoning_model() -> None:
-    llm = ReasoningLlm(floor=16)
-    probe = make_llm_probe(llm, "openai/reasoner", timeout_s=1)
-    assert await probe() is True
-    (call,) = llm.calls
-    assert call["max_tokens"] == PROBE_MAX_TOKENS
+async def test_the_probe_streams_and_never_calls_complete() -> None:
+    llm = TurnShapedLlm()
+    assert await _probe(llm)() is True
+    assert len(llm.calls) == 1
 
 
-async def test_an_empty_length_cut_answer_means_up() -> None:
-    """Any completed response is the provider answering, even an empty one cut at the budget."""
-    probe = make_llm_probe(ReasoningLlm(floor=0), "openai/reasoner", timeout_s=1)
-    assert await probe() is True
+async def test_the_probe_sends_the_turn_budget_a_reasoning_model_needs() -> None:
+    """A provider that refuses any max_tokens below 600 answers the probe: its budget is the
+    turn's ``VEKTRA_ASSESS_LLM_MAX_TOKENS``, not a small constant."""
+    llm = TurnShapedLlm(floor=600)
+    assert await _probe(llm, max_tokens=600)() is True
+    with pytest.raises(Exception) as e:
+        await _probe(TurnShapedLlm(floor=600), max_tokens=599)()
+    assert (
+        type(e.value).__name__ == "BadRequestError"
+    )  # refused exactly as a turn would be
 
 
-async def test_the_budget_never_exceeds_the_configured_max_tokens() -> None:
-    llm = ReasoningLlm(floor=0)
-    probe = make_llm_probe(llm, "m", timeout_s=1, llm_max_tokens=20)
-    await probe()
-    assert llm.calls[0]["max_tokens"] == 20
-    llm.calls.clear()
-    await make_llm_probe(llm, "m", timeout_s=1, llm_max_tokens=600)()
-    assert llm.calls[0]["max_tokens"] == PROBE_MAX_TOKENS
+async def test_the_seed_and_temperature_reach_the_call() -> None:
+    llm = TurnShapedLlm()
+    await _probe(llm, seed=7, temperature=1.0)()
+    assert llm.calls == [
+        {"model": "openai/reasoner", "temperature": 1.0, "max_tokens": 600, "seed": 7}
+    ]
+    llm = TurnShapedLlm()
+    await _probe(llm, seed=None)()
+    assert "seed" not in llm.calls[0]
 
 
-async def test_the_probe_sends_no_session_content_and_no_extra_kwargs() -> None:
-    """The extra body is the provider's own (``LitellmProvider`` base kwargs, the same path as
-    every discussion call): the probe adds nothing of its own on top."""
-    llm = ReasoningLlm(floor=0)
-    await make_llm_probe(llm, "m", timeout_s=1)()
-    assert llm.calls == [{"model": "m", "max_tokens": PROBE_MAX_TOKENS, "kw": {}}]
+async def test_the_probe_stops_at_the_first_text_and_closes_the_stream() -> None:
+    llm = TurnShapedLlm(
+        chunks=(("", None), ("Ciao", None), (" mondo", None), ("!", "stop"))
+    )
+    assert await _probe(llm)() is True
+    assert llm.read == 2 and llm.closed
 
 
-async def test_the_probe_uses_the_discussion_temperature() -> None:
-    """Some reasoning models accept only their own temperature: the probe sends the one the
-    discussion calls send, so it is refused exactly when they would be."""
-    llm = ReasoningLlm(floor=0)
-    await make_llm_probe(llm, "m", timeout_s=1, temperature=1.0)()
-    assert llm.temperatures == [1.0]
+async def test_a_stream_completed_with_no_text_means_up() -> None:
+    """A reasoning model that spent the budget on reasoning: empty chunks, finish "length"."""
+    llm = TurnShapedLlm(chunks=(("", None), (" ", None), ("", "length")))
+    assert await _probe(llm)() is True
+
+
+async def test_a_stream_with_no_first_text_in_time_is_a_failure() -> None:
+    class Slow(TurnShapedLlm):
+        async def stream(self, *a: Any, **kw: Any) -> AsyncIterator[CompletionChunk]:  # type: ignore[override]
+            async def gen() -> AsyncIterator[CompletionChunk]:
+                await asyncio.sleep(5)
+                yield CompletionChunk(content="tardi")
+
+            return gen()
+
+    with pytest.raises(TimeoutError):
+        await _probe(Slow(), timeout_s=0.05)()
+
+
+async def test_the_probe_call_is_the_turn_call() -> None:
+    """The same keyword arguments a real turn passes to ``stream``, from the same settings."""
+
+    class Recording(TimedLLM):
+        def __init__(self) -> None:
+            super().__init__([(0, "Bene. Quale scelta vuoi spiegare?")])
+            self.kwargs: list[dict[str, Any]] = []
+
+        async def stream(  # type: ignore[override]
+            self,
+            messages: Any,
+            model: str,
+            temperature: float = 0.7,
+            max_tokens: int | None = None,
+            **kw: Any,
+        ) -> AsyncIterator[CompletionChunk]:
+            self.kwargs.append(
+                {
+                    "model": model,
+                    "temperature": temperature,
+                    "max_tokens": max_tokens,
+                    **kw,
+                }
+            )
+            return await super().stream(messages, model, temperature, max_tokens, **kw)
+
+    s = settings(
+        VEKTRA_ASSESS_LLM_SEED=11,
+        VEKTRA_ASSESS_LLM_TEMPERATURE=0.7,
+        VEKTRA_ASSESS_OUTAGE_TIMEOUT_S=1.0,
+    )
+    turn_llm = Recording()
+    r = DiscussionTurnRunner(
+        llm=turn_llm,
+        safeguard=Guard(),
+        trace_writer=_Trace(),
+        settings=s,
+        audit=_Audit(),
+    )
+    await r.run(_visible_bundle(), StudentTurn("ciao", 0))
+    probe_llm = Recording()
+    await make_llm_probe(
+        probe_llm,
+        r.model,
+        timeout_s=1.0,
+        max_tokens=s.llm_max_tokens,
+        temperature=s.llm_temperature,
+        seed=s.llm_seed,
+    )()
+    assert probe_llm.kwargs == [turn_llm.kwargs[0]]

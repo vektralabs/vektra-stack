@@ -64,6 +64,18 @@ REFUSAL_CAUSES: frozenset[str] = frozenset(
     {"auth_error", "http_4xx", "budget_exceeded", "max_tokens_exhausted"}
 )
 
+RATE_LIMIT_STATUS = 429
+
+
+def is_config_refusal(cause: str, status: int | None) -> bool:
+    """The provider refusing the CONFIGURATION (the key, the model, a parameter), which only
+    the operator can fix: ``auth_error``, or an ``http_4xx`` that is not a 429. A 429 is a
+    refusal too, but a transient one (``RateLimitError`` always carries 429)."""
+    if cause == "auth_error":
+        return True
+    return cause == "http_4xx" and status != RATE_LIMIT_STATUS
+
+
 #: the closed remediation code of a spent max_tokens (docs/reference/configuration.md,
 #: "Reasoning models (assess)")
 MAX_TOKENS_REMEDIATION = "raise_llm_max_tokens_or_lower_reasoning_effort"
@@ -111,6 +123,11 @@ class ProviderOutageError(RuntimeError):
     def is_refusal(self) -> bool:
         """The provider answered (or the configuration is wrong): not an outage (REQ-086)."""
         return self.cause in REFUSAL_CAUSES
+
+    @property
+    def is_config_refusal(self) -> bool:
+        """A refusal of the configuration (``is_config_refusal``): the operator is alerted."""
+        return is_config_refusal(self.cause, self.record.status_code)
 
     @property
     def expired_budget(self) -> str | None:

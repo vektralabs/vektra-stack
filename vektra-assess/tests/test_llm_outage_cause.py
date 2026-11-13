@@ -19,6 +19,7 @@ import httpx
 import pytest
 import structlog
 from fakes import TimedLLM
+from support.litellm_errors import litellm_error
 from test_llm_runner import PART_B_OK, _timed_runner, _visible_bundle
 
 from vektra_assess.llm import ProviderOutageError, StudentTurn
@@ -166,15 +167,7 @@ def test_litellm_exceptions_map_as_expected() -> None:
 
 
 def _litellm_with_status(name: str, status: int) -> BaseException:
-    """A litellm refusal class carrying a ``response`` with ``status``, as litellm builds it when
-    it maps a client-side failure (no API key) through its OpenAI handler: the handler's own
-    error carries a synthetic 500 response, and the refusal class inherits that status."""
-    litellm = pytest.importorskip("litellm")
-    response = httpx.Response(
-        status, request=httpx.Request("POST", "https://provider.invalid/v1")
-    )
-    cls = getattr(litellm, name)
-    return cls(message=CANARY, model="m", llm_provider="openai", response=response)
+    return litellm_error(name, status, message=CANARY)
 
 
 #: litellm's refusal classes that take the status of the response they are given (its
@@ -262,6 +255,37 @@ async def test_a_turn_on_a_missing_key_is_a_refusal_not_an_outage() -> None:
     )
     assert err.record.error_class == "AuthenticationError"
     assert err.log_fields(600)["http_status"] is None
+    assert err.is_config_refusal
+
+
+@pytest.mark.parametrize(
+    ("name", "status", "config"),
+    [
+        ("AuthenticationError", 500, True),  # no key: the synthetic 500
+        ("AuthenticationError", 401, True),
+        ("PermissionDeniedError", 403, True),
+        ("BadRequestError", 400, True),
+        ("NotFoundError", 404, True),
+        ("UnprocessableEntityError", 422, True),
+        ("BadRequestError", 500, True),  # http_4xx with no genuine status
+        ("RateLimitError", 429, False),  # transient: a refusal, never a config alert
+    ],
+)
+def test_which_refusals_are_the_configuration(
+    name: str, status: int, config: bool
+) -> None:
+    from vektra_assess.llm.types import is_config_refusal
+
+    assert is_config_refusal(*outage_cause(litellm_error(name, status))) is config
+
+
+@pytest.mark.parametrize(
+    "cause", ["budget_exceeded", "max_tokens_exhausted", "http_5xx", "connection_error"]
+)
+def test_other_causes_are_not_config_refusals(cause: str) -> None:
+    from vektra_assess.llm.types import is_config_refusal
+
+    assert not is_config_refusal(cause, None)
 
 
 def test_an_exception_without_a_cause_on_its_record_is_classified_by_outcome() -> None:

@@ -19,6 +19,7 @@ from typing import Any
 import pytest
 from fakes import RecordingAuditSink, RecordingSafeguard, RecordingTraceWriter
 from sqlalchemy.ext.asyncio import create_async_engine
+from support.litellm_errors import litellm_error
 from support.sessions import seed_session
 from support.world import world
 
@@ -55,18 +56,7 @@ class _Response:
         self.status_code = status_code
 
 
-def _real_litellm(name: str, status: int) -> BaseException:
-    """litellm's own exception class, built as litellm builds it. With no API key configured,
-    litellm raises ``AuthenticationError`` carrying a synthetic 500 response."""
-    import httpx
-
-    litellm = pytest.importorskip("litellm")
-    response = httpx.Response(
-        status, request=httpx.Request("POST", "https://provider.invalid/v1")
-    )
-    return getattr(litellm, name)(
-        message="refused", model="m", llm_provider="openai", response=response
-    )
+_real_litellm = litellm_error
 
 
 class FaultLLM(RecordingLLMProvider):
@@ -175,7 +165,14 @@ class Rig:
             sid,
             token,
         )
-        self.probe = make_llm_probe(llm, "fault/model", timeout_s=TIMEOUT_S)
+        self.probe = make_llm_probe(
+            llm,
+            "fault/model",
+            timeout_s=TIMEOUT_S,
+            max_tokens=600,
+            temperature=0.2,
+            seed=None,
+        )
         self.pending = PendingTurnDriver(w.app, min_age_s=0)
 
     async def say(self, text: str = "Ho scelto quel metodo") -> None:
@@ -345,6 +342,32 @@ async def test_real_litellm_refusals_never_set_outage(
     assert line["reason_code"] == "provider_refused"
     assert (line["outage_cause"], line["http_status"]) == (cause, status)
     assert line["error_type"] == mode.split(":")[1]
+    # a configuration refusal alerts the operator once (review of #219, finding 2a); a 429 is
+    # transient and does not
+    alerts = await pg.run(
+        "super",
+        "SELECT args FROM assess_jobs WHERE kind = 'operator_notify' "
+        "AND args->>'kind' = 'provider_config_refused'",
+    )
+    if status == 429:
+        assert alerts == []
+    else:
+        ((args,),) = alerts
+        args = args if isinstance(args, dict) else json.loads(args)
+        assert args["reason"] == cause
+
+
+async def test_repeated_config_refusals_queue_one_alert(pg, worker) -> None:  # type: ignore[no-untyped-def]
+    async with rigged(pg, worker) as rig:
+        rig.llm.mode = "litellm:AuthenticationError:500"
+        for _ in range(3):
+            await rig.say()
+    alerts = await pg.run(
+        "super",
+        "SELECT args->>'reason' FROM assess_jobs WHERE kind = 'operator_notify' "
+        "AND args->>'kind' = 'provider_config_refused'",
+    )
+    assert [a[0] for a in alerts] == ["auth_error"]
 
 
 @pytest.mark.parametrize(

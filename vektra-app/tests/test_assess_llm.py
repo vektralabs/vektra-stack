@@ -631,3 +631,113 @@ def test_a_lazily_failing_presidio_is_caught_at_startup() -> None:
         build_assess_safeguard(_settings(), factory=lambda _m: LoadedPresidio()),
         LoadedPresidio,
     )
+
+
+# --- the model's API key at startup (review of #219, finding 2c) ----------------------------
+
+
+def _no_provider_keys(monkeypatch: pytest.MonkeyPatch) -> None:
+    import os
+
+    for name in list(os.environ):
+        if name.endswith("_API_KEY"):
+            monkeypatch.delenv(name, raising=False)
+
+
+@pytest.mark.parametrize(
+    ("over", "found", "outcome"),
+    [
+        # a cloud provider with no key and no custom base: refused
+        ({}, {"missing_keys": ["OPENAI_API_KEY"]}, "refused"),
+        # the key is set: litellm is not even asked
+        ({"VEKTRA_LLM_API_KEY": "sk-test"}, None, "ok"),
+        # a custom base (an on-prem OpenAI-compatible server may need no key): a warning
+        (
+            {"VEKTRA_ASSESS_LLM_API_BASE": "http://llm.invalid:8000/v1"},
+            {"missing_keys": ["OPENAI_API_KEY"]},
+            "warned",
+        ),
+        # a provider that needs no key (vLLM's hosted_vllm/, an unknown prefix)
+        ({}, {"missing_keys": []}, "ok"),
+        # non-key credentials (Ollama's base, AWS keys): detection not reliable, a warning
+        (
+            {},
+            {"missing_keys": ["AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"]},
+            "warned",
+        ),
+        # litellm itself fails: a warning, never a refusal
+        ({}, RuntimeError("no such provider"), "warned"),
+    ],
+)
+def test_the_key_check_refuses_only_where_detection_is_reliable(
+    monkeypatch: pytest.MonkeyPatch, over: dict[str, str], found: Any, outcome: str
+) -> None:
+    from vektra_app.assess_llm import check_model_credentials
+
+    _no_provider_keys(monkeypatch)
+    asked: list[dict[str, Any]] = []
+
+    def validate(**kw: Any) -> Any:
+        asked.append(kw)
+        if isinstance(found, Exception):
+            raise found
+        return found
+
+    settings = _settings(VEKTRA_ASSESS_LLM_MODEL="openai/gpt-x", **over)
+    if outcome == "refused":
+        with pytest.raises(StartupValidationError) as e:
+            check_model_credentials(settings, process="worker", validate=validate)
+        assert "VEKTRA_LLM_API_KEY" in e.value.remediation
+        assert "worker" in e.value.detail and "OPENAI_API_KEY" in e.value.detail
+        return
+    check_model_credentials(settings, process="API", validate=validate)
+    assert (asked == []) is (found is None)
+
+
+def test_the_real_litellm_check_refuses_an_openai_model_with_no_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from vektra_app.assess_llm import check_model_credentials
+
+    _no_provider_keys(monkeypatch)
+    with pytest.raises(StartupValidationError, match="VEKTRA_LLM_API_KEY"):
+        check_model_credentials(
+            _settings(VEKTRA_ASSESS_LLM_MODEL="openai/gpt-5-mini"), process="API"
+        )
+    # vLLM and Ollama need no key: never refused
+    for model in ("hosted_vllm/qwen", "ollama/x"):
+        check_model_credentials(_settings(VEKTRA_ASSESS_LLM_MODEL=model), process="API")
+
+
+async def test_step_13_refuses_an_api_with_no_model_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The live split: the worker had the key, the API process did not."""
+    from vektra_app.assess_llm import step_13_assess_llm_check
+
+    _no_provider_keys(monkeypatch)
+    monkeypatch.setenv("VEKTRA_ASSESS_ENABLED", "true")
+    monkeypatch.setenv("VEKTRA_ASSESS_LLM_MODEL", "openai/gpt-5-mini")
+    monkeypatch.delenv("VEKTRA_ASSESS_LLM_API_BASE", raising=False)
+    with pytest.raises(StartupValidationError) as e:
+        await step_13_assess_llm_check(_App(), safeguard_factory=lambda _m: _Real())
+    assert "VEKTRA_LLM_API_KEY" in e.value.remediation and "API" in e.value.detail
+
+
+async def test_the_worker_refuses_to_start_with_no_model_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from vektra_app import assess_worker
+
+    _no_provider_keys(monkeypatch)
+    monkeypatch.setenv("VEKTRA_ASSESS_ENABLED", "true")
+    monkeypatch.setenv("VEKTRA_ASSESS_LLM_MODEL", "openai/gpt-5-mini")
+    monkeypatch.delenv("VEKTRA_ASSESS_LLM_API_BASE", raising=False)
+
+    def no_lms(*_a: Any, **_k: Any) -> Any:
+        raise AssertionError("the key check runs before any LMS provider is loaded")
+
+    monkeypatch.setattr(assess_worker, "_find_lms", no_lms)
+    with pytest.raises(StartupValidationError) as e:
+        await assess_worker._checks()
+    assert "VEKTRA_LLM_API_KEY" in e.value.remediation and "worker" in e.value.detail

@@ -385,22 +385,15 @@ async def test_a_part_b_outage_logs_its_reason_and_cause_and_audits_the_cause(  
         start = datetime.now(UTC)
         rec_cause, rec_status = cause, status
         if error_class == "AuthenticationError":
-            # classified by the runner's own classifier, from litellm's real exception
-            import httpx
-            import litellm
+            # classified by the runner's own classifier, from litellm's real exception (no
+            # key: the synthetic 500)
+            from support.litellm_errors import litellm_error
 
             from vektra_assess.llm.runner import outage_cause
 
-            synthetic = httpx.Response(
-                500, request=httpx.Request("POST", "https://provider.invalid/v1")
-            )
+            pytest.importorskip("litellm")
             rec_cause, rec_status = outage_cause(
-                litellm.AuthenticationError(
-                    message="no key",
-                    model="m",
-                    llm_provider="openai",
-                    response=synthetic,
-                )
+                litellm_error("AuthenticationError", 500)
             )
         outage = ProviderOutageError(
             ProviderCallRecord(
@@ -452,6 +445,17 @@ async def test_a_part_b_outage_logs_its_reason_and_cause_and_audits_the_cause(  
         payload = row[0] if isinstance(row[0], dict) else json.loads(row[0])
         assert payload["cause"] == cause
         assert payload["cmid"] == CMID
+        # a configuration refusal alerts the operator in the rollback's transaction (review of
+        # #219, findings 2a and 5); an outage or a spent budget does not
+        alerts = await pg.run(
+            "super",
+            "SELECT args->>'reason', args->>'site_id' FROM assess_jobs "
+            "WHERE kind = 'operator_notify' AND args->>'kind' = 'provider_config_refused'",
+        )
+        if cause == "auth_error":
+            assert [tuple(a) for a in alerts] == [("auth_error", str(w.site))]
+        else:
+            assert alerts == []
 
 
 async def test_a_stalled_part_b_is_cut_inside_t(pg, worker_engine) -> None:  # type: ignore[no-untyped-def]

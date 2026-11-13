@@ -223,6 +223,31 @@ def test_the_teacher_rollback_email_and_the_operator_ones() -> None:
     assert "motivo: unreadable" in lms.get_content()
 
 
+async def test_a_provider_config_refusal_is_read_and_mailed_with_codes_only() -> None:
+    args = {
+        "site_id": str(SITE),
+        "kind": "provider_config_refused",
+        "reason": "auth_error",
+        "window": 500_000,
+    }
+    e = await n.read_event(Conn(), JobKind.OPERATOR_NOTIFY, args)
+    assert e == n.Event("provider_config_refused", SITE, reason="auth_error")
+    body = _mail(JobKind.OPERATOR_NOTIFY, e).get_content()
+    assert "causa: auth_error" in body and "VEKTRA_LLM_API_KEY" in body
+    request = _mail(
+        JobKind.OPERATOR_NOTIFY,
+        n.Event("provider_config_refused", SITE, reason="http_4xx"),
+    ).get_content()
+    assert "VEKTRA_ASSESS_LLM_MODEL" in request
+    # never a teacher event, never a cause outside the closed config set
+    assert await n.read_event(Conn(), JobKind.TEACHER_NOTIFY, args) is None
+    for bad in ("http_5xx", "budget_exceeded", 7):
+        assert (
+            await n.read_event(Conn(), JobKind.OPERATOR_NOTIFY, {**args, "reason": bad})
+            is None
+        )
+
+
 def test_there_is_no_text_for_an_event_a_kind_never_carries() -> None:
     with pytest.raises(ValueError, match="no text"):
         _mail(JobKind.TEACHER_NOTIFY, n.Event("lms_unreachable", SITE, reason="x"))

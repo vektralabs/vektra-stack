@@ -46,6 +46,7 @@ from vektra_assess.api.gate import verify_assess_token_session
 from vektra_assess.api.material import DekCache, Material, load_material
 from vektra_assess.api.models import TurnRequest
 from vektra_assess.api.session_gate import SessionRow, session_tx
+from vektra_assess.api.site_binding import bound_site
 from vektra_assess.api.state import limiter_of
 from vektra_assess.audit import AssessAuditEvent, write_event
 from vektra_assess.context.assemble import assemble_context
@@ -72,6 +73,7 @@ from vektra_assess.llm.types import (
     StudentTurn,
     TurnResult,
 )
+from vektra_assess.provider_alerts import queue_provider_config_alert
 from vektra_assess.tokens import SessionClaims
 from vektra_assess.turn_markers import INTERRUPTED_REPLY, REPLY_CLAIM_KEY_SQL
 
@@ -434,6 +436,8 @@ class TurnDriver:
         except ProviderOutageError as exc:
             if exc.is_refusal:
                 failure = "provider_refused"
+                if exc.is_config_refusal:
+                    await self._alert_config_refusal(sid, exc.cause)
             else:
                 # the server-side record: the interval starts at the call's own start
                 outage = exc.record
@@ -463,6 +467,21 @@ class TurnDriver:
             # stream and logged by type only; the task never ends with an unread exception
             log.warning("assess_turn_persist_failed", error_type=type(exc).__name__)
             self.broker.publish(sid, "reply_interrupted", {"reason": "persist_failed"})
+
+    async def _alert_config_refusal(self, sid: UUID, cause: str) -> None:
+        """The operator alert of a configuration refusal (``provider_alerts``), in its own
+        transaction. The site is the one this reply task is bound to (the request's, or the
+        ``PendingTurnDriver``'s scan): no read. Best effort: a failure here is logged by type
+        and never changes the student's interrupted turn."""
+        site = bound_site()
+        if site is None:
+            log.warning("assess_provider_alert_failed", error_type="SiteUnbound")
+            return
+        try:
+            async with self.engine.begin() as conn:
+                await queue_provider_config_alert(conn, site, cause)
+        except Exception as exc:
+            log.warning("assess_provider_alert_failed", error_type=type(exc).__name__)
 
     async def _outage(self, sid: UUID, epoch: int, record: ProviderCallRecord) -> None:
         """ACTIVE -> OUTAGE (M4.1): the pending turn is kept for the ``PendingTurnDriver``. The

@@ -260,6 +260,66 @@ async def test_an_unreadable_lms_alert_reaches_the_operator(pg, worker, sink) ->
         assert await n.notify(deps, JobKind.TEACHER_NOTIFY, ctx(job, worker)) is None
 
 
+async def test_a_config_refusal_alert_is_mailed_once_per_window(
+    pg, worker, sink
+) -> None:  # type: ignore[no-untyped-def]
+    """Review of #219, finding 2a: the provider refusing the configuration (no key) is a
+    refusal, not an outage, so the operator hears it from this alert. Queued again in the same
+    window after the first was sent (the API cannot see a done job), it is dropped here; a new
+    window or another cause alerts again."""
+    from vektra_assess.provider_alerts import queue_provider_config_alert
+
+    clock = Clock()
+    now = 1_800_000_000.0
+    async with world(pg) as w:
+        engine = create_async_engine(pg.url("worker"))
+
+        async def queue(cause: str, at: float) -> None:
+            async with engine.connect() as conn:
+                await queue_provider_config_alert(conn, w.site, cause, now=at)
+                await conn.commit()
+
+        await queue("auth_error", now)
+        await clock.sync(pg)
+        deps = _deps(ConfigRecipients(config_pair()[1]), sink, clock)
+        (first,) = await jobs(pg, "operator_notify")
+        assert (
+            await n.notify(deps, JobKind.OPERATOR_NOTIFY, ctx(first, worker))
+        ).sent == 1  # type: ignore[union-attr]
+        await pg.run(
+            "super",
+            "UPDATE assess_jobs SET state = 'done' WHERE id = :i",
+            {"i": first.id},
+        )
+        (ops,) = sink.to(OPS)
+        body = ops.message.get_content()
+        assert str(w.site) in body and "causa: auth_error" in body
+        assert "VEKTRA_LLM_API_KEY" in body
+        # the same site, cause and window: a second job is queued (the pending index no longer
+        # covers a done job) and dropped by the handler
+        await queue("auth_error", now + 60)
+        second = (await jobs(pg, "operator_notify"))[-1]
+        assert second.id != first.id
+        assert (
+            await n.notify(deps, JobKind.OPERATOR_NOTIFY, ctx(second, worker)) is None
+        )
+        assert len(sink.to(OPS)) == 1
+        # another cause, then the next window: each alerts
+        await queue("http_4xx", now + 60)
+        await queue("auth_error", now + provider_window_s())
+        for job in (await jobs(pg, "operator_notify"))[-2:]:
+            got = await n.notify(deps, JobKind.OPERATOR_NOTIFY, ctx(job, worker))
+            assert got is not None and got.sent == 1
+        assert len(sink.to(OPS)) == 3
+        await engine.dispose()
+
+
+def provider_window_s() -> int:
+    from vektra_assess.provider_alerts import WINDOW_S
+
+    return WINDOW_S
+
+
 async def test_a_crash_after_the_relay_accepted_resends_with_the_same_message_id(
     pg, worker, sink
 ) -> None:  # type: ignore[no-untyped-def]

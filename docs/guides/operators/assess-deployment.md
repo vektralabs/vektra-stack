@@ -172,6 +172,24 @@ The model must also have a passing NFR-023 activation for its `prompt_version`
 one the API starts degraded and the pre-flight refuses every discussion. See the
 [API reference](../../reference/api.md#assess-model-activation-nfr-023).
 
+**A reasoning model needs its reasoning turned down, or a larger `VEKTRA_ASSESS_LLM_MAX_TOKENS`.**
+The completion budget (default 600) covers the reasoning and the answer. A reasoning model that
+spends it all on reasoning returns no text, and every Start is rolled back with
+`provider_unavailable`; the worker log line `assess_preflight_provider_outage` then says
+`outage_cause=max_tokens_exhausted` (a discussion turn logs `assess_turn_provider_failure` and is
+refused, not an OUTAGE). Prefer lowering the reasoning: set `VEKTRA_ASSESS_LLM_EXTRA_BODY` to
+`{"reasoning_effort": "low"}` (OpenAI reasoning models) or
+`{"chat_template_kwargs": {"enable_thinking": false}}` (Qwen3 on vLLM). Raising the budget instead
+lengthens the reasoning, which happens before the first token and counts against
+`VEKTRA_ASSESS_OUTAGE_TIMEOUT_S`: see
+[Reasoning models (assess)](../../reference/configuration.md#reasoning-models-assess).
+
+Reading `outage_cause`: `http_5xx`, `connection_error` and the `*_timeout` codes of the HTTP
+client (`read_timeout`, `connect_timeout`, ...) point at the provider or the network. A
+`first_token_timeout` does too, **unless** the model reasons: after a `VEKTRA_ASSESS_LLM_MAX_TOKENS`
+raise with reasoning still on, it usually means the reasoning outlasted the first-token deadline.
+`http_4xx` is the provider answering (a wrong key or model, a rate limit, a rejected request).
+
 ## The assess schema: a migration branch of its own
 
 The assess tables, the three `vektra_assess_*` roles and the `SECURITY DEFINER` functions are

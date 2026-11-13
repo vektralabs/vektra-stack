@@ -339,6 +339,99 @@ async def test_every_failure_rolls_back_to_eligible(  # type: ignore[no-untyped-
         assert "CANARY" not in str(audit)
 
 
+@pytest.mark.parametrize(
+    ("error_class", "cause", "status", "budget", "remediation"),
+    [
+        ("InternalServerError", "http_5xx", 503, None, None),
+        # a reasoning model that spent max_tokens before any text (measured: ~9 s, no text)
+        (
+            "EmptyStream",
+            "max_tokens_exhausted",
+            None,
+            "max_tokens",
+            "raise_llm_max_tokens_or_lower_reasoning_effort",
+        ),
+    ],
+)
+async def test_a_part_b_outage_logs_its_reason_and_cause_and_audits_the_cause(  # type: ignore[no-untyped-def]
+    pg,
+    worker_engine,
+    canary_log_capture,
+    error_class: str,
+    cause: str,
+    status: int | None,
+    budget: str | None,
+    remediation: str | None,
+) -> None:
+    """A Start rolled back on a Part B provider outage was logged with ``"reason": "[dropped]"``
+    and nothing on why the call failed. The rollback line now carries the reason code, one
+    outage line carries the closed cause, the HTTP status, the attempt and the budgets (and,
+    for a spent max_tokens, the configured value and a remediation code), and the
+    ``assess_start_rollback`` audit data carries the cause."""
+    import json
+    from datetime import UTC, datetime, timedelta
+
+    from vektra_assess.llm.types import ProviderCallRecord, ProviderOutageError
+    from vektra_shared.log_safety import DROPPED
+
+    await _reset(pg)
+    await activate(pg)
+    settings = default_settings()
+    async with world(pg, settings) as w:
+        await configure_activity(pg, w.site, CMID)
+        start = datetime.now(UTC)
+        outage = ProviderOutageError(
+            ProviderCallRecord(
+                start,
+                None,
+                start + timedelta(seconds=9),
+                "error",
+                error_class,
+                cause,
+                status,
+            )
+        )
+        outage.attempt = 2
+        sid = await _start(w)
+        handler = make_preflight_handler(
+            deps(settings, w.handoff_public, start_source(worker_engine), FakePartB(fail=outage))
+        )  # fmt: skip
+        await handler(job_context(worker_engine, sid))
+        await _rolled_back(pg, sid, "provider_unavailable")
+
+        lines = [json.loads(ln) for ln in canary_log_capture.lines()]
+        (rolled,) = [
+            ln for ln in lines if ln.get("event") == "assess_preflight_rolled_back"
+        ]
+        assert rolled["reason_code"] == "provider_unavailable"
+        assert DROPPED not in rolled.values()
+        (line,) = [
+            ln for ln in lines if ln.get("event") == "assess_preflight_provider_outage"
+        ]
+        assert DROPPED not in line.values(), line
+        assert line["level"] == "warning"
+        assert line["outage_cause"] == cause and line["http_status"] == status
+        assert line["error_type"] == error_class and line["outcome"] == "error"
+        assert line["attempt"] == 2 and line["duration_ms"] == 9000
+        assert line["expired_budget"] == budget and line["first_token_ms"] is None
+        assert 0 < line["remaining_s"] <= settings.start_t_s
+        assert line["timeout_s"] == settings.outage_timeout_s
+        assert line["max_tokens"] == settings.llm_max_tokens
+        assert line["remediation_code"] == remediation
+        assert isinstance(line["part_b_ms"], int)
+
+        data = await pg.run(
+            "super",
+            "SELECT data FROM assess_audit_events WHERE session_id = :s "
+            "AND event = 'assess_start_rollback'",
+            {"s": sid},
+        )
+        (row,) = data
+        payload = row[0] if isinstance(row[0], dict) else json.loads(row[0])
+        assert payload["cause"] == cause
+        assert payload["cmid"] == CMID
+
+
 async def test_a_stalled_part_b_is_cut_inside_t(pg, worker_engine) -> None:  # type: ignore[no-untyped-def]
     await _reset(pg)
     await activate(pg)

@@ -372,7 +372,12 @@ async def download_transcript(
                     "assess.transcript.alert",
                     alert="integrity_mismatch_at_download",
                     transcript_id=str(t),
-                    reason=str(exc),
+                    # the store raises closed codes; anything else is not echoed
+                    reason_code=(
+                        str(exc)
+                        if str(exc) in ("decrypt_failed", "hash_mismatch")
+                        else "integrity_error"
+                    ),
                 )
                 refused = transcript_integrity()
             else:

@@ -166,7 +166,13 @@ async def _integrity_failed(
             reason_code=reason,
             data={"turn_no": turn_no},
         )
-    _alert("integrity_mismatch", session_id=str(row.id), reason=reason, turn_no=turn_no)
+    # ``reason`` is a closed code (the audit row's reason_code): logged under that key
+    _alert(
+        "integrity_mismatch",
+        session_id=str(row.id),
+        reason_code=reason,
+        turn_no=turn_no,
+    )
 
 
 async def generate_transcript(

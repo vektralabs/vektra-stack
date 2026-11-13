@@ -260,6 +260,9 @@ class CompletionChunk:
     content: str
     done: bool = False
     model: str | None = None
+    #: the provider's finish reason on the last chunk ("stop", "length", ...), else None. A
+    #: reasoning model that spends max_tokens on reasoning ends with "length" and no text.
+    finish_reason: str | None = None
 
 
 @dataclass

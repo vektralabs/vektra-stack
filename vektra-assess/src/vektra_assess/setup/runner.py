@@ -354,7 +354,9 @@ async def run_setup_check(
                 await conn.execute(_FAIL_RUNNING, {"r": report_id})
         finally:
             log.error(
-                "setup_check_failed", site_id=str(site_id), error=type(exc).__name__
+                "setup_check_failed",
+                site_id=str(site_id),
+                error_type=type(exc).__name__,
             )
         raise
     if outcome.token_rejected:

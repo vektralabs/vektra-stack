@@ -210,3 +210,22 @@ async def test_a_hung_read_times_out_and_the_next_refresh_runs() -> None:
     cache.snapshot, cache.read_at = dict(HOSTILE), 0.0
     await asyncio.wait_for(cache.refresh(_Hang()), 1.0)
     assert cache.snapshot is None
+
+
+def test_the_cmid_missing_counter_has_fixed_route_labels() -> None:
+    """Plugin request: grader transcript calls without the page cmid, per FIXED route; an
+    unknown route is never a label (and is not counted)."""
+    before = m.transcript_cmid_missing()
+    m.count_transcript_cmid_missing("download_token")
+    m.count_transcript_cmid_missing("not-a-route")
+    after = m.transcript_cmid_missing()
+    assert after["download_token"] == before["download_token"] + 1
+    assert set(after) == set(m.TRANSCRIPT_ROUTES)
+    fam = {f.name: f for f in m.families(None, age_s=None)}[
+        "vektra_assess_transcript_cmid_missing"
+    ]
+    samples = {
+        s.labels["route"]: s.value for s in fam.samples if s.name.endswith("_total")
+    }
+    assert samples == {k: float(v) for k, v in after.items()}
+    assert set(samples) <= m.LABELS["route"]

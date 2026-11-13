@@ -9,7 +9,12 @@ does not apply), and the site is the one that key is bound to in ``assess_site_k
 3. the POSITIVE login-as assertion: both ``loginas: false`` and ``realuser_id: null`` present and
    exactly so. Anything else (absent, ``true``, ``0``, a user id) is audited
    ``assess_loginas_rejected`` and refused with 403; no token row is written;
-4. ``plugin_version`` at least the configured minimum and the site's own (403 ``ERR-ASSESS-016``).
+4. ``privacy_notice_version``, when present (plugin request P3), has the stored
+   ``notice_version``'s format (400 ``ERR-ASSESS-014`` ``<code>:privacy_notice_version``
+   otherwise). It is NOT compared here: the same token may serve ``GET /state`` or a resume,
+   which ignore it. It travels in the token as the claim ``notice_version``, and Start compares
+   it with the site's current version (409 ``ERR-ASSESS-029`` ``privacy_notice_changed``);
+5. ``plugin_version`` at least the configured minimum and the site's own (403 ``ERR-ASSESS-016``).
 
 The mint row (``assess_token_jti``) and the ``assess_token_mint`` audit row are written in one
 transaction; the response is the token and its lifetime only.
@@ -27,7 +32,7 @@ from vektra_assess.api.common import engine_of, fail, parse_body, site_row_of_ke
 from vektra_assess.api.deps import settings_of, tokens_of, version_at_least
 from vektra_assess.api.models import MintRequest
 from vektra_assess.audit import AssessAuditEvent, write_event
-from vektra_assess.errors import loginas_refused, plugin_too_old
+from vektra_assess.errors import bad_request, loginas_refused, plugin_too_old
 from vektra_shared.auth import ApiKeyInfo, require_exact_scope
 
 router = APIRouter()
@@ -59,6 +64,8 @@ async def mint_token(
                 data={"cmid": body.cmid, "key_id": key.key_id},
             )
             refused: Any = loginas_refused()
+        elif (problem := body.notice_version_problem()) is not None:
+            refused = bad_request(problem)
         elif not version_at_least(
             body.plugin_version, settings.min_plugin_version, site.min_plugin_version
         ):
@@ -66,7 +73,10 @@ async def mint_token(
         else:
             refused = None
             minted = tokens_of(request).mint_presession(
-                sub=body.sub, site=site_id, cmid=body.cmid
+                sub=body.sub,
+                site=site_id,
+                cmid=body.cmid,
+                notice_version=body.privacy_notice_version,
             )
             await conn.execute(
                 _INSERT_JTI,

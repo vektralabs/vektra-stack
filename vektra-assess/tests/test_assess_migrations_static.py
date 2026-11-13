@@ -37,16 +37,12 @@ def _revisions() -> list[Path]:
 
 def test_one_base_revision_on_the_assess_branch() -> None:
     revs = _revisions()
-    assert (
-        [p.name for p in revs]
-        == [
-            "a0001_assess_base.py",
-            "a0002_assess_api_rls.py",  # ADR-0033 D9.2: RLS for the API role
-            "a0003_assess_erasure_alerts.py",  # OQ-033: the overdue-erasure alert marker
-            "a0004_assess_subject_indexes.py",  # the subject export's per-subject reads
-            "a0005_assess_reset_grant_consumed.py",  # backfill of the reset grants' consumed_at
-        ]
-    )
+    assert [p.name for p in revs] == [
+        "a0001_assess_base.py",
+        "a0002_assess_api_rls.py",  # ADR-0033 D9.2: RLS for the API role
+        "a0003_assess_erasure_alerts.py",  # OQ-033: the overdue-erasure alert marker
+        "a0004_assess_subject_indexes.py",  # the subject export's per-subject reads
+    ]
     mod = _load(revs[0], "assess_base")
     assert mod.revision == "a0001"
     assert mod.down_revision is None

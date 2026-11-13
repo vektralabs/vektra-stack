@@ -593,6 +593,59 @@ async def test_an_audit_write_that_overruns_t_rolls_back(
         await _rolled_back(pg, sid, "start_timeout")
 
 
+async def test_no_statement_runs_between_the_t_guard_and_commit(
+    pg, worker_engine
+) -> None:  # type: ignore[no-untyped-def]
+    """The invariant itself, observed on the wire: on the connection that commits the session,
+    the T guard (``_WITHIN_T``) is the last statement before COMMIT. A write added after it
+    (review of #220: an export-only update there could wait on a row lock and carry the commit
+    past T, or fail and roll back a valid Start) fails here."""
+    from sqlalchemy import event
+
+    from vektra_assess.worker import preflight as mod
+
+    # the driver rewrites the bind parameters: match the guard by its clock reading
+    marker = "FROM (SELECT clock_timestamp() AS t) AS c"
+    assert marker in str(mod._WITHIN_T)
+    trail: dict[int, list[str]] = {}
+
+    def on_sql(conn, cursor, statement, params, context, executemany):  # type: ignore[no-untyped-def]
+        trail.setdefault(id(conn.connection), []).append(statement)
+
+    def on_commit(conn):  # type: ignore[no-untyped-def]
+        trail.setdefault(id(conn.connection), []).append("<COMMIT>")
+
+    await _reset(pg)
+    await activate(pg)
+    sync = worker_engine.sync_engine
+    event.listen(sync, "before_cursor_execute", on_sql)
+    event.listen(sync, "commit", on_commit)
+    try:
+        async with world(pg) as w:
+            await configure_activity(pg, w.site, CMID)
+            sid = await _start(w)
+            handler = make_preflight_handler(
+                deps(w.settings, w.handoff_public, start_source(worker_engine))
+            )
+            await handler(job_context(worker_engine, sid))
+            state = await pg.run(
+                "super", "SELECT state FROM assess_sessions WHERE id = :s", {"s": sid}
+            )
+            assert state[0][0] == "ACTIVE"
+    finally:
+        event.remove(sync, "before_cursor_execute", on_sql)
+        event.remove(sync, "commit", on_commit)
+    guarded = [
+        (log, i)
+        for log in trail.values()
+        for i, stmt in enumerate(log)
+        if marker in stmt
+    ]
+    assert len(guarded) == 1, "the T guard ran once"
+    log, i = guarded[0]
+    assert log[i + 1] == "<COMMIT>", log[i + 1 :]
+
+
 async def test_the_session_clock_starts_at_the_end_of_the_commit_transaction(
     pg, worker_engine, monkeypatch
 ) -> None:  # type: ignore[no-untyped-def]

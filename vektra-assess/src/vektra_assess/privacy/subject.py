@@ -52,6 +52,31 @@ class Detail:
     into: str | None
     order_by: str = ""
     defaults: Mapping[str, object] = field(default_factory=dict)
+    #: columns read from an SQL expression instead of the stored column of the same name
+    #: (``export_query`` selects ``<expression> AS <column>``)
+    derived: Mapping[str, str] = field(default_factory=dict)
+
+
+def reset_consumed_at_sql(grant: str) -> str:
+    """When the reset grant ``grant`` (a table name or alias) was consumed (REQ-087): the
+    ``committed_at`` of the session it unlocked, NULL while none committed.
+
+    The reset route stores the CLOSED session the grant follows (``session_no = N``) and the
+    next session is numbered N+1, so the grant is consumed by session N+1 of the same (site,
+    cmid, student). A rolled-back Start deletes its session row, a STARTING one has no
+    ``committed_at``: neither consumes it. ``uq_assess_sessions_no`` makes this a LEFT JOIN on at
+    most one row, written as a scalar subquery so that the page query keeps one table.
+
+    The one rule for every reader. The stored ``assess_reset_grants.consumed_at`` is NOT it: no
+    code writes that column (it stays NULL); a later schema revision drops it, or the worker's
+    ``UPDATE (consumed_at)`` grant on it.
+    """
+    return (
+        "(SELECT s.committed_at FROM assess_sessions s "
+        f"WHERE s.site_id = {grant}.site_id AND s.cmid = {grant}.cmid "
+        f"AND s.student_userid = {grant}.student_userid "
+        f"AND s.session_no = {grant}.session_no + 1)"
+    )
 
 
 @dataclass(frozen=True)
@@ -76,7 +101,8 @@ SUBJECT_EXPORT: Mapping[str, Detail | Count] = {
         into=None,
         defaults={"extra_seconds": 0, "extra_granted_at": None},
     ),
-    # the reason (encrypted, the teacher's text) is left out: OQ-020
+    # the reason (encrypted, the teacher's text) is left out: OQ-020. ``consumed_at`` is
+    # derived from the session the grant unlocked, never the stored column (unused, always NULL)
     "assess_reset_grants": Detail(
         (
             ("session_no", "after_session_no"),
@@ -85,6 +111,7 @@ SUBJECT_EXPORT: Mapping[str, Detail | Count] = {
         ),
         into="resets",
         order_by="granted_at, session_no",
+        derived={"consumed_at": reset_consumed_at_sql("assess_reset_grants")},
     ),
     "assess_sessions": Detail(
         (
@@ -139,7 +166,9 @@ def export_query(table: str) -> str:
     where = "site_id = :s AND student_userid = :u AND cmid = ANY(:c)"
     if isinstance(how, Count):
         return f"SELECT cmid, count(*) AS n FROM {table} WHERE {where} GROUP BY cmid"
-    cols = ", ".join(c for c, _ in how.columns)
+    cols = ", ".join(
+        f"{how.derived[c]} AS {c}" if c in how.derived else c for c, _ in how.columns
+    )
     order = f"cmid, {how.order_by}" if how.order_by else "cmid"
     return f"SELECT cmid, {cols} FROM {table} WHERE {where} ORDER BY {order}"
 

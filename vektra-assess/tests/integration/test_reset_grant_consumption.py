@@ -1,15 +1,17 @@
-"""A reset grant is consumed by the session it unlocks (REQ-087).
+"""When a reset grant was consumed, as the subject export shows it (REQ-087).
 
-``assess_reset_grants.consumed_at`` was never written: eligibility counts grants and was right,
-but the subject export (``GET /privacy/subjects/{userid}/activities``) showed every reset as
-unconsumed, even after the next session had started. The grant written after session N (its
-``session_no`` is N) is consumed when session N+1 COMMITS, in the pre-flight's commit
-transaction, at that session's ``committed_at``. A rolled-back Start consumes nothing.
+No code ever wrote ``assess_reset_grants.consumed_at``, so the export
+(``GET /privacy/subjects/{userid}/activities``) showed every reset as unconsumed, even after the
+next session had started. The export now derives it (``privacy.subject.reset_consumed_at_sql``):
+the grant written after session N (its ``session_no`` is N) is consumed by session N+1, at that
+session's ``committed_at``; NULL while none committed. A rolled-back Start consumes nothing.
+Nothing is written at commit: the pre-flight's T guard stays the last statement before COMMIT.
 """
 
 from __future__ import annotations
 
 import uuid
+from datetime import datetime
 from typing import Any
 
 import pytest
@@ -61,50 +63,62 @@ async def _grant(pg, site: uuid.UUID, after_session_no: int) -> None:  # type: i
     )
 
 
-async def _grants(pg, site: uuid.UUID) -> list[tuple[int, Any]]:  # type: ignore[no-untyped-def]
-    rows = await pg.run(
-        "super",
-        "SELECT session_no, consumed_at FROM assess_reset_grants "
-        "WHERE site_id = :s AND cmid = :c AND student_userid = :u ORDER BY session_no",
-        {"s": site, "c": CMID, "u": STU},
-    )
-    return [(int(r[0]), r[1]) for r in rows]
-
-
-async def _committed_at(pg, sid: uuid.UUID) -> Any:  # type: ignore[no-untyped-def]
+async def _committed_at(pg, sid: uuid.UUID) -> datetime:  # type: ignore[no-untyped-def]
     rows = await pg.run(
         "super", "SELECT committed_at FROM assess_sessions WHERE id = :s", {"s": sid}
     )
+    assert rows[0][0] is not None
     return rows[0][0]
 
 
-async def test_the_next_session_commit_consumes_the_grant(pg, worker_engine) -> None:  # type: ignore[no-untyped-def]
-    await _reset(pg)
-    await activate(pg)
-    async with world(pg) as w:
-        await configure_activity(pg, w.site, CMID)
-        first = await _commit_session(w, worker_engine)
-        await _close(pg, first)
-        await _grant(pg, w.site, 1)
-        assert await _grants(pg, w.site) == [(1, None)]
-        second = await _commit_session(w, worker_engine)
-        at = await _committed_at(pg, second)
-        assert at is not None
-        assert await _grants(pg, w.site) == [(1, at)]
-        # a second run of the same pre-flight job is a stale no-op: the time does not move
-        handler = make_preflight_handler(
-            deps(w.settings, w.handoff_public, start_source(worker_engine))
+async def _exported(w) -> list[tuple[int, datetime | None]]:  # type: ignore[no-untyped-def]
+    """The export's resets of the activity: (after_session_no, consumed_at)."""
+    r = await _get(w, STU)
+    assert r.status_code == 200, r.text
+    (item,) = [i for i in r.json()["items"] if i["cmid"] == CMID]
+    return [
+        (
+            g["after_session_no"],
+            None
+            if g["consumed_at"] is None
+            else datetime.fromisoformat(g["consumed_at"]),
         )
-        await handler(job_context(worker_engine, second))
-        assert await _grants(pg, w.site) == [(1, at)]
+        for g in item["resets"]
+    ]
 
 
-async def test_a_rolled_back_start_leaves_the_grant_unconsumed(
+async def _stored(pg, site: uuid.UUID) -> list[Any]:  # type: ignore[no-untyped-def]
+    rows = await pg.run(
+        "super",
+        "SELECT consumed_at FROM assess_reset_grants WHERE site_id = :s",
+        {"s": site},
+    )
+    return [r[0] for r in rows]
+
+
+async def test_a_reset_then_the_next_commit_shows_it_consumed(
     pg, worker_engine
 ) -> None:  # type: ignore[no-untyped-def]
     await _reset(pg)
     await activate(pg)
     async with world(pg) as w:
+        await _privacy_key(w, "assess:privacy-export", "export")
+        await configure_activity(pg, w.site, CMID)
+        first = await _commit_session(w, worker_engine)
+        await _close(pg, first)
+        await _grant(pg, w.site, 1)
+        assert await _exported(w) == [(1, None)]
+        second = await _commit_session(w, worker_engine)
+        assert await _exported(w) == [(1, await _committed_at(pg, second))]
+        # derived on read: the stored column is not written (and is not the source)
+        assert await _stored(pg, w.site) == [None]
+
+
+async def test_a_rolled_back_start_leaves_it_unconsumed(pg, worker_engine) -> None:  # type: ignore[no-untyped-def]
+    await _reset(pg)
+    await activate(pg)
+    async with world(pg) as w:
+        await _privacy_key(w, "assess:privacy-export", "export")
         await configure_activity(pg, w.site, CMID)
         first = await _commit_session(w, worker_engine)
         await _close(pg, first)
@@ -115,75 +129,13 @@ async def test_a_rolled_back_start_leaves_the_grant_unconsumed(
             "super", "SELECT count(*) FROM assess_sessions WHERE id = :s", {"s": rolled}
         )
         assert rows[0][0] == 0  # rolled back
-        assert await _grants(pg, w.site) == [(1, None)]
+        assert await _exported(w) == [(1, None)]
         # the grant still unlocks the next Start, which consumes it
         second = await _commit_session(w, worker_engine)
-        assert await _grants(pg, w.site) == [(1, await _committed_at(pg, second))]
+        assert await _exported(w) == [(1, await _committed_at(pg, second))]
 
 
-async def test_two_resets_in_a_row_consume_one_each(pg, worker_engine) -> None:  # type: ignore[no-untyped-def]
-    await _reset(pg)
-    await activate(pg)
-    async with world(pg) as w:
-        await configure_activity(pg, w.site, CMID)
-        first = await _commit_session(w, worker_engine)
-        await _close(pg, first)
-        await _grant(pg, w.site, 1)
-        second = await _commit_session(w, worker_engine)
-        await _close(pg, second)
-        await _grant(pg, w.site, 2)
-        assert await _grants(pg, w.site) == [
-            (1, await _committed_at(pg, second)),
-            (2, None),
-        ]
-        third = await _commit_session(w, worker_engine)
-        assert await _grants(pg, w.site) == [
-            (1, await _committed_at(pg, second)),
-            (2, await _committed_at(pg, third)),
-        ]
-
-
-async def test_the_a0005_backfill_applies_the_same_rule(pg, worker_engine) -> None:  # type: ignore[no-untyped-def]
-    """Rows written before the fix: the revision's statement sets each grant whose next
-    session committed to that session's committed_at, leaves a grant with no committed next
-    session NULL, and never moves a value already set."""
-    import importlib
-
-    backfill = importlib.import_module(
-        "vektra_assess.migrations.versions.a0005_assess_reset_grant_consumed"
-    ).BACKFILL
-    await _reset(pg)
-    await activate(pg)
-    async with world(pg) as w:
-        await configure_activity(pg, w.site, CMID)
-        first = await _commit_session(w, worker_engine)
-        await _close(pg, first)
-        await _grant(pg, w.site, 1)
-        second = await _commit_session(w, worker_engine)
-        await _close(pg, second)
-        await _grant(pg, w.site, 2)  # no session #3: stays NULL
-        # the state before the fix: nothing consumed
-        await pg.run(
-            "super",
-            "UPDATE assess_reset_grants SET consumed_at = NULL WHERE site_id = :s",
-            {"s": w.site},
-        )
-        await pg.run("super", backfill)
-        want = [(1, await _committed_at(pg, second)), (2, None)]
-        assert await _grants(pg, w.site) == want
-        # idempotent, and a value already set is never moved
-        await pg.run(
-            "super",
-            "UPDATE assess_reset_grants SET consumed_at = '2000-01-01Z' "
-            "WHERE site_id = :s AND session_no = 1",
-            {"s": w.site},
-        )
-        await pg.run("super", backfill)
-        (one, two) = await _grants(pg, w.site)
-        assert one[1].year == 2000 and two == (2, None)
-
-
-async def test_the_export_shows_the_consumption(pg, worker_engine) -> None:  # type: ignore[no-untyped-def]
+async def test_two_resets_in_a_row_map_to_their_own_sessions(pg, worker_engine) -> None:  # type: ignore[no-untyped-def]
     await _reset(pg)
     await activate(pg)
     async with world(pg) as w:
@@ -193,13 +145,9 @@ async def test_the_export_shows_the_consumption(pg, worker_engine) -> None:  # t
         await _close(pg, first)
         await _grant(pg, w.site, 1)
         second = await _commit_session(w, worker_engine)
-        r = await _get(w, STU)
-        assert r.status_code == 200, r.text
-        (item,) = [i for i in r.json()["items"] if i["cmid"] == CMID]
-        (g,) = item["resets"]
-        assert g["after_session_no"] == 1
-        assert g["consumed_at"] is not None
-        committed = await _committed_at(pg, second)
-        from datetime import datetime
-
-        assert datetime.fromisoformat(g["consumed_at"]) == committed
+        await _close(pg, second)
+        await _grant(pg, w.site, 2)
+        at2 = await _committed_at(pg, second)
+        assert await _exported(w) == [(1, at2), (2, None)]
+        third = await _commit_session(w, worker_engine)
+        assert await _exported(w) == [(1, at2), (2, await _committed_at(pg, third))]

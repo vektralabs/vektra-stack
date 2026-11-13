@@ -33,7 +33,7 @@ past their expiry. Done jobs have their own tick (``job_cleanup``).
 from __future__ import annotations
 
 import json
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -49,7 +49,7 @@ from vektra_assess.audit import AssessAuditEvent, write_event
 from vektra_assess.jobs import JobKind, enqueue_job
 from vektra_assess.keys import RESERVED_KID
 from vektra_assess.privacy import config as privacy_config
-from vektra_assess.privacy.subject import subject_ref
+from vektra_assess.privacy.subject import SUBJECT_TABLES, subject_ref
 
 log = structlog.get_logger(__name__)
 
@@ -91,7 +91,42 @@ TRANSCRIPT_TABLES: tuple[str, ...] = (
 
 
 class PurgeVerificationFailed(RuntimeError):
-    """Rows were left after the deletion: the transaction is rolled back."""
+    """Rows were left after the deletion: the transaction is rolled back. ``tables``: the
+    rows left per table (what the alert logs, through ``tables_left``)."""
+
+    def __init__(self, message: str, tables: Mapping[str, int] | None = None) -> None:
+        super().__init__(message)
+        self.tables: dict[str, int] = dict(tables or {})
+
+
+#: every table an erasure or a purge counts after deleting: the only names an alert may log
+LEFT_TABLES = frozenset(
+    {
+        *SESSION_TABLES,
+        *TRANSCRIPT_TABLES,
+        "assess_transcripts",
+        *SUBJECT_TABLES,
+        "assess_jobs",
+    }
+)
+_LEFT_MAX = 190  # under the log allowlist's value cap (200)
+
+
+def tables_left(left: Mapping[str, int]) -> str:
+    """The rows left per table as ``turns=2,snapshots=1`` (the ``assess_`` prefix dropped):
+    only names of ``LEFT_TABLES`` (anything else counts under ``other``), integer counts, and
+    cut at a pair boundary below the log value cap (``...`` marks the cut). ``none`` when empty."""
+    counts: dict[str, int] = {}
+    for table, n in left.items():
+        name = table.removeprefix("assess_") if table in LEFT_TABLES else "other"
+        counts[name] = counts.get(name, 0) + (int(n) if isinstance(n, int) else 0)
+    out = ""
+    for name in sorted(counts):
+        pair = f"{name}={counts[name]}"
+        if len(out) + len(pair) + 4 > _LEFT_MAX:
+            return out + ",..."
+        out = f"{out},{pair}" if out else pair
+    return out or "none"
 
 
 @dataclass
@@ -385,7 +420,7 @@ async def purge_batch(
     )
     left = await leftover(conn, sids, shredded.transcript_ids)
     if left:
-        raise PurgeVerificationFailed(json.dumps(left, sort_keys=True))
+        raise PurgeVerificationFailed(json.dumps(left, sort_keys=True), left)
     await write_tombstones(
         conn, due, shredded.transcripts, reason="retention", counts=shredded.deleted
     )
@@ -437,7 +472,7 @@ async def run_purge(
                         "assess.purge.alert",
                         alert="purge_verification_failed",
                         site_id=str(site.site_id),
-                        left=str(exc)[:200],
+                        tables_left=tables_left(exc.tables),
                     )
                     failed.append(str(site.site_id))
                     break
@@ -471,7 +506,7 @@ async def run_purge(
                     "assess.erasure.alert",
                     alert=alerts.ABANDONED,
                     erasure_id=int(rec.id),
-                    scope=str(rec.scope),
+                    erasure_scope=str(rec.scope),
                 )
             report.stale_erasures = len(stale)
             if report.backlog:

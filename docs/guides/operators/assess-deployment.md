@@ -425,9 +425,14 @@ What to do:
    or a transcript send is in flight (at most 15 minutes after the send started); check the
    worker's log and `GET /health/assess`. A dead job is queued again by the plugin's retry of
    the same request.
-3. `erasure_verification_failed`: nothing was deleted. Read the worker's log line
-   (`left=` names the tables), fix the cause, then have the DPO repeat the request from the
-   LMS (a new request; the failed one stays recorded).
+3. `erasure_verification_failed`: nothing was deleted. The worker's `assess.erasure.alert` line
+   carries `erasure_id`, `erasure_scope` and `tables_left`, the rows still present per table
+   (for example `turns=2,snapshots=1`; only names from the erasure's own table list, anything
+   else counts as `other`). If the log line is gone, the request's own record keeps the same
+   counts: `SELECT rows_deleted->'left' FROM assess_erasure_records WHERE id = <request id>`.
+   Fix the cause, then have the DPO repeat the request from the LMS (a new request; the failed
+   one stays recorded). A retention purge that fails its count logs `assess.purge.alert`
+   `purge_verification_failed` with the same `tables_left`.
 4. `erasure_abandoned`: nothing was deleted and the request will not run again. Fix what kept
    it from running (step 2), then have the DPO repeat the request from the LMS.
 

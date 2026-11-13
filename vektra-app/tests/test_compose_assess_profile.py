@@ -288,6 +288,12 @@ def test_the_worker_gets_the_lifecycle_settings_the_api_reads(
         "VEKTRA_ASSESS_OUTAGE_TIMEOUT_S",
         # plan 10 (CodeRabbit 4503025939): transcript times and the file-name date
         "VEKTRA_ASSESS_SITE_TIMEZONE",
+        # OQ-033 (CodeRabbit 4560276162): the overdue-erasure alert threshold, read by the
+        # worker's delivery_retry tick only
+        "VEKTRA_ASSESS_ERASURE_ALERT_AFTER_S",
+        # whether the discussion model's traces are stored: the API's turns and the worker's
+        # pre-flight Part B write them through the same runner
+        "VEKTRA_ASSESS_STORE_TRACES",
     ):
         assert env.get(key), key
 

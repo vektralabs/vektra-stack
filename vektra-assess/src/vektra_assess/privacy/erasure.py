@@ -58,9 +58,11 @@ from vektra_assess.audit import AssessAuditEvent, write_event
 from vektra_assess.jobs import JobKind, enqueue_job
 from vektra_assess.privacy.purge import (
     IN_FLIGHT,
+    LEFT_TABLES,
     Connect,
     leftover,
     shred_sessions,
+    tables_left,
     write_tombstones,
 )
 from vektra_assess.privacy.subject import ERASED_REF, SUBJECT_TABLES, subject_ref
@@ -69,7 +71,12 @@ log = structlog.get_logger(__name__)
 
 
 class ErasureVerificationFailed(RuntimeError):
-    """Rows were left after the deletion: the transaction is rolled back."""
+    """Rows were left after the deletion: the transaction is rolled back. ``tables``: the
+    rows left per table (logged through ``purge.tables_left``, kept on the failed record)."""
+
+    def __init__(self, message: str, tables: dict[str, int] | None = None) -> None:
+        super().__init__(message)
+        self.tables: dict[str, int] = dict(tables or {})
 
 
 class SessionWentLive(RuntimeError):
@@ -232,7 +239,7 @@ async def erase_scope(
     if jobs:
         left["assess_jobs"] = jobs
     if left:
-        raise ErasureVerificationFailed(json.dumps(left, sort_keys=True))
+        raise ErasureVerificationFailed(json.dumps(left, sort_keys=True), left)
     return result
 
 
@@ -382,19 +389,34 @@ async def run_erasure(connect: Connect, erasure_id: int) -> str:
             )
             return "erased"
     except ErasureVerificationFailed as exc:
+        left = exc.tables
         log.error(
             "assess.erasure.alert",
             alert=alerts.FAILED,
             erasure_id=int(erasure_id),
-            left=str(exc)[:200],
+            tables_left=tables_left(left),
         )
-    return await record_failure(connect, erasure_id)
+    return await record_failure(connect, erasure_id, left)
 
 
-async def record_failure(connect: Connect, erasure_id: int) -> str:
+def _validated(left: dict[str, int]) -> dict[str, int]:
+    """The rows left per table, keyed by names of ``LEFT_TABLES`` only (else ``other``)."""
+    out: dict[str, int] = {}
+    for table, n in left.items():
+        name = table if table in LEFT_TABLES else "other"
+        out[name] = out.get(name, 0) + (int(n) if isinstance(n, int) else 0)
+    return out
+
+
+async def record_failure(
+    connect: Connect, erasure_id: int, left: dict[str, int] | None = None
+) -> str:
     """The deletion rolled back: record the failure (and drop the ids it carried) on its own,
     with the operator's alert in the same transaction (OQ-033). A request another run already
-    completed is left as it is and alerts nothing (``done``), like the other two steps."""
+    completed is left as it is and alerts nothing (``done``), like the other two steps.
+    ``rows_deleted`` keeps ``{"left": {table: rows}}`` (validated table names only): nothing was
+    deleted, and the operator's runbook reads what was left from the record when the log line
+    is gone."""
     async with connect() as conn, conn.begin():
         rec = (await conn.execute(_RECORD, {"i": erasure_id})).first()
         if rec is None or rec.completed_at is not None:
@@ -405,7 +427,7 @@ async def record_failure(connect: Connect, erasure_id: int) -> str:
                 "i": erasure_id,
                 "o": "failed",
                 "e": "verification_failed",
-                "counts": "{}",
+                "counts": json.dumps({"left": _validated(left or {})}, sort_keys=True),
             },
         )
         await queue_operator_alert(
@@ -463,7 +485,7 @@ async def alert_overdue_erasures(connect: Connect, *, after_s: int) -> int:
                 "assess.erasure.alert",
                 alert=alerts.OVERDUE,
                 erasure_id=int(row.id),
-                scope=str(row.scope),
+                erasure_scope=str(row.scope),
             )
         if rows:
             await conn.execute(_MARK_OVERDUE, {"ids": [int(row.id) for row in rows]})

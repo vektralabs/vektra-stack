@@ -82,6 +82,28 @@ def _alert(kind: str, site: uuid.UUID, rid: int, scope: str) -> dict[str, Any]:
     return {"site_id": str(site), "kind": kind, "erasure_id": rid, "scope": scope}
 
 
+async def test_a_failed_record_keeps_the_rows_left_by_known_table(pg, worker) -> None:  # type: ignore[no-untyped-def]
+    """CodeRabbit 4558071155: the runbook's fallback when the log line is gone. Only names
+    of the erasure's own table list are kept; anything else counts as ``other``."""
+    async with world(pg) as w:
+        rid = await _record(pg, w.site, age="1 minute")
+        left = {"assess_turns": 2, "assess_sessions": 1, "not a table": 5}
+        assert await record_failure(worker.connect, rid, left) == "failed"
+        rows = await pg.run(
+            "super",
+            "SELECT outcome, error_code, rows_deleted FROM assess_erasure_records "
+            "WHERE id = :i",
+            {"i": rid},
+        )
+        assert [tuple(r) for r in rows] == [
+            (
+                "failed",
+                "verification_failed",
+                {"left": {"assess_turns": 2, "assess_sessions": 1, "other": 5}},
+            )
+        ]
+
+
 async def test_a_failed_erasure_queues_exactly_one_operator_alert(pg, worker) -> None:  # type: ignore[no-untyped-def]
     async with world(pg) as w:
         # a subject request without its user id fails its own verification (no deletion)

@@ -240,11 +240,14 @@ class Harness:
 
     async def mint_download(self, request: Request) -> Response:
         """Plugin P2's server side: a download token for the student's own transcript."""
-        sub, _cmid = self.target(request)
+        sub, cmid = self.target(request)
         tid = request.query_params["tid"]
         r = await self.w.client.post(
             f"/api/v1/assess/transcripts/{tid}/download-token",
-            json={"sub": sub},
+            json={
+                "sub": sub,
+                "cmid": cmid,
+            },  # plugin 0.2.0: the page's activity, required
             headers={"Authorization": "Bearer mint"},
         )
         if r.status_code != 201:

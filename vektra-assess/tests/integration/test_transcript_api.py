@@ -16,7 +16,7 @@ import pytest
 from sqlalchemy.ext.asyncio import create_async_engine
 from support.recipients import configure_recipients, refs
 from support.sessions import seed_session
-from support.world import auth, err, world
+from support.world import auth, default_settings, err, world
 
 from integration.test_session_preflight import _reset
 from vektra_assess.keys import AssessKeyring
@@ -111,7 +111,7 @@ async def stored(pg, ring, tid) -> bytes:  # type: ignore[no-untyped-def]
 async def test_the_owner_downloads_the_exact_bytes_once(pg, worker) -> None:  # type: ignore[no-untyped-def]
     async with world(pg) as w:
         s, ring = await _ready(w, worker)
-        r = await mint(w, s.session_id, sub=s.sub)
+        r = await mint(w, s.session_id, sub=s.sub, cmid=s.cmid)
         assert r.status_code == 201, r.text
         assert r.headers["cache-control"] == "no-store"
         token, ttl = r.json()["token"], r.json()["expires_in"]
@@ -154,7 +154,7 @@ async def test_the_owner_downloads_the_exact_bytes_once(pg, worker) -> None:  # 
 async def test_student_b_cannot_get_a_token_for_a_transcript(pg, worker) -> None:  # type: ignore[no-untyped-def]
     async with world(pg) as w:
         s, _ = await _ready(w, worker)
-        r = await mint(w, s.session_id, sub=s.sub + 1)
+        r = await mint(w, s.session_id, sub=s.sub + 1, cmid=s.cmid)
         assert r.status_code == 403
         assert (
             await count(
@@ -178,7 +178,7 @@ async def test_student_b_cannot_get_a_token_for_a_transcript(pg, worker) -> None
 async def test_expired_foreign_and_query_tokens_are_refused(pg, worker) -> None:  # type: ignore[no-untyped-def]
     async with world(pg) as w:
         s, _ = await _ready(w, worker)
-        token = (await mint(w, s.session_id, sub=s.sub)).json()["token"]
+        token = (await mint(w, s.session_id, sub=s.sub, cmid=s.cmid)).json()["token"]
         # expired, on the database clock (the row decides; the JWT is still within its exp)
         await pg.run(
             "super",
@@ -187,7 +187,7 @@ async def test_expired_foreign_and_query_tokens_are_refused(pg, worker) -> None:
         r = await download(w, s.session_id, token)
         assert r.status_code == 401 and err(r)["code"] == "ERR-ASSESS-018"
         # a token for another transcript id
-        token = (await mint(w, s.session_id, sub=s.sub)).json()["token"]
+        token = (await mint(w, s.session_id, sub=s.sub, cmid=s.cmid)).json()["token"]
         other = "00000000-0000-4000-8000-000000000001"
         assert (await download(w, other, token)).status_code == 401
         # the token in the query string only
@@ -211,12 +211,12 @@ async def test_a_grader_downloads_the_same_bytes_and_a_non_grader_is_refused(
             await download(
                 w,
                 s.session_id,
-                (await mint(w, s.session_id, sub=s.sub)).json()["token"],
+                (await mint(w, s.session_id, sub=s.sub, cmid=s.cmid)).json()["token"],
             )
         ).content
         # stale grader facts: refused, and a refresh is queued for the retry
         await _graders(w, s, age="1 hour")
-        r = await mint(w, s.session_id, key="teacher", actor_userid=12)
+        r = await mint(w, s.session_id, key="teacher", actor_userid=12, cmid=s.cmid)
         assert r.status_code == 403 and err(r)["code"] == "ERR-ASSESS-021"
         assert err(r)["details"]["reason"] == "grader_check_stale"
         assert "queued" in err(r)["remediation"]
@@ -230,7 +230,7 @@ async def test_a_grader_downloads_the_same_bytes_and_a_non_grader_is_refused(
             >= 1
         )
         await _graders(w, s)
-        r = await mint(w, s.session_id, key="teacher", actor_userid=12)
+        r = await mint(w, s.session_id, key="teacher", actor_userid=12, cmid=s.cmid)
         assert r.status_code == 201, r.text
         teacher = await download(w, s.session_id, r.json()["token"])
         assert teacher.status_code == 200
@@ -245,14 +245,14 @@ async def test_a_grader_downloads_the_same_bytes_and_a_non_grader_is_refused(
             == 1
         )
         # not a grader of this activity
-        r = await mint(w, s.session_id, key="teacher", actor_userid=99)
+        r = await mint(w, s.session_id, key="teacher", actor_userid=99, cmid=s.cmid)
         assert r.status_code == 403 and err(r)["code"] == "ERR-ASSESS-021"
         assert err(r)["details"]["reason"] == "not_a_grader"
         assert "queued" not in err(r)["remediation"]
         # a grader who lost the capability between mint and download
-        token = (await mint(w, s.session_id, key="teacher", actor_userid=13)).json()[
-            "token"
-        ]
+        token = (
+            await mint(w, s.session_id, key="teacher", actor_userid=13, cmid=s.cmid)
+        ).json()["token"]
         await _graders(w, s, ids=(12,))
         assert (await download(w, s.session_id, token)).status_code == 403
 
@@ -260,15 +260,15 @@ async def test_a_grader_downloads_the_same_bytes_and_a_non_grader_is_refused(
 async def test_keys_are_exact_and_site_bound(pg, worker) -> None:  # type: ignore[no-untyped-def]
     async with world(pg) as w:
         s, _ = await _ready(w, worker)
-        r = await mint(w, s.session_id, key="admin", sub=s.sub)
+        r = await mint(w, s.session_id, key="admin", sub=s.sub, cmid=s.cmid)
         assert r.status_code == 403  # the admin superscope does not inherit assess:*
-        r = await mint(w, s.session_id, key="mint_other", sub=s.sub)
+        r = await mint(w, s.session_id, key="mint_other", sub=s.sub, cmid=s.cmid)
         assert (
             r.status_code == 404
         )  # another site's key never learns the transcript exists
-        r = await mint(w, s.session_id, key="mint", actor_userid=12)
+        r = await mint(w, s.session_id, key="mint", actor_userid=12, cmid=s.cmid)
         assert r.status_code == 400  # a mint key cannot act as a grader
-        r = await mint(w, s.session_id, sub=s.sub, extra="x")
+        r = await mint(w, s.session_id, sub=s.sub, extra="x", cmid=s.cmid)
         assert r.status_code == 400 and err(r)["code"] == "ERR-ASSESS-014"
 
 
@@ -278,15 +278,21 @@ async def test_resend_never_takes_a_recipient(pg, worker) -> None:  # type: igno
         await _graders(w, s)
         url = f"/api/v1/assess/transcripts/{s.session_id}/resend"
         for body in (
-            {"actor_userid": 12, "recipient": "x@evil.example"},
-            {"actor_userid": 12, "to": "x@evil.example"},
-            {"actor_userid": 12, "options": {"email": "x@evil.example"}},
+            {"actor_userid": 12, "cmid": s.cmid, "recipient": "x@evil.example"},
+            {"actor_userid": 12, "cmid": s.cmid, "to": "x@evil.example"},
+            {
+                "actor_userid": 12,
+                "cmid": s.cmid,
+                "options": {"email": "x@evil.example"},
+            },
         ):
             r = await w.client.post(url, json=body, headers=auth("teacher"))
             assert r.status_code == 400 and err(r)["code"] == "ERR-ASSESS-019", body
         for q in ("recipient=x@evil.example", "email=x", "bcc=x"):
             r = await w.client.post(
-                f"{url}?{q}", json={"actor_userid": 12}, headers=auth("teacher")
+                f"{url}?{q}",
+                json={"actor_userid": 12, "cmid": s.cmid},
+                headers=auth("teacher"),
             )
             assert r.status_code == 400 and err(r)["code"] == "ERR-ASSESS-019", q
         assert (
@@ -298,12 +304,16 @@ async def test_resend_never_takes_a_recipient(pg, worker) -> None:  # type: igno
             == 0
         )
         # round 1 was just created by the generation: too soon (review #6), nothing written
-        r = await w.client.post(url, json={"actor_userid": 12}, headers=auth("teacher"))
+        r = await w.client.post(
+            url, json={"actor_userid": 12, "cmid": s.cmid}, headers=auth("teacher")
+        )
         assert r.status_code == 429 and err(r)["details"]["reason"] == "resend_interval"
         assert int(r.headers["retry-after"]) == 600
         # a grader's resend: round 2 for the same recipients; an operator's: round 3
         await _age_rounds(pg, s)
-        r = await w.client.post(url, json={"actor_userid": 12}, headers=auth("teacher"))
+        r = await w.client.post(
+            url, json={"actor_userid": 12, "cmid": s.cmid}, headers=auth("teacher")
+        )
         assert r.status_code == 202 and r.json()["round"] == 2, r.text
         await _age_rounds(pg, s)
         r = await w.client.post(url, json={}, headers=auth("admin"))
@@ -327,7 +337,9 @@ async def test_resend_never_takes_a_recipient(pg, worker) -> None:  # type: igno
             == 3
         )
         # a non-grader teacher cannot resend
-        r = await w.client.post(url, json={"actor_userid": 99}, headers=auth("teacher"))
+        r = await w.client.post(
+            url, json={"actor_userid": 99, "cmid": s.cmid}, headers=auth("teacher")
+        )
         assert r.status_code == 403
 
 
@@ -339,7 +351,7 @@ async def test_an_altered_stored_transcript_is_not_served(pg, worker) -> None:  
             "UPDATE assess_transcripts SET content_hash = repeat('0', 64) WHERE id = :t",
             {"t": s.session_id},
         )
-        token = (await mint(w, s.session_id, sub=s.sub)).json()["token"]
+        token = (await mint(w, s.session_id, sub=s.sub, cmid=s.cmid)).json()["token"]
         r = await download(w, s.session_id, token)
         assert r.status_code == 500 and err(r)["code"] == "ERR-ASSESS-020"
         assert b"<html" not in r.content
@@ -400,16 +412,16 @@ async def test_a_stale_grader_list_at_download_does_not_burn_the_token(
     async with world(pg) as w:
         s, _ = await _ready(w, worker)
         await _graders(w, s)
-        token = (await mint(w, s.session_id, key="teacher", actor_userid=12)).json()[
-            "token"
-        ]
+        token = (
+            await mint(w, s.session_id, key="teacher", actor_userid=12, cmid=s.cmid)
+        ).json()["token"]
         # older than the bound (120 s) but within bound + TTL (60 s): still served
         await _graders(w, s, age="150 seconds")
         assert (await download(w, s.session_id, token)).status_code == 200
         await _graders(w, s)
-        token = (await mint(w, s.session_id, key="teacher", actor_userid=12)).json()[
-            "token"
-        ]
+        token = (
+            await mint(w, s.session_id, key="teacher", actor_userid=12, cmid=s.cmid)
+        ).json()["token"]
         await _graders(w, s, age="1 hour")
         r = await download(w, s.session_id, token)
         assert r.status_code == 403 and err(r)["code"] == "ERR-ASSESS-021"
@@ -434,10 +446,10 @@ async def test_mint_and_download_share_one_rate_budget(pg, worker) -> None:  # t
 
     async with world(pg, default_settings(VEKTRA_ASSESS_DOWNLOAD_RPM=2)) as w:
         s, _ = await _ready(w, worker)
-        r = await mint(w, s.session_id, sub=s.sub)
+        r = await mint(w, s.session_id, sub=s.sub, cmid=s.cmid)
         assert r.status_code == 201
         assert (await download(w, s.session_id, r.json()["token"])).status_code == 200
-        r = await mint(w, s.session_id, sub=s.sub)
+        r = await mint(w, s.session_id, sub=s.sub, cmid=s.cmid)
         assert r.status_code == 429 and err(r)["details"]["reason"] == "download_rate"
 
 
@@ -448,7 +460,7 @@ async def test_a_transcript_key_not_loaded_is_503_and_keeps_the_token(
     (retryable), the token stays usable, no integrity failure is reported."""
     async with world(pg) as w:
         s, ring = await _ready(w, worker)
-        token = (await mint(w, s.session_id, sub=s.sub)).json()["token"]
+        token = (await mint(w, s.session_id, sub=s.sub, cmid=s.cmid)).json()["token"]
         w.app.state.assess_keys[store.KEYRING] = AssessKeyring(
             store.KEYRING, "t2", {"t2": os.urandom(32)}
         )
@@ -476,7 +488,7 @@ async def test_the_page_cmid_scopes_the_grader_routes(pg, worker) -> None:  # ty
     """Plugin request: the plugin checks the capability on its PAGE's cmid, Vektra on the
     transcript's activity. With ``cmid`` in the body, a transcript of another activity is
     refused exactly as an unknown transcript (404 ERR-ASSESS-017, same envelope), audited;
-    the same activity passes; absent ``cmid`` is unchanged. Both grader routes, both keys."""
+    the same activity passes. Both grader routes, both keys."""
     import uuid
 
     async with world(pg) as w:
@@ -495,8 +507,6 @@ async def test_the_page_cmid_scopes_the_grader_routes(pg, worker) -> None:  # ty
         # download-token, grader path
         same = await mint(w, s.session_id, key="teacher", actor_userid=12, cmid=s.cmid)
         assert same.status_code == 201, same.text
-        absent = await mint(w, s.session_id, key="teacher", actor_userid=12)
-        assert absent.status_code == 201, absent.text
         tokens_sql = (
             "SELECT count(*) FROM assess_transcript_download_tokens "
             "WHERE transcript_id = :t"
@@ -566,9 +576,6 @@ async def test_the_page_cmid_scopes_the_grader_routes(pg, worker) -> None:  # ty
         await _age_rounds(pg, s)
         r = await resend(w, s.session_id, actor_userid=12, cmid=s.cmid)
         assert r.status_code == 202 and r.json()["round"] == 2, r.text
-        await _age_rounds(pg, s)
-        r = await resend(w, s.session_id, actor_userid=12)  # absent: unchanged
-        assert r.status_code == 202 and r.json()["round"] == 3, r.text
 
 
 async def test_the_operator_resend_takes_no_cmid(pg, worker) -> None:  # type: ignore[no-untyped-def]
@@ -626,7 +633,6 @@ async def test_a_purged_transcript_of_another_activity_is_unknown(pg, worker) ->
                 "c": s.cmid,
             },
         )
-        assert (await mint(w, s.session_id, sub=s.sub)).status_code == 410
         assert (await mint(w, s.session_id, sub=s.sub, cmid=s.cmid)).status_code == 410
         _same_refusal(
             await mint(w, s.session_id, sub=s.sub, cmid=s.cmid + 1),
@@ -634,25 +640,80 @@ async def test_a_purged_transcript_of_another_activity_is_unknown(pg, worker) ->
         )
 
 
-async def test_a_grader_without_cmid_is_counted(pg, worker) -> None:  # type: ignore[no-untyped-def]
-    """Review: the opt-in gap stays visible until the plugin minimum makes cmid required on the
-    teacher path: a counter per route; the owner path and a cmid-carrying call do not count."""
-    from vektra_assess import metrics
-
+async def test_a_missing_cmid_is_a_400(pg, worker) -> None:  # type: ignore[no-untyped-def]
+    """Plugin minimum 0.2.0 (it always sends the page's cmid): the download-token mint (owner
+    and grader) and the grader's resend refuse a call without it, 400 ERR-ASSESS-014
+    ``missing:cmid``, before anything is minted or queued. The operator's resend still takes
+    none."""
     async with world(pg) as w:
         s, _ = await _ready(w, worker)
         await _graders(w, s)
-        before = metrics.transcript_cmid_missing()
-        await mint(w, s.session_id, key="teacher", actor_userid=12)
-        await mint(w, s.session_id, key="teacher", actor_userid=12, cmid=s.cmid)
-        await mint(w, s.session_id, sub=s.sub)
+        refused = [
+            await mint(w, s.session_id, sub=s.sub),
+            await mint(w, s.session_id, key="teacher", actor_userid=12),
+            await resend(w, s.session_id, actor_userid=12),
+        ]
+        for r in refused:
+            assert r.status_code == 400 and err(r)["code"] == "ERR-ASSESS-014", r.text
+            assert err(r)["details"] == {"reason": "missing:cmid"}
+        assert (
+            await count(
+                pg,
+                "SELECT count(*) FROM assess_transcript_download_tokens "
+                "WHERE transcript_id = :t",
+                t=s.session_id,
+            )
+            == 0
+        )
+        assert (
+            await count(
+                pg,
+                "SELECT count(*) FROM assess_deliveries WHERE transcript_id = :t "
+                "AND round > 1",
+                t=s.session_id,
+            )
+            == 0
+        )
         await _age_rounds(pg, s)
-        await resend(w, s.session_id, actor_userid=12)
+        r = await resend(w, s.session_id, key="admin")
+        assert r.status_code == 202, r.text
+
+
+async def test_a_null_cmid_is_refused_alike_on_both_routes(pg, worker) -> None:  # type: ignore[no-untyped-def]
+    """Review #3/#4: an explicit ``"cmid": null`` is the model's own reason, the same on the
+    download-token mint (both paths) and the grader's resend; the operator's resend refuses the
+    field whatever its value."""
+    async with world(pg) as w:
+        s, _ = await _ready(w, worker)
+        await _graders(w, s)
+        got = [
+            await mint(w, s.session_id, sub=s.sub, cmid=None),
+            await mint(w, s.session_id, key="teacher", actor_userid=12, cmid=None),
+            await resend(w, s.session_id, actor_userid=12, cmid=None),
+        ]
+        reasons = set()
+        for r in got:
+            assert r.status_code == 400 and err(r)["code"] == "ERR-ASSESS-014", r.text
+            reasons.add(err(r)["details"]["reason"])
+        assert reasons == {"int_type:cmid"}
+        r = await resend(w, s.session_id, key="admin", cmid=None)
+        assert r.status_code == 400
+        assert err(r)["details"] == {"reason": "extra_forbidden:cmid"}
+
+
+async def test_a_resend_without_cmid_spends_no_rate_budget(pg, worker) -> None:  # type: ignore[no-untyped-def]
+    """Review #2: the body is validated before the resend limiter is charged, so malformed
+    calls (here, more than the per-key budget) never cause a later 429 for a good one."""
+    async with world(pg, default_settings(VEKTRA_ASSESS_RESEND_RPM=2)) as w:
+        s, _ = await _ready(w, worker)
+        await _graders(w, s)
+        for _ in range(5):
+            r = await resend(w, s.session_id, actor_userid=12)
+            assert r.status_code == 400, r.text
+            assert err(r)["details"] == {"reason": "missing:cmid"}
         await _age_rounds(pg, s)
-        await resend(w, s.session_id, key="admin")
-        after = metrics.transcript_cmid_missing()
-        assert after["download_token"] - before["download_token"] == 1
-        assert after["resend"] - before["resend"] == 1
+        r = await resend(w, s.session_id, actor_userid=12, cmid=s.cmid)
+        assert r.status_code == 202, r.text
 
 
 @pytest.mark.parametrize("bad", [0, -1, "x", 1.5, 2**53, [1]])

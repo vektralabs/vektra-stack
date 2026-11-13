@@ -374,5 +374,12 @@ discussion only while its latest finished report for the current LMS release has
    | `privacy_config` | `PUT /api/v1/assess/sites/{site_id}/privacy` with the DPO's values (REQ-089) |
 
    Each item carries a content-free `reason_code` that names the failing condition.
+
+   **Changing the privacy notice.** Any change to what the student is shown before Start
+   (`retention_days`, `legal_basis_label`, `legal_basis_text`, `notice_url`, `notice_text`) needs a
+   new `notice_version` in the same `PUT`: the same version with different content is refused
+   (`400 ERR-ASSESS-028`, field `notice_version`, code `must_change`). The version is what a Start
+   compares with the one the student saw, so a student who opened the page before the change is
+   asked to reopen it (`409 ERR-ASSESS-029`) instead of starting under a notice they did not read.
 5. Re-run the check after every fix, and after every LMS upgrade: a release change invalidates the
    stored capability flags and blocks Starts until a check passes.

@@ -208,6 +208,9 @@ ERR_ASSESS_027 = "ERR-ASSESS-027"  # Subject erasure not completed yet or failed
 ERR_ASSESS_028 = (
     "ERR-ASSESS-028"  # Privacy configuration refused: field-level errors (REQ-089)
 )
+ERR_ASSESS_029 = (
+    "ERR-ASSESS-029"  # Privacy notice changed since the student saw it (mint or Start)
+)
 
 # Admin errors (ERR-ADMIN-001..007 live in vektra-admin as string literals;
 # 008 is shared because it backs a factory reused within that module)
@@ -275,6 +278,7 @@ _CODE_STATUS_OVERRIDE: dict[str, int] = {
     ERR_ASSESS_026: 410,
     ERR_ASSESS_027: 503,
     ERR_ASSESS_028: 400,  # explicit envelope with details.fields, never the 422 path (DEBT-035)
+    ERR_ASSESS_029: 409,
 }
 
 

@@ -7,7 +7,10 @@ the previous is removed). ``aud`` is always ``discussion`` and ``iss`` is
 aud, iss, exp, iat and kid are always required.
 
 - *Pre-session* (minted by ``POST /tokens``): ``sub, site, cmid, jti, loginas=false,
-  stage="pre"``, ``exp <= iat + 120 s``. Single use: Start or resume consumes its jti.
+  stage="pre"``, ``exp <= iat + 120 s``. Single use: Start or resume consumes its jti. Optional
+  ``notice_version``: the privacy-notice version the plugin says the student saw
+  (plugin request P3), never compared at mint; Start refuses when the site's current version
+  differs, every other use of the token ignores it.
 - *Session-bound* (returned by Start and resume): ``sub, site, cmid, sid, seq, epoch, jti,
   loginas=false, stage="session"``, ``exp <= min(deadline + grace, iat + session TTL)``. ``seq``
   is the session number N; ``epoch`` the session's revocation counter.
@@ -31,6 +34,7 @@ import jwt
 
 from vektra_assess.config import VektraAssessSettings
 from vektra_assess.keys import AssessKeyring
+from vektra_assess.privacy_text import notice_version_error
 from vektra_shared.tokens import Keyring, SigningKey, decode_jwt, encode_jwt
 
 AUDIENCE = "discussion"
@@ -67,6 +71,8 @@ class PreClaims:
     jti: str
     iat: int
     exp: int
+    #: the privacy-notice version presented at mint (plugin request P3); None: none presented
+    notice_version: str | None = None
 
 
 @dataclass(frozen=True)
@@ -172,11 +178,18 @@ class AssessTokens:
                 return Minted(token, jti, datetime.fromtimestamp(exp, tz=UTC), ttl_s)
             ttl_s -= 1
 
-    def mint_presession(self, *, sub: int, site: UUID, cmid: int) -> Minted:
-        return self._mint(
-            {"sub": str(sub), "site": str(site), "cmid": cmid, "stage": "pre"},
-            self._pre_ttl,
-        )
+    def mint_presession(
+        self, *, sub: int, site: UUID, cmid: int, notice_version: str | None = None
+    ) -> Minted:
+        claims: dict[str, object] = {
+            "sub": str(sub),
+            "site": str(site),
+            "cmid": cmid,
+            "stage": "pre",
+        }
+        if notice_version is not None:
+            claims["notice_version"] = notice_version
+        return self._mint(claims, self._pre_ttl)
 
     def mint_session(
         self,
@@ -254,7 +267,10 @@ class AssessTokens:
         if stage == "pre":
             if exp - iat > 120:
                 raise TokenError("presession_ttl")
-            return PreClaims(sub, site, cmid, jti, iat, exp)
+            notice = claims.get("notice_version")
+            if notice is not None and notice_version_error(notice) is not None:
+                raise TokenError("claim_notice_version")
+            return PreClaims(sub, site, cmid, jti, iat, exp, notice)
         return SessionClaims(
             sub,
             site,

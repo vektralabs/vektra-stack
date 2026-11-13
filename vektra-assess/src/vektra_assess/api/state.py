@@ -261,7 +261,10 @@ async def enrich(
                 privacy = privacy_config.pre_session_privacy(site_privacy)
             else:
                 privacy = {
-                    "notice_version": settings.privacy_notice_version,
+                    # the one rule Start compares against (plugin request P3)
+                    "notice_version": privacy_config.shown_version(
+                        site_privacy, settings.privacy_notice_version
+                    ),
                     "mailbox_notice": privacy_config.MAILBOX_SENTENCE,
                 }
                 if settings.privacy_notice_url:

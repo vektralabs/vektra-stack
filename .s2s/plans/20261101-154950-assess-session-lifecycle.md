@@ -373,6 +373,14 @@ Every acceptance check reads rows, bytes or real responses, never a status field
 
 ## Notes
 
+- **Provider configuration refusals (2026-11-13, branch `fix/assess-outage-probe-and-auth-cause`,
+  review of PR #219).** An `auth_error` or a non-429 `http_4xx` is a refusal, never an OUTAGE; a
+  Start that hits one keeps the rollback reason `provider_unavailable` because the plugin and the
+  UI read those codes, and the operator gets the `provider_config_refused` alert instead.
+  **Follow-up:** a distinct student-facing Start rollback reason for a configuration refusal
+  (e.g. "the service is misconfigured, contact the teacher" rather than "temporarily
+  unavailable"), once the plugin can show it; it needs a plugin release first.
+
 - **From plan 7 (2026-11-06, coordinator decision on PR #151)**: the API no longer refuses to start without an NFR-023 activation; it starts degraded (`app.state.assess_llm_activated`). The pre-flight activation check of M1.5 is therefore the ONLY gate that keeps an unactivated (model, prompt_version) from serving: it must query `vektra_assess.llm.activation.is_activated` (worker role has SELECT on `assess_model_activations`) before every start, honour `VEKTRA_ASSESS_LLM_ALLOW_UNACTIVATED` only in development, and refuse with a content-free reason. A test must show a start refused for an unactivated triple and accepted after a row is inserted, without a restart.
 
 - **Drift: worker vs server-answered pending turns.** COMP-003 says the worker "runs no

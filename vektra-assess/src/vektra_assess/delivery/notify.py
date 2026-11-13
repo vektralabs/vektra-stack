@@ -17,6 +17,10 @@ Producers (unchanged, all in the transaction of the event):
   dropped only if the request has since been erased: one that ended failed is still reported) or
   ``erasure_abandoned`` (recorded failed by the daily purge). OQ-033: the LMS cannot fail its own
   request, so the operator hears it from Vektra.
+- ``provider_alerts.queue_provider_config_alert`` (the API's reply task, the worker's Start
+  rollback): ``operator_notify`` with ``{site_id, kind: provider_config_refused, reason: <cause>,
+  window}`` when the model provider refuses the configuration; a job whose key an earlier job
+  already carries is dropped here (one email per site, cause and hour).
 
 Recipients: the teacher side is the activity's configured transcript recipients (the sealed
 ``transcript_recipients`` field, re-read on every run, the same domain allowlist); the operator
@@ -54,7 +58,7 @@ from uuid import UUID
 import structlog
 from sqlalchemy import text
 
-from vektra_assess import erasure_alerts
+from vektra_assess import erasure_alerts, provider_alerts
 from vektra_assess.audit import AssessAuditEvent, write_event
 from vektra_assess.delivery import message as mail
 from vektra_assess.delivery.attempt import AttemptEvents, count, decide, record
@@ -91,6 +95,9 @@ PURGE_ABANDONED = "delivery_abandoned_on_purge"
 LMS_UNREADABLE = "lms_unreachable"
 #: OQ-033 operator alerts (the producer's names, one definition)
 ERASURE_KINDS = erasure_alerts.KINDS
+#: the model provider refused the configuration (``vektra_assess.provider_alerts``)
+PROVIDER_CONFIG_REFUSED = provider_alerts.KIND
+CONFIG_REFUSAL_CAUSES = frozenset({"auth_error", "http_4xx"})
 NO_RECIPIENTS = "no_recipients"
 RECIPIENT_WITHDRAWN = "recipient_withdrawn"
 #: a busy relay is tried again after this long (no attempt was made, nothing to back off from)
@@ -212,6 +219,10 @@ async def read_event(conn: Any, kind: JobKind, args: Mapping[str, Any]) -> Event
             if rec is not None and rec.outcome == "erased":
                 return None  # erased since the sweep: nothing left to report
         return Event(code, site, erasure_id=number, scope=str(scope))
+    if args.get("kind") == PROVIDER_CONFIG_REFUSED:
+        if kind is not OPERATOR or reason not in CONFIG_REFUSAL_CAUSES:
+            return None
+        return Event(PROVIDER_CONFIG_REFUSED, site, reason=str(reason))
     if args.get("kind") == LMS_UNREADABLE:
         if (
             kind is not OPERATOR
@@ -298,6 +309,26 @@ def _text(kind: JobKind, e: Event) -> tuple[str, str]:
             "Controllare che l'LMS sia raggiungibile e che la credenziale del provider sia "
             "valido. L'avviso arriva al massimo una volta ogni 15 minuti per sito.\n"
             + _FOOTER,
+        )
+    if kind is OPERATOR and e.code == PROVIDER_CONFIG_REFUSED:
+        problem = (
+            "la chiave API manca o e' rifiutata (VEKTRA_LLM_API_KEY nel processo che chiama "
+            "il modello: l'API e il worker)"
+            if e.reason == "auth_error"
+            else "la richiesta e' rifiutata (modello VEKTRA_ASSESS_LLM_MODEL, parametri "
+            "VEKTRA_ASSESS_LLM_EXTRA_BODY o VEKTRA_ASSESS_LLM_MAX_TOKENS)"
+        )
+        return (
+            f"Vektra: il modello rifiuta la configurazione - sito {e.site_id}",
+            "Il fornitore del modello della discussione ha rifiutato una chiamata per un "
+            f"problema di configurazione: {problem}.\n\n"
+            f"  sito: {e.site_id}\n"
+            f"  causa: {e.reason}\n\n"
+            "Le discussioni non entrano in interruzione del servizio: ogni turno rifiutato "
+            "riceve la risposta interrotta e ogni avvio viene annullato (provider_unavailable) "
+            "finche' la configurazione non e' corretta. Controllare il registro "
+            "(assess_turn_provider_failure, assess_preflight_provider_outage). L'avviso arriva "
+            "al massimo una volta all'ora per sito e causa.\n" + _FOOTER,
         )
     if kind is OPERATOR and e.code in ERASURE_KINDS:
         what = {
@@ -835,12 +866,34 @@ def _run(kind: JobKind, ctx: Any, event: Event, now: datetime) -> _Run:
     return _Run(kind, root, try_no, since, event, int(ctx.job_id), args)
 
 
+_EARLIER = text(
+    "SELECT 1 FROM assess_jobs WHERE kind = 'operator_notify' AND dedupe_key = :k "
+    "AND id < :j LIMIT 1"
+)
+
+
+async def _covered_earlier(conn: Any, event: Event, ctx: Any) -> bool:
+    """A ``provider_config_refused`` alert whose site, cause and window an EARLIER job already
+    carries (queued, sent or failed): dropped, one email per window (``provider_alerts``).
+    Only the chain's first run is checked: a retry run carries ``root_job_id``."""
+    if event.code != PROVIDER_CONFIG_REFUSED or "root_job_id" in ctx.args:
+        return False
+    window = _int(ctx.args.get("window"))
+    if window is None or event.reason is None:
+        return False
+    key = provider_alerts.dedupe_key(event.site_id, event.reason, window)
+    row = (await conn.execute(_EARLIER, {"k": key, "j": int(ctx.job_id)})).first()
+    return row is not None
+
+
 async def notify(deps: NotifyDeps, kind: JobKind, ctx: Any) -> Notified | None:
     """One run of a notification. ``None``: malformed or stale job (a no-op that completes)."""
     now = deps.clock()
     acquire = budgeted(deps.db_budget, ctx.acquire)
     async with acquire() as conn:
         event = await read_event(conn, kind, ctx.args)
+        if event is not None and await _covered_earlier(conn, event, ctx):
+            event = None
         await conn.rollback()
     if event is None:
         log.info("assess_notify_stale", kind=kind.value, job_id=int(ctx.job_id))

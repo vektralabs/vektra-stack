@@ -19,6 +19,7 @@ import httpx
 import pytest
 import structlog
 from fakes import TimedLLM
+from support.litellm_errors import litellm_error
 from test_llm_runner import PART_B_OK, _timed_runner, _visible_bundle
 
 from vektra_assess.llm import ProviderOutageError, StudentTurn
@@ -149,7 +150,7 @@ def test_litellm_exceptions_map_as_expected() -> None:
     kw = {"message": CANARY, "model": "m", "llm_provider": "openai"}
     expected = {
         "RateLimitError": ("http_4xx", 429),
-        "AuthenticationError": ("http_4xx", 401),
+        "AuthenticationError": ("auth_error", 401),
         "NotFoundError": ("http_4xx", 404),
         "BadRequestError": ("http_4xx", 400),
         "ContextWindowExceededError": ("http_4xx", 400),
@@ -165,9 +166,126 @@ def test_litellm_exceptions_map_as_expected() -> None:
     assert outage_cause(budget) == ("budget_exceeded", None)
 
 
+def _litellm_with_status(name: str, status: int) -> BaseException:
+    return litellm_error(name, status, message=CANARY)
+
+
+#: litellm's refusal classes that take the status of the response they are given (its
+#: RateLimitError always builds its own 429 response: see the genuine-status test)
+_REFUSAL_TYPES = {
+    "AuthenticationError": "auth_error",
+    "PermissionDeniedError": "auth_error",
+    "NotFoundError": "http_4xx",
+    "BadRequestError": "http_4xx",
+    "UnprocessableEntityError": "http_4xx",
+    "ContentPolicyViolationError": "http_4xx",
+    "ContextWindowExceededError": "http_4xx",
+}
+_GENUINE = {
+    "AuthenticationError": 401,
+    "PermissionDeniedError": 403,
+    "NotFoundError": 404,
+    "UnprocessableEntityError": 422,
+    "RateLimitError": 429,
+}
+
+
+@pytest.mark.parametrize(("name", "cause"), sorted(_REFUSAL_TYPES.items()))
+def test_a_refusal_type_wins_over_a_library_assigned_5xx(name: str, cause: str) -> None:
+    """Bug of the first live run: a missing API key raised litellm's ``AuthenticationError``
+    with ``status_code=500``, classified ``http_5xx``, and the session went OUTAGE. The type
+    decides; a status the type contradicts is not the provider's answer and is not reported."""
+    exc = _litellm_with_status(name, 500)
+    assert getattr(exc, "status_code", None) == 500  # what litellm really attaches
+    assert outage_cause(exc) == (cause, None)
+
+
+@pytest.mark.parametrize(
+    ("name", "cause"), sorted({**_REFUSAL_TYPES, "RateLimitError": "http_4xx"}.items())
+)
+def test_a_refusal_type_keeps_a_genuine_4xx_status(name: str, cause: str) -> None:
+    status = _GENUINE.get(name, 400)
+    assert outage_cause(_litellm_with_status(name, status)) == (cause, status)
+
+
+async def test_a_missing_api_key_through_real_litellm_is_auth_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The exact path of the live run: litellm with no key raises before any request leaves."""
+    litellm = pytest.importorskip("litellm")
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    with pytest.raises(Exception) as e:
+        async with asyncio.timeout(10):
+            await litellm.acompletion(
+                model="openai/gpt-5-mini",
+                messages=[{"role": "user", "content": "ping"}],
+                max_tokens=16,
+            )
+    assert type(e.value).__name__ == "AuthenticationError"
+    assert outage_cause(e.value) == ("auth_error", None)
+
+
+def test_a_5xx_type_keeps_its_status() -> None:
+    litellm = pytest.importorskip("litellm")
+    exc = litellm.ServiceUnavailableError(
+        message=CANARY, model="m", llm_provider="openai"
+    )
+    assert outage_cause(exc) == ("http_5xx", 503)
+
+
 def test_refusals_are_answers_and_configuration_not_unavailability() -> None:
-    assert REFUSAL_CAUSES == {"http_4xx", "budget_exceeded", "max_tokens_exhausted"}
+    assert REFUSAL_CAUSES == {
+        "auth_error",
+        "http_4xx",
+        "budget_exceeded",
+        "max_tokens_exhausted",
+    }
     assert REFUSAL_CAUSES <= OUTAGE_CAUSES
+
+
+async def test_a_turn_on_a_missing_key_is_a_refusal_not_an_outage() -> None:
+    r, _ = _timed_runner(_Raising(_litellm_with_status("AuthenticationError", 500)))
+    with pytest.raises(ProviderOutageError) as e:
+        await r.run(_visible_bundle(), StudentTurn("ciao", 0))
+    err = e.value
+    assert (err.cause, err.record.status_code, err.is_refusal) == (
+        "auth_error",
+        None,
+        True,
+    )
+    assert err.record.error_class == "AuthenticationError"
+    assert err.log_fields(600)["http_status"] is None
+    assert err.is_config_refusal
+
+
+@pytest.mark.parametrize(
+    ("name", "status", "config"),
+    [
+        ("AuthenticationError", 500, True),  # no key: the synthetic 500
+        ("AuthenticationError", 401, True),
+        ("PermissionDeniedError", 403, True),
+        ("BadRequestError", 400, True),
+        ("NotFoundError", 404, True),
+        ("UnprocessableEntityError", 422, True),
+        ("BadRequestError", 500, True),  # http_4xx with no genuine status
+        ("RateLimitError", 429, False),  # transient: a refusal, never a config alert
+    ],
+)
+def test_which_refusals_are_the_configuration(
+    name: str, status: int, config: bool
+) -> None:
+    from vektra_assess.llm.types import is_config_refusal
+
+    assert is_config_refusal(*outage_cause(litellm_error(name, status))) is config
+
+
+@pytest.mark.parametrize(
+    "cause", ["budget_exceeded", "max_tokens_exhausted", "http_5xx", "connection_error"]
+)
+def test_other_causes_are_not_config_refusals(cause: str) -> None:
+    from vektra_assess.llm.types import is_config_refusal
+
+    assert not is_config_refusal(cause, None)
 
 
 def test_an_exception_without_a_cause_on_its_record_is_classified_by_outcome() -> None:

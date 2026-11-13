@@ -343,6 +343,9 @@ async def test_every_failure_rolls_back_to_eligible(  # type: ignore[no-untyped-
     ("error_class", "cause", "status", "budget", "remediation"),
     [
         ("InternalServerError", "http_5xx", 503, None, None),
+        # no API key: litellm's AuthenticationError with a synthetic 500 is a configuration
+        # refusal; the Start rolls back provider_unavailable and the audit names auth_error
+        ("AuthenticationError", "auth_error", None, None, None),
         # a reasoning model that spent max_tokens before any text (measured: ~9 s, no text)
         (
             "EmptyStream",
@@ -380,6 +383,18 @@ async def test_a_part_b_outage_logs_its_reason_and_cause_and_audits_the_cause(  
     async with world(pg, settings) as w:
         await configure_activity(pg, w.site, CMID)
         start = datetime.now(UTC)
+        rec_cause, rec_status = cause, status
+        if error_class == "AuthenticationError":
+            # classified by the runner's own classifier, from litellm's real exception (no
+            # key: the synthetic 500)
+            from support.litellm_errors import litellm_error
+
+            from vektra_assess.llm.runner import outage_cause
+
+            pytest.importorskip("litellm")
+            rec_cause, rec_status = outage_cause(
+                litellm_error("AuthenticationError", 500)
+            )
         outage = ProviderOutageError(
             ProviderCallRecord(
                 start,
@@ -387,8 +402,8 @@ async def test_a_part_b_outage_logs_its_reason_and_cause_and_audits_the_cause(  
                 start + timedelta(seconds=9),
                 "error",
                 error_class,
-                cause,
-                status,
+                rec_cause,
+                rec_status,
             )
         )
         outage.attempt = 2
@@ -430,6 +445,17 @@ async def test_a_part_b_outage_logs_its_reason_and_cause_and_audits_the_cause(  
         payload = row[0] if isinstance(row[0], dict) else json.loads(row[0])
         assert payload["cause"] == cause
         assert payload["cmid"] == CMID
+        # a configuration refusal alerts the operator in the rollback's transaction (review of
+        # #219, findings 2a and 5); an outage or a spent budget does not
+        alerts = await pg.run(
+            "super",
+            "SELECT args->>'reason', args->>'site_id' FROM assess_jobs "
+            "WHERE kind = 'operator_notify' AND args->>'kind' = 'provider_config_refused'",
+        )
+        if cause == "auth_error":
+            assert [tuple(a) for a in alerts] == [("auth_error", str(w.site))]
+        else:
+            assert alerts == []
 
 
 async def test_a_stalled_part_b_is_cut_inside_t(pg, worker_engine) -> None:  # type: ignore[no-untyped-def]

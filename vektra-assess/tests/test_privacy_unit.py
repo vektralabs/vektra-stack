@@ -480,6 +480,16 @@ def test_the_rows_left_are_logged_from_known_table_names_only() -> None:
     assert len(every) <= 200 and every.endswith(",...")
 
 
+def test_the_reset_grant_reason_leftover_is_named_in_the_alert() -> None:
+    """CodeRabbit 4560721381: ``leftover`` records the unshredded reset-grant reasons under
+    ``assess_reset_grants.reason``; the alert must name it, not fold it into ``other``."""
+    from vektra_assess.privacy.purge import LEFT_TABLES, tables_left
+
+    assert "assess_reset_grants.reason" in LEFT_TABLES
+    left = {"assess_reset_grants.reason": 2, "assess_turns": 1}
+    assert tables_left(left) == "reset_grants.reason=2,turns=1"
+
+
 def test_the_alert_keys_survive_the_log_allowlist() -> None:
     """CodeRabbit 4558071155: the operator reads ``tables_left``, ``erasure_id`` and
     ``erasure_scope`` from the worker's log, so the allowlist processor must keep them."""

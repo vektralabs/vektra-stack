@@ -107,6 +107,8 @@ LEFT_TABLES = frozenset(
         "assess_transcripts",
         *SUBJECT_TABLES,
         "assess_jobs",
+        # not a table: the reset-grant reasons ``leftover`` counts as not yet shredded
+        "assess_reset_grants.reason",
     }
 )
 _LEFT_MAX = 190  # under the log allowlist's value cap (200)

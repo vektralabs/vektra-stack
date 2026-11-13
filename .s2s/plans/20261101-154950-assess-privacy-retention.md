@@ -259,6 +259,7 @@ no log files fails rather than passing.
   content the DPO could not export first. Coordinator's decision 2026-11-13: make the gap
   explicit, no KEK in the API. **Possible follow-up:** a worker-side export job (the API queues
   it and waits, as the erasure does; the worker decrypts with `assess_kek`).
+- **Open follow-up (2026-11-13, recorded, not fixed):** a worker-side export job for sessions closed without a transcript (OQ-020; the point above).
 - OQ-033: erasure default implemented; `retain_exam_evidence` mode exists so the DPO decision is a
   setting, not a code change.
 - Drift / risk: crypto-shredding vs backups (see Design Notes) — ARCH-079's claim is conditional on

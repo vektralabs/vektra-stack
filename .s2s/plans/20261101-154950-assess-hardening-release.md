@@ -458,3 +458,8 @@ every release, with a manual exploratory session on top.
   gone. `slots.PENDING_OWNER_PLANS` is now empty, so `expected_unbound()` is the empty set, and
   `vektra-app/tests/test_assess_processes.py` composes a fully keyed production worker without
   `VEKTRA_ASSESS_WORKER_ALLOW_UNBOUND` and requires every slot bound.
+
+- **Open follow-ups (2026-11-13, recorded, not fixed):**
+  - The `vektra-assess-worker` service in compose does not pass `VEKTRA_ASSESS_LLM_SEED`, `VEKTRA_ASSESS_LLM_PRICE_PER_1K_IN`, `VEKTRA_ASSESS_LLM_PRICE_PER_1K_OUT`, `VEKTRA_ASSESS_API_PUBLIC_ORIGIN` or `VEKTRA_ASSESS_UI_ORIGIN`. The settings must first handle an empty value (what compose passes for an unset variable) before they are added.
+  - The admin integration suite is slow, about 30 s per test. #213 raised the integration job's timeout to 90 min; the suite should be made faster rather than the timeout raised again.
+  - NFR-023 re-activation for `prompt_version` `4aeeda08` and the `gpt-5-mini` Part B label failures (`part_b_rejected`): see plan 7's Notes.

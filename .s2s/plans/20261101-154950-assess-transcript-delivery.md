@@ -597,3 +597,5 @@ decisions taken here, one line each with the reason:
   for plan 13's hardening, recorded here so a fence fix is applied to both meanwhile.
 - [x] #9 redundant reads: `_reconcile` returns whether any row exists (one read fewer).
 - [x] #10 `OPEN_DECISIONS` comment on its own line.
+
+- **Open follow-up (2026-11-13, recorded, not fixed):** existence leak on the transcript routes within one activity. A caller can tell whether a transcript id exists in the activity from a 403 versus a 404. Decide whether both should answer the same.

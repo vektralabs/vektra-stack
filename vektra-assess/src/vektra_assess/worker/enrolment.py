@@ -110,7 +110,8 @@ async def recheck_one(acquire: AcquireDb, source: StartSource, sid: UUID) -> str
             if result == "not_enrolled":
                 await conn.execute(_CLOSE, {"sid": sid, "epoch": row.epoch})
     if result != "enrolled":
-        log.info("assess_enrolment_rechecked", session_id=str(sid), result=result)
+        # the closed result code under ``outcome`` (allowlisted); ``result`` was dropped
+        log.info("assess_enrolment_rechecked", session_id=str(sid), outcome=result)
     return result
 
 

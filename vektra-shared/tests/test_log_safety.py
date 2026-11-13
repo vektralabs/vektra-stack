@@ -95,6 +95,58 @@ def test_allowlisted_key_cannot_carry_a_long_or_nested_value(
     assert line["status"] == DROPPED and line["count"] == DROPPED
 
 
+def test_the_provider_outage_keys_are_kept_and_free_text_keys_are_not(
+    stream: io.StringIO,
+) -> None:
+    """The Start pre-flight's outage line (closed codes, a status, timings) survives; the
+    generic names a caller could fill with exception text (``reason``, ``cause``, ``error``,
+    ``message``) stay dropped. A rollback reason goes under ``reason_code``."""
+    log = structlog.get_logger("vektra_assess.worker.preflight")
+    log.warning(
+        "assess_preflight_provider_outage",
+        reason_code="provider_unavailable",
+        outage_cause="read_timeout",
+        http_status=408,
+        expired_budget="provider_timeout",
+        first_token_ms=None,
+        part_b_ms=9012,
+        remaining_s=50.3,
+        timeout_s=45.0,
+        max_tokens=600,
+        remediation_code="raise_llm_max_tokens_or_lower_reasoning_effort",
+        reason=CANARY,
+        cause=CANARY,
+        error=CANARY,
+        message=CANARY,
+    )
+    (line,) = _lines(stream)
+    assert line["reason_code"] == "provider_unavailable"
+    assert (line["outage_cause"], line["http_status"]) == ("read_timeout", 408)
+    assert (line["expired_budget"], line["first_token_ms"]) == (
+        "provider_timeout",
+        None,
+    )
+    assert (line["part_b_ms"], line["remaining_s"], line["timeout_s"]) == (
+        9012,
+        50.3,
+        45.0,
+    )
+    assert line["max_tokens"] == 600
+    assert line["remediation_code"] == "raise_llm_max_tokens_or_lower_reasoning_effort"
+    for key in ("reason", "cause", "error", "message"):
+        assert line[key] == DROPPED
+    assert CANARY not in stream.getvalue()
+
+
+def test_a_provider_key_still_cannot_carry_a_paragraph(stream: io.StringIO) -> None:
+    structlog.get_logger("vektra_assess.x").info(
+        "e", outage_cause=CANARY * 20, http_status={"body": CANARY}
+    )
+    (line,) = _lines(stream)
+    assert line["outage_cause"] == DROPPED and line["http_status"] == DROPPED
+    assert CANARY not in stream.getvalue()
+
+
 @pytest.mark.parametrize("level", [logging.DEBUG, logging.INFO, logging.WARNING])
 def test_stdlib_assess_logger_drops_extras_args_and_tracebacks(
     stream: io.StringIO, level: int

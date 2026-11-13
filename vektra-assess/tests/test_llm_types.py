@@ -40,8 +40,10 @@ def test_outage_error_carries_a_content_free_record() -> None:
     rec = ProviderCallRecord(now, None, now, "first_token_timeout")
     err = llm.ProviderOutageError(rec)
     assert err.record is rec and str(err) == "first_token_timeout"
+    # timings, an outcome, a type name, a closed cause code and an HTTP status: no text field
     assert {f.name for f in dataclasses.fields(rec)} == {
-        "started_at", "first_token_at", "ended_at", "outcome", "error_class",
+        "started_at", "first_token_at", "ended_at", "outcome", "error_class", "cause",
+        "status_code",
     }  # fmt: skip
 
 

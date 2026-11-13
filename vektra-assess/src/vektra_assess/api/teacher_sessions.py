@@ -122,7 +122,7 @@ def _reason(kek: AssessKeyring, table: Table, row_id: Any, blob: Any) -> dict[st
         log.error(
             "assess.teacher.alert",
             alert="teacher_reason_unreadable",
-            table=table,
+            kind=table,  # the closed table name, under an allowlisted key
             row_id=str(row_id),
             error_type=type(exc).__name__,
         )

@@ -227,3 +227,47 @@ def test_importing_vektra_assess_registers_nothing_and_loads_no_logging_stack() 
     )
     assert out.stdout.strip() == "[]"
     # the composition roots that do register it: vektra-app/tests/test_assess_processes.py
+
+
+#: keyword names that, in this package, carry a closed CODE: a code under one of them would be
+#: logged as "[dropped]" (the allowlist knows ``reason_code``, ``outcome``, ``error_type``...)
+_CODE_NAMES = frozenset({"reason", "cause", "result", "error", "table", "code"})
+_LEVELS = ("debug", "info", "warning", "error", "exception", "critical")
+
+
+def _dropped_codes(src: Path = SRC) -> list[str]:
+    """Log keywords that would reach a strict logger as ``[dropped]`` although they are codes:
+    a literal string value, or a name from ``_CODE_NAMES``. Counts and ids under other names are
+    not codes and are not checked here."""
+    from vektra_shared.log_safety import ALLOWED_KEYS
+
+    bad = []
+    for path in sorted(src.rglob("*.py")):
+        tree = ast.parse(path.read_text())
+        for level in _LEVELS:
+            for call in _calls(tree, level, "log"):
+                for kw in call.keywords:
+                    if kw.arg is None or kw.arg in ALLOWED_KEYS:
+                        continue
+                    literal = isinstance(kw.value, ast.Constant) and isinstance(
+                        kw.value.value, str
+                    )
+                    if literal or kw.arg in _CODE_NAMES:
+                        bad.append(f"{path.relative_to(src)}:{call.lineno} {kw.arg}")
+    return bad
+
+
+def test_no_closed_code_is_logged_under_a_dropped_key() -> None:
+    """``assess_preflight_rolled_back`` logged ``reason=...`` and the outage cap ``cause=...``:
+    both were rendered "[dropped]". A code goes under an allowlisted key."""
+    assert _dropped_codes() == []
+
+
+def test_the_dropped_code_guard_catches_a_code_under_a_dropped_key(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "m.py").write_text(
+        "log.info('e', reason=r)\nlog.warning('e', count=1, cause='outage_cap')\n"
+        "log.info('e', reason_code=r, count=n, turn_no=t)\n"
+    )
+    assert _dropped_codes(tmp_path) == ["m.py:1 reason", "m.py:2 cause"]

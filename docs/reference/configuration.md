@@ -221,7 +221,7 @@ printed, because some settings carry connection strings.
 | `VEKTRA_ASSESS_LLM_CONTEXT_WINDOW` | int | `8192` | Context window of the model. History is trimmed oldest first; the context bundle is never trimmed (a bundle that does not fit is an error). Range `2048`..`1048576`. |
 | `VEKTRA_ASSESS_LLM_SEED` | int | - | Passed to providers that support a seed. Range `0`..`2147483647`. |
 | `VEKTRA_ASSESS_OUTAGE_TIMEOUT_S` | float | `45` | No first token within this time is a provider outage (REQ-086); a slow stream that keeps producing is not. An empty or whitespace-only chunk (a reasoning model's reasoning) is not a first token: the reasoning time counts against this deadline ([Reasoning models (assess)](#reasoning-models-assess)). |
-| `VEKTRA_ASSESS_OUTAGE_G_S` | int | `20` | REQ-086 G. An outage moves the session to OUTAGE (timer frozen, input locked); the worker probes the provider every 5-10 s with one `max_tokens=1` call while any session is in OUTAGE. At the first success the outage ends: an interval of at least G seconds is credited in full, a shorter one earns nothing, and the cumulative credit never exceeds C = min(15 min, half the session duration). Cumulative outage above C, or a third consecutive failed call, closes the session `service_failure`. |
+| `VEKTRA_ASSESS_OUTAGE_G_S` | int | `20` | REQ-086 G. An outage moves the session to OUTAGE (timer frozen, input locked); the worker probes the provider every 5-10 s with one small call (32 tokens, the assess extra body and temperature; see [Reasoning models (assess)](#reasoning-models-assess)) while any session is in OUTAGE. At the first success the outage ends: an interval of at least G seconds is credited in full, a shorter one earns nothing, and the cumulative credit never exceeds C = min(15 min, half the session duration). Cumulative outage above C, or a third consecutive failed call, closes the session `service_failure`. |
 | `VEKTRA_ASSESS_PRIVACY_NOTICE_URL` | url | unset | URL of the privacy notice, returned to the plugin in `GET /state` `pre_session.privacy.notice_url` (with `VEKTRA_ASSESS_PRIVACY_NOTICE_VERSION`). |
 | `VEKTRA_ASSESS_RETRY_RPM` | int | `6` | `POST /sessions/{sid}/retry` calls per minute per session; above it 429 (`retry_rate`). The retry only makes the API try the pending turn now; it never ends an OUTAGE or changes the state. |
 | `VEKTRA_ASSESS_UI_PAGE_RPM` | int | `60` | Plan 9: `GET /api/v1/assess/ui` (the public discussion page) per minute per client address; above it 429 with `Retry-After`, before any database read. A site's framing origin is cached 30 s per API process, so a repeated request costs no database connection and a change of `lms_origin` or a disabled site is honoured within 30 s. |
@@ -348,6 +348,19 @@ Pick one of the two fixes, in this order:
 
 Either change is a configuration change of the discussion model: run `make eval-assess` again
 before you rely on it.
+
+**The outage probe.** While a session is in OUTAGE, the worker probes the discussion model every
+5-10 s to decide when the outage ends. The probe goes through the same provider as a turn, with
+`VEKTRA_ASSESS_LLM_EXTRA_BODY` and `VEKTRA_ASSESS_LLM_TEMPERATURE`, and asks for 32 completion
+tokens (never more than `VEKTRA_ASSESS_LLM_MAX_TOKENS`). Not 1: an OpenAI reasoning model refuses
+`max_tokens=1` with a 400, and a probe that always fails never ends an outage. Any completed
+answer means "up", including one cut at the budget (`finish_reason=length`) with no text, which
+is what a reasoning model usually returns. A probe the provider **refuses** (`auth_error`,
+`http_4xx`, `budget_exceeded`) does not end the outage, because the next turn would be refused
+the same way: the worker logs `assess_outage_probe_failed` with `reason_code=provider_refused` and
+the `outage_cause` at warning level. Fix the configuration (the key, the model, the extra body);
+if it stays broken, the outage reaches C and the session closes `service_failure`. An
+unreachable provider logs the same event with `reason_code=provider_unavailable` at info level.
 
 #### Connection budget (assess)
 

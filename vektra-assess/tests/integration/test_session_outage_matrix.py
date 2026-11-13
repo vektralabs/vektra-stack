@@ -55,6 +55,20 @@ class _Response:
         self.status_code = status_code
 
 
+def _real_litellm(name: str, status: int) -> BaseException:
+    """litellm's own exception class, built as litellm builds it. With no API key configured,
+    litellm raises ``AuthenticationError`` carrying a synthetic 500 response."""
+    import httpx
+
+    litellm = pytest.importorskip("litellm")
+    response = httpx.Response(
+        status, request=httpx.Request("POST", "https://provider.invalid/v1")
+    )
+    return getattr(litellm, name)(
+        message="refused", model="m", llm_provider="openai", response=response
+    )
+
+
 class FaultLLM(RecordingLLMProvider):
     """``mode``: ok | down | hang | slow | reasoning_only | <ProviderErrorClassName>.
 
@@ -71,6 +85,11 @@ class FaultLLM(RecordingLLMProvider):
     def _fault(self) -> None:
         if self.mode == "down":
             raise ConnectionError("provider down")
+        if self.mode.startswith(
+            "litellm:"
+        ):  # litellm:<ClassName>:<status>, the real class
+            _, name, status = self.mode.split(":")
+            raise _real_litellm(name, int(status))
         if self.mode not in ("ok", "hang", "slow", "reasoning_only"):
             exc = type(self.mode, (Exception,), {})("refused")
             if self.mode in _STATUS:
@@ -289,9 +308,43 @@ async def test_provider_refusals_never_set_outage_nor_earn_credit(
             line["remediation_code"] == "raise_llm_max_tokens_or_lower_reasoning_effort"
         )
         assert line["max_tokens"] == 600 and line["http_status"] is None
+    elif refusal == "AuthenticationError":
+        assert line["outage_cause"] == "auth_error"
+        assert line["http_status"] == _STATUS[refusal]
     elif refusal != "BudgetExceededError":
         assert line["outage_cause"] == "http_4xx"
         assert line["http_status"] == _STATUS[refusal]
+
+
+@pytest.mark.parametrize(
+    ("mode", "cause", "status"),
+    [
+        # the first live run: no API key, litellm attaches a 500, the session went OUTAGE
+        ("litellm:AuthenticationError:500", "auth_error", None),
+        ("litellm:AuthenticationError:401", "auth_error", 401),
+        ("litellm:PermissionDeniedError:403", "auth_error", 403),
+        ("litellm:NotFoundError:404", "http_4xx", 404),
+        ("litellm:BadRequestError:400", "http_4xx", 400),
+        ("litellm:UnprocessableEntityError:422", "http_4xx", 422),
+        ("litellm:ContentPolicyViolationError:400", "http_4xx", 400),
+        ("litellm:RateLimitError:429", "http_4xx", 429),
+    ],
+)
+async def test_real_litellm_refusals_never_set_outage(
+    pg, worker, mode, cause, status, canary_log_capture
+) -> None:  # type: ignore[no-untyped-def]
+    import json
+
+    async with rigged(pg, worker) as rig:
+        rig.llm.mode = mode
+        await rig.say()
+        row = await rig.row()
+        assert (row.state, row.intervals, row.last) == ("ACTIVE", 0, "bot/interrupted")
+    lines = [json.loads(ln) for ln in canary_log_capture.lines()]
+    (line,) = [ln for ln in lines if ln.get("event") == "assess_turn_provider_failure"]
+    assert line["reason_code"] == "provider_refused"
+    assert (line["outage_cause"], line["http_status"]) == (cause, status)
+    assert line["error_type"] == mode.split(":")[1]
 
 
 @pytest.mark.parametrize(

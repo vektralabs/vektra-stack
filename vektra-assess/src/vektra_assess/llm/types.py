@@ -40,7 +40,14 @@ OutageCause = Literal[
     "pool_timeout",
     "timeout",  # a timeout whose kind the exception chain does not say
     "connection_error",
-    "http_4xx",  # the provider ANSWERED with a 4xx: wrong key or model, rate limit, bad request
+    # the credentials are refused (401/403: AuthenticationError, PermissionDeniedError), or none
+    # is configured at all: litellm then raises AuthenticationError with a synthetic status 500.
+    # Decided by the exception TYPE, never by the status litellm attaches
+    "auth_error",
+    # the provider refused the request (NotFound, BadRequest, UnprocessableEntity,
+    # ContentPolicyViolation, RateLimit 429, or any other answered 4xx): wrong model, rejected
+    # parameter or content, rate limit
+    "http_4xx",
     "http_5xx",
     "budget_exceeded",  # the provider library's own spend limit (litellm), no HTTP answer
     "provider_error",  # any other provider exception
@@ -54,7 +61,7 @@ OUTAGE_CAUSES: frozenset[str] = frozenset(get_args(OutageCause))
 #: provider being unavailable: a discussion turn takes the refusal path for them and the session
 #: never enters OUTAGE (REQ-086). A 429 is ``http_4xx`` and stays a refusal, as before.
 REFUSAL_CAUSES: frozenset[str] = frozenset(
-    {"http_4xx", "budget_exceeded", "max_tokens_exhausted"}
+    {"auth_error", "http_4xx", "budget_exceeded", "max_tokens_exhausted"}
 )
 
 #: the closed remediation code of a spent max_tokens (docs/reference/configuration.md,

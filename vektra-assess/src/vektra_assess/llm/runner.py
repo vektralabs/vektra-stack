@@ -732,6 +732,28 @@ _TIMEOUT_NAMES = frozenset(
 _CONNECTION_NAMES = frozenset(
     {"APIConnectionError", "ConnectError", "ConnectionError", "RemoteProtocolError"}
 )
+#: the provider libraries' (litellm, openai) refusal classes, by name: a refusal is the
+#: configuration or the request, never the provider being unavailable, whatever status the
+#: library attaches. Credentials first, then the request; ``ContextWindowExceededError`` and
+#: litellm's other ``BadRequestError`` subclasses match through their MRO
+_AUTH_NAMES = frozenset({"AuthenticationError", "PermissionDeniedError"})
+_REQUEST_REFUSAL_NAMES = frozenset(
+    {
+        "BadRequestError",
+        "NotFoundError",
+        "UnprocessableEntityError",
+        "ContentPolicyViolationError",
+        "RateLimitError",  # a 429 stays a refusal (PR #214)
+    }
+)
+
+
+def _refusal_cause(names: set[str]) -> str | None:
+    if names & _AUTH_NAMES:
+        return "auth_error"
+    if names & _REQUEST_REFUSAL_NAMES:
+        return "http_4xx"
+    return None
 
 
 def _chain(exc: BaseException) -> list[BaseException]:
@@ -778,6 +800,13 @@ def _own_cause(exc: BaseException) -> tuple[str, int | None] | None:
         return "connection_error", None
     if "BudgetExceededError" in names:  # litellm's own spend limit: no HTTP answer
         return "budget_exceeded", None
+    refusal = _refusal_cause(names)
+    if refusal is not None:
+        # the TYPE decides, before any status: litellm raises AuthenticationError with a
+        # synthetic 500 when no API key is configured. The status is reported only when it is
+        # the 4xx such a refusal is: a 5xx on a refusal type was assigned by the library
+        status = _answered_status(exc, names)
+        return refusal, status if status is not None and 400 <= status <= 499 else None
     status = _answered_status(exc, names)
     if status is not None and 400 <= status <= 499:
         return "http_4xx", status
@@ -793,7 +822,8 @@ def outage_cause(exc: BaseException) -> tuple[str, int | None]:
     request (the prompt) or the response. The outermost exception that says anything wins; a
     generic timeout only looks further down its ``raise ... from`` chain for the timeout's kind
     (connect, read, ...). The status is set only when the provider answered: never for a
-    timeout or a connection failure.
+    timeout or a connection failure. A refusal class (``AuthenticationError``, ``BadRequestError``,
+    ...) is classified by its type before any status, and keeps a status only when it is a 4xx.
     """
     chain = _chain(exc)
     for i, e in enumerate(chain):

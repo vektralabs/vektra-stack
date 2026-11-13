@@ -83,7 +83,8 @@ router = APIRouter()
 CUT_MARGIN_S = 2.0
 
 # A provider error that is the provider ANSWERING (any 4xx: a rate limit, over-length, a content
-# filter, a wrong key or model, a request it rejects), the provider library's spend limit, or a
+# filter, a wrong key or model, a request it rejects; a missing key, which litellm reports as an
+# AuthenticationError with a synthetic 500), the provider library's spend limit, or a
 # max_tokens spent before any text is a refusal, not an outage: it never sets OUTAGE and earns no
 # credit (REQ-086); the attempt ends with the marked turn and the student may write again. The
 # decision is ``ProviderOutageError.is_refusal``, from the runner's closed cause code (built from

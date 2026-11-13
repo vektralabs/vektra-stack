@@ -343,6 +343,9 @@ async def test_every_failure_rolls_back_to_eligible(  # type: ignore[no-untyped-
     ("error_class", "cause", "status", "budget", "remediation"),
     [
         ("InternalServerError", "http_5xx", 503, None, None),
+        # no API key: litellm's AuthenticationError with a synthetic 500 is a configuration
+        # refusal; the Start rolls back provider_unavailable and the audit names auth_error
+        ("AuthenticationError", "auth_error", None, None, None),
         # a reasoning model that spent max_tokens before any text (measured: ~9 s, no text)
         (
             "EmptyStream",
@@ -380,6 +383,25 @@ async def test_a_part_b_outage_logs_its_reason_and_cause_and_audits_the_cause(  
     async with world(pg, settings) as w:
         await configure_activity(pg, w.site, CMID)
         start = datetime.now(UTC)
+        rec_cause, rec_status = cause, status
+        if error_class == "AuthenticationError":
+            # classified by the runner's own classifier, from litellm's real exception
+            import httpx
+            import litellm
+
+            from vektra_assess.llm.runner import outage_cause
+
+            synthetic = httpx.Response(
+                500, request=httpx.Request("POST", "https://provider.invalid/v1")
+            )
+            rec_cause, rec_status = outage_cause(
+                litellm.AuthenticationError(
+                    message="no key",
+                    model="m",
+                    llm_provider="openai",
+                    response=synthetic,
+                )
+            )
         outage = ProviderOutageError(
             ProviderCallRecord(
                 start,
@@ -387,8 +409,8 @@ async def test_a_part_b_outage_logs_its_reason_and_cause_and_audits_the_cause(  
                 start + timedelta(seconds=9),
                 "error",
                 error_class,
-                cause,
-                status,
+                rec_cause,
+                rec_status,
             )
         )
         outage.attempt = 2

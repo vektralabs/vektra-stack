@@ -188,7 +188,12 @@ Reading `outage_cause`: `http_5xx`, `connection_error` and the `*_timeout` codes
 client (`read_timeout`, `connect_timeout`, ...) point at the provider or the network. A
 `first_token_timeout` does too, **unless** the model reasons: after a `VEKTRA_ASSESS_LLM_MAX_TOKENS`
 raise with reasoning still on, it usually means the reasoning outlasted the first-token deadline.
-`http_4xx` is the provider answering (a wrong key or model, a rate limit, a rejected request).
+`auth_error` is the API key refused (401/403) or not configured at all (litellm then reports a
+synthetic status 500, so `http_status` is `null`): check `VEKTRA_LLM_API_KEY` in the process
+that logged it. `http_4xx` is the provider refusing the request (a wrong model, a rate limit, a
+rejected parameter or content). Both are refusals: a discussion turn ends `provider_refused`
+and the session never enters OUTAGE. The outage probe logs them as `assess_outage_probe_failed`
+with `reason_code=provider_refused` and leaves the outage open.
 
 ## The assess schema: a migration branch of its own
 

@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
+import httpx
 import pytest
 from sqlalchemy.ext.asyncio import create_async_engine
 from support.sessions import seed_session
@@ -11,7 +13,12 @@ from support.world import world
 
 from integration.test_session_preflight import _reset
 from vektra_assess.timing import deadline
-from vektra_assess.worker.outage_probe import make_llm_probe, outage_tick
+from vektra_assess.worker.outage_probe import (
+    PROBE_MAX_TOKENS,
+    make_llm_probe,
+    outage_tick,
+)
+from vektra_shared.types import CompletionResponse
 
 pytestmark = pytest.mark.integration
 
@@ -168,4 +175,91 @@ async def test_the_llm_probe_is_one_minimal_call() -> None:
 
     probe = make_llm_probe(Llm(), "hosted_vllm/m", timeout_s=1)
     assert await probe() is True
-    assert calls == [{"n": 1, "model": "hosted_vllm/m", "max_tokens": 1, "kw": {}}]
+    assert calls == [
+        {"n": 1, "model": "hosted_vllm/m", "max_tokens": PROBE_MAX_TOKENS, "kw": {}}
+    ]
+
+
+def _litellm(name: str, status: int) -> BaseException:
+    litellm = pytest.importorskip("litellm")
+    response = httpx.Response(
+        status, request=httpx.Request("POST", "https://provider.invalid/v1")
+    )
+    return getattr(litellm, name)(
+        message="refused", model="m", llm_provider="openai", response=response
+    )
+
+
+def _probe_lines(capture: Any) -> list[dict[str, Any]]:
+    lines = [json.loads(ln) for ln in capture.lines()]
+    return [ln for ln in lines if ln.get("event") == "assess_outage_probe_failed"]
+
+
+@pytest.mark.parametrize(
+    ("name", "status", "cause", "http_status"),
+    [
+        ("AuthenticationError", 500, "auth_error", None),  # litellm, no key configured
+        ("AuthenticationError", 401, "auth_error", 401),
+        ("PermissionDeniedError", 403, "auth_error", 403),
+        ("BadRequestError", 400, "http_4xx", 400),
+        ("NotFoundError", 404, "http_4xx", 404),
+    ],
+)
+async def test_a_refused_probe_keeps_the_outage_and_says_it_is_configuration(  # type: ignore[no-untyped-def]
+    pg, worker, canary_log_capture, name, status, cause, http_status
+) -> None:
+    """The provider answered, so it is reachable, but the next turn would be refused too:
+    the outage stays open (the timer stays frozen, C still bounds it) and the log line says
+    ``provider_refused`` with the closed cause, so the operator looks at the configuration."""
+    async with world(pg) as w:
+        s = await seed_session(w, worker, "OUTAGE")
+        got = await outage_tick(
+            worker.connect, Probe(_litellm(name, status)), min_credit_s=G
+        )
+        assert got.probed and not got.ok and got.ended == 0
+        assert got.refused_cause == cause
+        assert (await session(pg, s.session_id)).state == "OUTAGE"
+    (line,) = _probe_lines(canary_log_capture)
+    assert line["reason_code"] == "provider_refused" and line["level"] == "warning"
+    assert (line["outage_cause"], line["http_status"]) == (cause, http_status)
+    assert line["error_type"] == name
+
+
+async def test_an_unreachable_probe_says_provider_unavailable(  # type: ignore[no-untyped-def]
+    pg, worker, canary_log_capture
+) -> None:
+    async with world(pg) as w:
+        await seed_session(w, worker, "OUTAGE")
+        got = await outage_tick(
+            worker.connect, Probe(ConnectionError("down")), min_credit_s=G
+        )
+        assert got.probed and not got.ok and got.refused_cause is None
+    (line,) = _probe_lines(canary_log_capture)
+    assert line["reason_code"] == "provider_unavailable" and line["level"] == "info"
+    assert (line["outage_cause"], line["http_status"]) == ("connection_error", None)
+
+
+async def test_a_reasoning_model_probe_ends_the_outage(pg, worker) -> None:  # type: ignore[no-untyped-def]
+    """The live bug end to end: a provider that refuses ``max_tokens`` below 16 (400) and
+    answers an empty, length-cut completion above it. The probe must end the outage."""
+
+    class Reasoner:
+        async def complete(  # type: ignore[no-untyped-def]
+            self, messages, model, temperature=0.7, max_tokens=None, **kw
+        ):
+            if max_tokens is None or max_tokens < 16:
+                raise _litellm("BadRequestError", 400)
+            return CompletionResponse(
+                content="",
+                model=model,
+                prompt_tokens=1,
+                completion_tokens=max_tokens,
+                total_tokens=1 + max_tokens,
+            )
+
+    async with world(pg) as w:
+        s = await seed_session(w, worker, "OUTAGE")
+        probe = make_llm_probe(Reasoner(), "openai/reasoner", timeout_s=1)
+        got = await outage_tick(worker.connect, probe, min_credit_s=G)
+        assert got.ok and got.ended == 1
+        assert (await session(pg, s.session_id)).state == "ACTIVE"

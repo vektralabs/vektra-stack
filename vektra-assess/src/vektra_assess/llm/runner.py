@@ -39,6 +39,7 @@ from vektra_assess.llm.postcheck import (
 from vektra_assess.llm.postcheck.gate import MARK_SAFEGUARD, SentenceGate, Unit
 from vektra_assess.llm.postcheck.lexicon import LEXICON_VERSION
 from vektra_assess.llm.postcheck.sentences import split
+from vektra_assess.llm.probe import Probe, make_llm_probe
 from vektra_assess.llm.prompts import PromptRenderer
 from vektra_assess.llm.shipped import Shipped
 from vektra_assess.llm.types import (
@@ -102,6 +103,20 @@ class DiscussionTurnRunner:
     def max_tokens(self) -> int:
         """The completion budget of every call (``VEKTRA_ASSESS_LLM_MAX_TOKENS``)."""
         return self._settings.llm_max_tokens
+
+    def config_probe(self) -> Probe:
+        """The turn-shaped probe over THIS runner's provider and settings, the one the worker's
+        outage tick uses (``llm.probe``): it tells a configuration refusal from a refusal of one
+        request (``refusal_is_configuration``)."""
+        s = self._settings
+        return make_llm_probe(
+            self._llm,
+            self.model,
+            timeout_s=float(s.outage_timeout_s),
+            max_tokens=s.llm_max_tokens,
+            temperature=s.llm_temperature,
+            seed=s.llm_seed,
+        )
 
     @property
     def prompt_version(self) -> str:

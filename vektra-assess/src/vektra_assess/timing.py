@@ -26,6 +26,13 @@ from datetime import datetime, timedelta
 #: capped here, the one place every reader of the duration goes through
 MAX_SESSION_S = 240 * 60
 
+#: how far below zero a cached row's age may be and still count as fresh, and how far past the
+#: database clock a stored read time may be before an upsert takes it for a backward clock step
+#: (``api.common.is_fresh``, the worker's monotonic upserts). Ages are read as
+#: ``clock_timestamp() - <read time>``: a row written a moment ago by another session, or a
+#: little skew between the clocks that dated it, gives a small negative age
+CLOCK_SKEW_TOLERANCE_S = 5.0
+
 
 def session_duration_s(cap_minutes: int, extra_s: int) -> int:
     """The duration frozen at Start: cap + extra time, at most ``MAX_SESSION_S``."""

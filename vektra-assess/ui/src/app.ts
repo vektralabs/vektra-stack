@@ -17,6 +17,9 @@ export function transcriptFileName(disposition: string | null): string {
   return m ? m[1] : "trascrizione.html";
 }
 
+/** The closed reason a configuration refusal carries (outage, Start rollback). */
+export const SERVICE_MISCONFIGURED = "service_misconfigured";
+
 /** How long the closing screen waits for the parent's download token. */
 export const DOWNLOAD_TIMEOUT_MS = 10_000;
 
@@ -28,6 +31,7 @@ interface SessionView {
   server_now: string;
   reply_pending: boolean;
   remaining_s?: number; // frozen at the outage start while in OUTAGE
+  outage_reason?: string; // OUTAGE only: provider_unavailable | service_misconfigured
   turns: Turn[];
   token?: string;
 }
@@ -271,7 +275,7 @@ export class App {
     if (view.state === "OUTAGE" && !stateIsOlder) {
       // a resume into an outage gets no outage_start replayed: the snapshot says it, and the
       // frozen time left comes from it
-      this.showOutage();
+      this.showOutage(view.outage_reason);
       if (typeof view.remaining_s === "number")
         this.controls.setTime(minutesLeft(view.remaining_s * 1000, 0));
     }
@@ -279,9 +283,12 @@ export class App {
     this.tick();
   }
 
-  private showOutage(): void {
+  /** The paused-time banner. A configuration refusal says so (and that the staff know); any
+   *  other reason, or none (an older server), is the provider outage text. */
+  private showOutage(reason?: unknown): void {
     clearTimeout(this.bannerTimer); // a recovery's pending hide never hides a new outage
-    this.banner.replaceChildren(h("p", { text: M.outage }));
+    const text = reason === SERVICE_MISCONFIGURED ? M.serviceMisconfigured : M.outage;
+    this.banner.replaceChildren(h("p", { text }));
     this.banner.hidden = false;
   }
 
@@ -360,9 +367,11 @@ export class App {
         return;
       case "outage_start":
         this.stateEvents++;
-        this.showOutage();
+        this.showOutage(data.reason);
         this.dispatch({ type: "outage_start" });
-        if (this.state.name === "outage") this.live.say(M.outageLive); // why, and Riprova
+        // why, and Riprova (a misconfiguration is not lifted by a retry: its own text)
+        if (this.state.name === "outage")
+          this.live.say(data.reason === SERVICE_MISCONFIGURED ? M.serviceMisconfigured : M.outageLive);
         return;
       case "outage_end":
         this.stateEvents++;
@@ -595,7 +604,13 @@ export class App {
         return this.setStatus(M.capacityRefused);
       case "start_rolled_back":
         this.token = null;
-        return this.setStatus(s.reason === "technical_problem_persistent" ? M.persistent : M.rolledBack);
+        return this.setStatus(
+          s.reason === "technical_problem_persistent"
+            ? M.persistent
+            : s.reason === SERVICE_MISCONFIGURED
+              ? M.serviceMisconfigured
+              : M.rolledBack,
+        );
       case "unavailable":
         this.abort.abort();
         this.token = null;

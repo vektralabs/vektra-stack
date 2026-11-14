@@ -44,6 +44,7 @@ from vektra_assess.gates import (
     evaluate_start_gates,
 )
 from vektra_assess.jobs import JobKind, enqueue_job, render_dedupe_key
+from vektra_assess.timing import CLOCK_SKEW_TOLERANCE_S
 from vektra_assess.worker.preflight import (
     DbGateFacts,
     LmsGateFacts,
@@ -72,11 +73,17 @@ _DB = text(
     "AND g.student_userid = :u) AS reset_grants "
     "FROM assess_activity_config c WHERE c.site_id = :s AND c.cmid = :c"
 )
+#: both upserts are monotonic on the read's start (``observed_at``): a render check and its
+#: follow-up can run at once, and the older read never replaces the newer one; a stored time
+#: past the clock by more than the skew tolerance (a backward step) stays replaceable
 _UPSERT_STATE = text(
     "INSERT INTO assess_render_state (site_id, student_userid, cmid, status, reason_code, "
-    "computed_at) VALUES (:s, :u, :c, :st, :r, now()) ON CONFLICT (site_id, student_userid, cmid) "
+    "computed_at) VALUES (:s, :u, :c, :st, :r, coalesce(:t, now())) "
+    "ON CONFLICT (site_id, student_userid, cmid) "
     "DO UPDATE SET status = EXCLUDED.status, reason_code = EXCLUDED.reason_code, "
-    "computed_at = now()"
+    "computed_at = EXCLUDED.computed_at "
+    "WHERE assess_render_state.computed_at <= EXCLUDED.computed_at "
+    "OR assess_render_state.computed_at > clock_timestamp() + make_interval(secs => :tol)"
 )
 #: ``refreshed_at`` is the database clock read BEFORE the LMS reads (``_CLOCK``), as the
 #: teacher_gate job does: a slow read never makes its facts look fresher than they are (a reset
@@ -86,7 +93,9 @@ _UPSERT_INPUTS = text(
     "INSERT INTO assess_gate_inputs (site_id, student_userid, cmid, inputs, refreshed_at) "
     "VALUES (:s, :u, :c, CAST(:i AS jsonb), coalesce(:t, now())) "
     "ON CONFLICT (site_id, student_userid, cmid) "
-    "DO UPDATE SET inputs = EXCLUDED.inputs, refreshed_at = EXCLUDED.refreshed_at"
+    "DO UPDATE SET inputs = EXCLUDED.inputs, refreshed_at = EXCLUDED.refreshed_at "
+    "WHERE assess_gate_inputs.refreshed_at <= EXCLUDED.refreshed_at "
+    "OR assess_gate_inputs.refreshed_at > clock_timestamp() + make_interval(secs => :tol)"
 )
 _DONE = text(
     "UPDATE assess_render_checks SET done_at = now() WHERE site_id = :s "
@@ -235,13 +244,19 @@ async def store_render(
     params = {"s": site_id, "u": userid, "c": cmid}
     async with acquire() as conn:
         async with conn.begin():
+            dated = {"t": observed_at, "tol": CLOCK_SKEW_TOLERANCE_S}
             await conn.execute(
                 _UPSERT_STATE,
-                {**params, "st": decision.state.value, "r": decision.code.value},
+                {
+                    **params,
+                    "st": decision.state.value,
+                    "r": decision.code.value,
+                    **dated,
+                },
             )
             await conn.execute(
                 _UPSERT_INPUTS,
-                {**params, "i": json.dumps(inputs, sort_keys=True), "t": observed_at},
+                {**params, "i": json.dumps(inputs, sort_keys=True), **dated},
             )
             await conn.execute(_DONE, params)
 

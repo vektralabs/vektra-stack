@@ -103,6 +103,18 @@ export async function send(page: Page, frame: Frame, text: string): Promise<void
   await page.keyboard.press("Enter");
 }
 
+/** Keyboard only, the shortcut: each line typed, a plain Enter between lines (a new line, not
+ *  a send), then Control+Enter sends from the field itself (no Tab to Invia). */
+export async function sendWithShortcut(page: Page, frame: Frame, lines: string[]): Promise<void> {
+  await expect(frame.locator("#composer")).toBeEnabled();
+  await tabTo(page, frame, "#composer");
+  for (const [i, line] of lines.entries()) {
+    if (i > 0) await page.keyboard.press("Enter");
+    await page.keyboard.type(line);
+  }
+  await page.keyboard.press("Control+Enter");
+}
+
 /** Count what the polite live region announces from now on (one added text node per say). */
 export async function watchAnnouncements(frame: Frame): Promise<void> {
   await frame.evaluate(() => {

@@ -33,6 +33,11 @@ export const M = {
   outageLive:
     "Assistente temporaneamente non disponibile: questo tempo non ti viene conteggiato. Puoi usare Riprova.",
   outageEnd: "L'assistente è di nuovo disponibile; il tempo dell'interruzione ti è stato restituito.",
+  // the model provider refused the deployment's configuration (reason service_misconfigured):
+  // the time is paused like an outage, the operator is alerted
+  serviceMisconfigured:
+    "Il servizio non è disponibile per un problema tecnico. Il personale è stato avvisato: riprova più tardi. Questo tempo non ti viene conteggiato.",
+  sendShortcut: "Ctrl+Invio per inviare",
   sendFailed: "Il messaggio non è stato inviato. Riprova.",
   replyPending: "Attendi la risposta prima di scrivere ancora.",
   waitAFewSeconds: "Attendi qualche secondo.",

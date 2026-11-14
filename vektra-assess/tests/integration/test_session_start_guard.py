@@ -80,6 +80,25 @@ async def test_the_sixth_start_within_an_hour_is_refused_and_consumes_nothing(
         assert r.status_code == 202, r.text
 
 
+async def test_a_misconfigured_start_rollback_reaches_the_ui_and_counts_as_system(
+    pg, worker
+) -> None:  # type: ignore[no-untyped-def]
+    """Live E2E follow-up: a Start the model provider refused for its configuration rolls back
+    ``service_misconfigured``; the stream's ``start_rolled_back`` carries that reason (the
+    discussion UI shows its own text) and it is a system rollback, so the REQ-071 streak still
+    turns into "Problema tecnico persistente" at the third (the stream's own threshold; the
+    worker's notices are kept out of this test, they leave audit rows the next test counts)."""
+    limits = StartLimits(breaker_rollbacks=1000, rollback_notify_after=1000)
+    async with world(pg) as w:
+        first = await rolled_back(w, worker, "service_misconfigured", limits)
+        state, _epoch, data = await _poll(_Req(w.app), first.session_id)  # type: ignore[arg-type]
+        assert state is None and data == {"reason": "service_misconfigured"}
+        await rolled_back(w, worker, "service_misconfigured", limits)
+        last = await rolled_back(w, worker, "service_misconfigured", limits)
+        _state, _epoch, data = await _poll(_Req(w.app), last.session_id)  # type: ignore[arg-type]
+        assert data == {"reason": "technical_problem_persistent"}
+
+
 async def test_three_consecutive_system_rollbacks_notify_teacher_and_operator_once(
     pg, worker
 ) -> None:  # type: ignore[no-untyped-def]

@@ -138,3 +138,108 @@ def test_one_fresh_check_entry_and_no_name_clash_with_the_transcript_grader_chec
     assert not hasattr(teachers, "check_fresh_grader")
     assert not hasattr(teachers, "check_fresh_editor")
     assert callable(graders.check_fresh_grader)
+
+
+# --- freshness for the plugin (live E2E follow-up) ---------------------------------------------
+
+
+def _checked(age: float) -> Any:
+    return asyncio.run(
+        check_fresh_teacher(
+            Conn(gate(age=age)),
+            site=SITE,
+            cmid=3,
+            actor_userid=5,
+            max_age_s=120,
+            courseid_hint=7,
+            kind_hint="quiz",
+            role="editor",
+        )
+    )
+
+
+def test_the_gate_records_its_age_and_hint() -> None:
+    from vektra_assess.api.teachers import gate_hint
+
+    got = _checked(1.0)
+    assert got.ok and got.age_s == 1.0
+    assert gate_hint(got) == (7, "quiz")
+
+
+def test_a_row_without_a_usable_hint_queues_no_refresh_after_a_fact_refusal() -> None:
+    from vektra_assess.api.teachers import TeacherGate, refresh_after_fact_refusal
+
+    class Engine:
+        """Counts transactions: the helper swallows exceptions (a failed queue only loses the
+        hint), so raising here could not prove that nothing was attempted."""
+
+        def __init__(self) -> None:
+            self.begun = 0
+
+        def begin(self) -> Any:
+            self.begun += 1
+            raise RuntimeError("nothing may be queued")
+
+    engine = Engine()
+    for facts in ({}, {"hint": [7, "forum"]}, {"hint": [True, "quiz"]}, {"hint": "x"}):
+        g = TeacherGate(TeacherCheck.OK, facts, age_s=60.0)
+        assert asyncio.run(refresh_after_fact_refusal(engine, SITE, 3, g)) is False
+    assert engine.begun == 0
+    # the control: a usable hint on old facts does open a transaction
+    g = TeacherGate(TeacherCheck.OK, {"hint": [7, "quiz"]}, age_s=60.0)
+    assert asyncio.run(refresh_after_fact_refusal(engine, SITE, 3, g)) is False
+    assert engine.begun == 1
+
+
+def test_the_retry_hint_is_in_one_place_capped_and_never_on_a_final_refusal() -> None:
+    from vektra_assess.errors import (
+        RETRY_AFTER_MAX_S,
+        config_invalid,
+        reset_refused,
+        retry_details,
+        retry_headers,
+        teacher_unverified,
+    )
+
+    stale = teacher_unverified(stale=True, role="editor", retry_after_s=60)
+    assert stale.details == {
+        "reason": "editor_check_stale",
+        "retry_after_s": RETRY_AFTER_MAX_S,
+    }
+    assert stale.retry_after is None  # not the envelope's top-level field
+    assert retry_headers(stale) == {"Retry-After": str(RETRY_AFTER_MAX_S)}
+    final = teacher_unverified(stale=False, role="editor")
+    assert final.details == {"reason": "not_an_editor"} and retry_headers(final) is None
+    assert config_invalid([], retry_after_s=0).details == {
+        "fields": [],
+        "retry_after_s": 1,
+    }
+    assert "retry_after_s" not in config_invalid([]).details
+    assert reset_refused("gate_inputs_stale", **retry_details(3)).details == {
+        "reason": "gate_inputs_stale",
+        "retry_after_s": 3,
+    }
+
+
+# --- fifth review of #221 ------------------------------------------------------------------------
+
+
+def test_one_freshness_rule_tolerates_a_small_negative_age() -> None:
+    """Fifth review, 1/2/6: ages are read against clock_timestamp(); a row committed after the
+    reading transaction began, or a little skew, gives a small negative age: fresh. Beyond
+    CLOCK_SKEW_TOLERANCE_S below zero it is a clock step: not fresh."""
+    from vektra_assess.api.common import CLOCK_SKEW_TOLERANCE_S, is_fresh
+
+    assert CLOCK_SKEW_TOLERANCE_S == 5
+    assert is_fresh(0.0, 120) and is_fresh(120.0, 120) and is_fresh(-4.9, 120)
+    assert not is_fresh(120.1, 120)
+    assert not is_fresh(-5.1, 120)
+    assert not is_fresh(None, 120)
+    assert is_fresh(-2.0, 10) and not is_fresh(11.0, 10)
+
+
+@pytest.mark.parametrize(
+    ("age", "want"), [(-2.0, TeacherCheck.OK), (-10.0, TeacherCheck.STALE)]
+)
+def test_the_teacher_gate_uses_the_one_rule(age: float, want: TeacherCheck) -> None:
+    assert check(Conn(gate(age=age))) is want

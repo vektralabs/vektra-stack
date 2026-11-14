@@ -435,6 +435,44 @@ class Proposed:
     recipients_count: int
 
 
+#: the PUT config codes decided on a worker-read LMS fact (the cached teacher gate row), which the
+#: teacher may have just changed in the LMS: a refusal made of these only queues a refresh and
+#: tells the plugin to retry (``api.teacher_config``). The enable refusals; the ``available_until``
+#: ones are LMS facts only in the cases ``is_lms_fact_error`` names
+LMS_FACT_CODES = frozenset(
+    {
+        "lms_facts_unreadable",
+        "quiz_without_close_date",
+        "assignment_without_cutoff",
+        "team_submission",
+        "marking_guide",
+        "lms_rubric_missing",
+    }
+)
+
+
+#: the ``PUT opening-fallback`` refusals decided on the cached gate facts (the close date, its
+#: readability, the automatic close): a refresh may lift them. ``fallback_not_needed`` too: it
+#: also depends on the matrix, so a retry may be wasted once, which is acceptable
+OPENING_FACT_CODES = frozenset(
+    {"fallback_not_needed", "close_unreadable", "no_close_date", "before_close"}
+)
+
+
+def is_lms_fact_error(error: FieldError, opening_source: str | None) -> bool:
+    """Whether a PUT config field error was decided on a cached LMS fact: an
+    ``LMS_FACT_CODES`` code, or an end-date refusal (``opening_unknown``,
+    ``not_after_opening``) whose opening did not come from the teacher's own attested date
+    (``opening_source``, ``gates.Opening.source``: ``activity_close`` is the cached close date,
+    ``unreadable`` / ``unknown`` the cached close missing or unreadable). ``None``: the end date
+    was not checked."""
+    if error.code in LMS_FACT_CODES:
+        return True
+    if error.code in ("opening_unknown", "not_after_opening"):
+        return opening_source is not None and opening_source != "attested"
+    return False
+
+
 def enable_refusals(
     p: Proposed,
     facts: ActivityFacts,

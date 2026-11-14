@@ -14,9 +14,11 @@ from uuid import UUID
 
 from sqlalchemy import text
 
+from vektra_assess.api.common import is_fresh
+
 _GRADERS = text(
     "SELECT inputs->'graders' AS graders, "
-    "extract(epoch FROM now() - refreshed_at) AS age_s FROM assess_gate_inputs "
+    "extract(epoch FROM clock_timestamp() - refreshed_at) AS age_s FROM assess_gate_inputs "
     "WHERE site_id = :s AND student_userid = :u AND cmid = :c"
 )
 
@@ -44,8 +46,7 @@ async def check_fresh_grader(
     if (
         row is None
         or not isinstance(graders, list)
-        or row.age_s is None
-        or float(row.age_s) > max_age_s
+        or not is_fresh(row.age_s, max_age_s)
     ):
         from vektra_assess.api.state import queue_render_check
 

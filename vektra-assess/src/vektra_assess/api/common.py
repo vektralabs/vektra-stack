@@ -19,6 +19,9 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from vektra_assess.api.site_binding import bind_site
 from vektra_assess.errors import assess_unavailable, bad_request, key_not_bound
 from vektra_assess.gates import Opening
+
+# the one tolerance, shared with the worker's upserts; re-exported for the API's callers
+from vektra_assess.timing import CLOCK_SKEW_TOLERANCE_S as CLOCK_SKEW_TOLERANCE_S
 from vektra_shared.errors import ErrorResponse, http_status_for
 
 #: no assess request body is legitimately larger than this (a turn is capped far below it)
@@ -54,6 +57,15 @@ async def site_row_of_key(conn: Any, key: Any, purpose: str) -> Any:
 async def site_of_key(conn: Any, key: Any, purpose: str) -> Any:
     """The enabled site a key is bound to for ``purpose``, bound for the rest of the request."""
     return (await site_row_of_key(conn, key, purpose)).id
+
+
+def is_fresh(age_s: Any, max_age_s: float) -> bool:
+    """The ONE freshness rule of the cached LMS rows (teacher gate, render state, gate inputs):
+    an age in [-CLOCK_SKEW_TOLERANCE_S, max_age_s]. Absent (None) is not fresh."""
+    if age_s is None:
+        return False
+    age = float(age_s)
+    return -CLOCK_SKEW_TOLERANCE_S <= age <= max_age_s
 
 
 def iso_time(value: Any) -> str | None:

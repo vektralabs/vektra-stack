@@ -34,6 +34,7 @@ ol.turns { list-style: none; margin: 0; padding: 0; display: flex; flex-directio
 form.composer { display: flex; flex-direction: column; gap: 0.5rem; margin-top: 1rem; }
 textarea { width: 100%; font: inherit; padding: 0.5rem; border: 1px solid var(--border); border-radius: 0.25rem; }
 .help { margin: 0; color: var(--muted); min-height: 1.5em; }
+.help.shortcut { min-height: 0; font-size: 0.875rem; }
 button { font: inherit; padding: 0.5rem 1rem; border: 1px solid var(--accent); border-radius: 0.25rem; background: var(--bg); color: var(--accent); cursor: pointer; }
 button.primary { background: var(--accent); color: var(--accent-fg); }
 button:disabled { opacity: 0.6; cursor: not-allowed; }

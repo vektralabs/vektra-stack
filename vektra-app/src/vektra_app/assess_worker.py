@@ -436,7 +436,9 @@ def _bound_lms(checked: Checked) -> Any | None:
     return lms
 
 
-def _session_handlers(checked: Checked, audit: Any) -> dict[Any, Any]:
+def _session_handlers(
+    checked: Checked, audit: Any, preflight_budget_s: float | None = None
+) -> dict[Any, Any]:
     """The plan assess-session-lifecycle bodies: the ``preflight`` handler.
 
     Built only from a key set that passed the key matrix (``_checks``) and with the worker's
@@ -483,6 +485,9 @@ def _session_handlers(checked: Checked, audit: Any) -> dict[Any, Any]:
             handoff_public=checked.keys["assess_handoff_public"],
             source=source,
             runner=runner,
+            # the budget the composed runtime enforces on a pre-flight (with any operator
+            # override): the handler keeps its confirming probe inside it
+            job_budget_s=preflight_budget_s,
         )
     )
     # the transcript recipients: the sealed teacher config, opened by the worker only
@@ -912,6 +917,7 @@ def _session_ticks(checked: Checked) -> dict[str, Any]:
 
 def _compose(checked: Checked, bindings: Any | None = None) -> Any:
     """Build runtime, scheduler, heartbeat and control; nothing is started or connected yet."""
+    from vektra_assess.jobs import JobKind
     from vektra_assess.worker.audit import make_audit
     from vektra_assess.worker.cleanup import cleanup_done_jobs, cleanup_expired_jtis
     from vektra_assess.worker.heartbeat import Heartbeat
@@ -1024,7 +1030,9 @@ def _compose(checked: Checked, bindings: Any | None = None) -> Any:
     privacy_ticks = {**privacy_ticks, "parser_ping": parser_ping}
     extra = bindings or Bindings(
         handlers={
-            **_session_handlers(checked, audit),
+            **_session_handlers(
+                checked, audit, policy.kinds[JobKind.PREFLIGHT].budget_s
+            ),
             **delivery.handlers,
             **setup.handlers,
             **privacy_handlers,

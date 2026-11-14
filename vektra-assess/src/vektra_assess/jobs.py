@@ -78,9 +78,27 @@ def teacher_gate_dedupe_key(
     return f"teacher_gate:{site_id}:{cmid}:{courseid}:{activity_type}"
 
 
+def teacher_gate_followup_dedupe_key(
+    site_id: object, cmid: int, courseid: int, activity_type: str
+) -> str:
+    """The ONE follow-up refresh allowed beside a pending one (review of #221): the API cannot
+    tell a ``ready`` pending job (it will read after the request: it covers it) from a ``leased``
+    one (it may have read before: it does not). A second key lets a refusal queue a job that
+    surely reads after it; with both keys pending nothing more is queued, which also bounds
+    the retry hints a worker that does not read can cause to two."""
+    return teacher_gate_dedupe_key(site_id, cmid, courseid, activity_type) + ":next"
+
+
 def render_dedupe_key(site_id: object, userid: int, cmid: int) -> str:
     """One pending render check per (site, user, cmid), whoever queues it (API or tick)."""
     return f"render_check:{site_id}:{userid}:{cmid}"
+
+
+def render_followup_dedupe_key(site_id: object, userid: int, cmid: int) -> str:
+    """The ONE follow-up render check allowed beside a pending one (as for the teacher gate,
+    ``teacher_gate_followup_dedupe_key``): the pending one may already be running and have read
+    before a change, so a refusal that promises a retry queues this one too."""
+    return render_dedupe_key(site_id, userid, cmid) + ":next"
 
 
 _ARG_TYPES = (str, int)
@@ -133,3 +151,20 @@ async def enqueue_job(
         return False  # the pending job with this key covers it
     await conn.execute(_NOTIFY)
     return True
+
+
+async def enqueue_with_followup(
+    conn: AsyncConnection,
+    kind: JobKind,
+    args: Mapping[str, str | int],
+    key: str,
+    followup_key: str,
+) -> bool:
+    """Queue ``kind`` under ``key``, or, when a job with that key is still pending (it may
+    already be running and have read before the caller's change: the API cannot tell, it may
+    only INSERT), the single follow-up under ``followup_key``. Nothing more while both are
+    pending, which bounds the reads per subject. True when a job was inserted now."""
+    for k in (key, followup_key):
+        if await enqueue_job(conn, kind, args, dedupe_key=k):
+            return True
+    return False

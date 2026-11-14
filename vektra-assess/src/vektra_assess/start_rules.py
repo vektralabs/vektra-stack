@@ -12,6 +12,7 @@ SYSTEM_ROLLBACK_REASONS = (
     "capture_failed",
     "part_b_rejected",
     "provider_unavailable",
+    "service_misconfigured",
     "internal_error",
     "commit_failed",
 )

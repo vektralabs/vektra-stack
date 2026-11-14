@@ -31,7 +31,7 @@ logged, audited or returned outside the grader list.
 from __future__ import annotations
 
 import uuid
-from collections.abc import Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
@@ -42,9 +42,24 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import text
 
 from vektra_assess import privacy
-from vektra_assess.api.common import engine_of, fail, iso_time, parse_body, site_of_key
+from vektra_assess.api.common import (
+    engine_of,
+    fail,
+    is_fresh,
+    iso_time,
+    parse_body,
+    site_of_key,
+)
 from vektra_assess.api.deps import settings_of
-from vektra_assess.api.teachers import TeacherGate, path_id, verify_teacher
+from vektra_assess.api.teachers import (
+    RETRY_AFTER_S,
+    TeacherGate,
+    gate_hint,
+    path_id,
+    queue_after_refusal,
+    queue_teacher_gate,
+    verify_teacher,
+)
 from vektra_assess.api.transcripts import transcript_key_of
 from vektra_assess.audit import AssessAuditEvent, write_event
 from vektra_assess.capabilities import capability
@@ -53,6 +68,8 @@ from vektra_assess.errors import (
     bad_request,
     config_invalid,
     reset_refused,
+    retry_details,
+    retry_headers,
     session_not_found,
     terminate_count_mismatch,
 )
@@ -69,6 +86,7 @@ from vektra_assess.teacher.schemas import (
 )
 from vektra_assess.timing import session_duration_s
 from vektra_shared.auth import ApiKeyInfo, require_exact_scope
+from vektra_shared.errors import ErrorResponse
 from vektra_shared.lms import Readable
 
 log = structlog.get_logger(__name__)
@@ -104,7 +122,8 @@ _CONFIG = text(
 #: waited for the activity lock past the end date
 _CLOCK = text("SELECT extract(epoch FROM clock_timestamp())::bigint AS db_now")
 _RENDER = text(
-    "SELECT inputs, extract(epoch FROM now() - refreshed_at) AS age_s FROM assess_gate_inputs "
+    "SELECT inputs, extract(epoch FROM clock_timestamp() - refreshed_at) AS age_s "
+    "FROM assess_gate_inputs "
     "WHERE site_id = :s AND student_userid = :u AND cmid = :c"
 )
 _INSERT_GRANT = text(
@@ -149,12 +168,44 @@ _ATTEST = text(
 
 
 class _Refused(Exception):
-    """A refusal decided inside the transaction, raised once it has committed (the writes made
-    before it, if any, are only the ones that must survive: a queued refresh)."""
+    """A refusal decided inside the transaction, raised once it has committed.
 
-    def __init__(self, exc: HTTPException) -> None:
+    ``refresh``: the refusal was decided on cached LMS facts; ``_run`` queues ``refresh(conn)``
+    AFTER the commit, in its own transaction (``queue_after_refusal``), and raises ``exc`` (with
+    the retry hint) when that worked, ``unhinted`` (the same refusal, no hint) when it did not."""
+
+    def __init__(
+        self,
+        exc: HTTPException,
+        *,
+        refresh: Callable[[Any], Awaitable[Any]] | None = None,
+        unhinted: HTTPException | None = None,
+    ) -> None:
         super().__init__("refused")
         self.exc = exc
+        self.refresh = refresh
+        self.unhinted = unhinted
+
+
+def _render_refusal(
+    hinted: ErrorResponse,
+    unhinted: ErrorResponse,
+    site: UUID,
+    student: int,
+    cmid: int,
+    courseid: int | None,
+) -> _Refused:
+    """A reset refused on the student's cached LMS half: the render check (and its single
+    follow-up beside a pending one) is queued after the refusal; the hint iff it was."""
+
+    async def refresh(conn: Any) -> None:
+        from vektra_assess.api.state import queue_render_check
+
+        await queue_render_check(conn, site, student, cmid, courseid, follow_up=True)
+
+    return _Refused(
+        fail(hinted, retry_headers(hinted)), refresh=refresh, unhinted=fail(unhinted)
+    )
 
 
 def _uuid(raw: str, name: str) -> UUID:
@@ -164,12 +215,17 @@ def _uuid(raw: str, name: str) -> UUID:
         raise fail(bad_request(name)) from None
 
 
-def _invalid(errors: list[FieldError]) -> HTTPException:
+def _invalid(
+    errors: list[FieldError], retry_after_s: int | None = None
+) -> HTTPException:
+    """The 400 of field errors; ``retry_after_s`` (and ``Retry-After``) when a refresh of the
+    cached LMS facts they were decided on was queued."""
     unique: list[FieldError] = []
     for e in errors:
         if e not in unique:
             unique.append(e)
-    return fail(config_invalid(field_errors(unique)))
+    err = config_invalid(field_errors(unique), retry_after_s=retry_after_s)
+    return fail(err, retry_headers(err))
 
 
 async def _run(
@@ -184,6 +240,7 @@ async def _run(
     action in the same transaction, and any refusal raised after the commit."""
     settings = settings_of(request)
     refused: HTTPException | None = None
+    deferred: _Refused | None = None
     async with engine_of(request).begin() as conn:
         site = await site_of_key(conn, key, "teacher")
         gate, refused = await verify_teacher(
@@ -195,7 +252,11 @@ async def _run(
             try:
                 status, view = await action(conn, site, gate)
             except _Refused as r:
-                refused = r.exc
+                refused, deferred = r.exc, r
+    if deferred is not None and deferred.refresh is not None:
+        queued = await queue_after_refusal(engine_of(request), deferred.refresh)
+        if not queued and deferred.unhinted is not None:
+            raise deferred.unhinted
     if refused is not None:
         raise refused
     return JSONResponse(view, status_code=status, headers={"Cache-Control": "no-store"})
@@ -273,8 +334,7 @@ async def reset_session(
         inputs = render.inputs if render is not None else None
         fresh = (
             render is not None
-            and render.age_s is not None
-            and float(render.age_s) <= settings.teacher_gate_max_age_s
+            and is_fresh(render.age_s, settings.teacher_gate_max_age_s)
             and isinstance(inputs, dict)
             and isinstance(inputs.get("lms_reasons"), list)
             # evaluated with the REQ-091 date in force now (a moved date changes gate (d))
@@ -282,13 +342,21 @@ async def reset_session(
         )
         if not fresh:
             # the LMS half is evaluated by the worker: ask for it and let the teacher retry
-            from vektra_assess.api.state import queue_render_check
-
-            await queue_render_check(conn, site, student, c, body.courseid)
-            raise _Refused(fail(reset_refused("gate_inputs_stale")))
+            raise _render_refusal(
+                reset_refused("gate_inputs_stale", **retry_details(RETRY_AFTER_S)),
+                reset_refused("gate_inputs_stale"),
+                site, student, c, body.courseid,
+            )  # fmt: skip
         code = gate_code([str(x) for x in inputs["lms_reasons"]])  # type: ignore[index]
         if code is not None:
-            raise refuse_gate(code)
+            # the database half passed above: this refusal is the CACHED LMS half, which the
+            # teacher may have just changed in the LMS. Re-evaluate it and hint (the client
+            # retries at most once)
+            raise _render_refusal(
+                reset_refused("gate", gate=code, **retry_details(RETRY_AFTER_S)),
+                reset_refused("gate", gate=code),
+                site, student, c, body.courseid,
+            )  # fmt: skip
         # the LOCKED row's close reason: the worker may have closed the session between the
         # unlocked read and the lock
         include = v.include_previous_turns(
@@ -315,7 +383,8 @@ async def reset_session(
         # the results page should show state (10) without waiting for the next refresh tick
         from vektra_assess.api.state import queue_render_check
 
-        await queue_render_check(conn, site, student, c, body.courseid)
+        # follow_up: a check already running may have read before this grant
+        await queue_render_check(conn, site, student, c, body.courseid, follow_up=True)
         await write_event(
             conn,
             AssessAuditEvent.TEACHER_RESET,
@@ -576,6 +645,19 @@ async def put_opening_fallback(
             end_at=cfg.end_at,
         )
         if errors:
+            hint = gate_hint(gate)
+            if hint is not None and all(e.code in v.OPENING_FACT_CODES for e in errors):
+                # decided on the CACHED gate facts (the close date, its readability, the
+                # automatic close): the teacher may have just changed them in the LMS. Re-read
+                # after the refusal and hint iff it was queued (the client retries at most once)
+                course, kind = hint
+                raise _Refused(
+                    _invalid(errors, RETRY_AFTER_S),
+                    refresh=lambda q: queue_teacher_gate(
+                        q, site, c, course, kind, follow_up=True
+                    ),
+                    unhinted=_invalid(errors),
+                )
             raise _Refused(_invalid(errors))
         at = int(body.opening_at.timestamp())
         version = (

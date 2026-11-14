@@ -57,6 +57,7 @@ ROLLBACK_REASONS = (
     "capture_failed",
     "part_b_rejected",
     "provider_unavailable",
+    "service_misconfigured",
     "rag_not_available",
     "internal_error",
     "commit_failed",

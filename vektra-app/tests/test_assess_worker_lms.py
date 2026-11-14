@@ -96,7 +96,21 @@ def test_every_lms_reading_handler_is_unbound_without_a_declared_secret(
         lms,
     )
     assert assess_worker._bound_lms(keyed) is lms
-    handlers = assess_worker._session_handlers(keyed, audit=None)
+    import vektra_assess.worker.preflight as preflight_mod
+
+    seen: list[Any] = []
+    real = preflight_mod.make_preflight_handler
+
+    def capture(deps: Any) -> Any:
+        seen.append(deps)
+        return real(deps)
+
+    monkeypatch.setattr(preflight_mod, "make_preflight_handler", capture)
+    handlers = assess_worker._session_handlers(
+        keyed, audit=None, preflight_budget_s=7.5
+    )
+    # the budget the composed runtime enforces reaches the handler (fifth review of #221, 7)
+    assert [d.job_budget_s for d in seen] == [7.5]
     for kind in (
         JobKind.PREFLIGHT,
         JobKind.ENROLMENT_RECHECK,

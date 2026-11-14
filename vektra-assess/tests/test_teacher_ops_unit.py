@@ -83,6 +83,7 @@ class World:
         self.check = check
         self.events: list[tuple[Any, dict[str, Any]]] = []
         self.renders: list[tuple[Any, ...]] = []
+        self.render_kw: list[dict[str, Any]] = []
         self.privacy = True
         self.readable: dict[str, bool] = {}
         self.facts: dict[str, Any] = {"activity_type": "quiz", "close_at": NOW - 3600}
@@ -114,8 +115,9 @@ def world(monkeypatch: pytest.MonkeyPatch) -> Any:
     async def write_event(conn: Any, event: Any, **kw: Any) -> None:
         holder["w"].events.append((event, kw))
 
-    async def queue_render_check(conn: Any, *args: Any) -> None:
+    async def queue_render_check(conn: Any, *args: Any, **kw: Any) -> None:
         holder["w"].renders.append(args)
+        holder["w"].render_kw.append(kw)
 
     async def is_configured(conn: Any, site: Any) -> bool:
         return holder["w"].privacy
@@ -254,6 +256,8 @@ def test_a_reset_grants_one_session_with_the_reason_encrypted_to_its_row(
     assert kw["data"]["reset_id"] == view["reset_id"]
     assert "reason" not in json.dumps(kw["data"], default=str)
     assert len(w.renders) == 1  # results page refreshed without waiting for the tick
+    # a check already running may have read before the grant: its follow-up too (7th review)
+    assert w.render_kw == [{"follow_up": True}]
 
 
 def test_the_continuity_default_follows_the_locked_session_not_the_first_read(
@@ -409,8 +413,15 @@ def test_a_stale_render_queues_a_refresh_and_asks_to_retry(
     world: Any, monkeypatch: pytest.MonkeyPatch, gate_row: Any
 ) -> None:
     w = world(reset_script(gate_row=gate_row))
-    status, detail = refused(reset(monkeypatch))
-    assert status == 409 and details(detail) == {"reason": "gate_inputs_stale"}
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(reset(monkeypatch))
+    status, detail = exc.value.status_code, exc.value.detail
+    # the render check was queued: the plugin is told when to retry (live E2E follow-up)
+    assert status == 409 and details(detail) == {
+        "reason": "gate_inputs_stale",
+        "retry_after_s": 3,
+    }
+    assert exc.value.headers == {"Retry-After": "3"}
     assert len(w.renders) == 1
     assert w.conn.ran("INSERT INTO assess_reset_grants") == []
 
@@ -421,10 +432,20 @@ def test_a_stale_render_queues_a_refresh_and_asks_to_retry(
 def test_the_lms_half_of_the_render_refuses(
     world: Any, monkeypatch: pytest.MonkeyPatch, reasons: list[str], gate: str
 ) -> None:
+    """Fourth review of #221, 4: the LMS half comes from the CACHED render evaluation, which
+    the teacher may have just changed in the LMS: the refusal queues a render check and
+    carries the retry hint (the client retries at most once)."""
     w = world(reset_script(gate_row=render(lms_reasons=reasons)))
-    status, detail = refused(reset(monkeypatch))
-    assert status == 409 and details(detail)["gate"] == gate
-    assert w.renders == []
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(reset(monkeypatch))
+    assert exc.value.status_code == 409
+    assert details(exc.value.detail) == {
+        "reason": "gate",
+        "gate": gate,
+        "retry_after_s": 3,
+    }
+    assert exc.value.headers == {"Retry-After": "3"}
+    assert len(w.renders) == 1
 
 
 # --- terminate -----------------------------------------------------------------------------------
@@ -695,3 +716,65 @@ def test_iso_previous_date_is_returned_when_one_was_set(
     _, view = run(fallback(monkeypatch, at(NOW) + timedelta(hours=1)))
     assert view["previous"].startswith("2027-")
     assert w.events[0][1]["data"]["old"] == NOW + 60
+
+
+# --- fifth review of #221 ------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("age", "stale"), [(-2.0, False), (-10.0, True), (121.0, True)]
+)
+def test_a_render_read_a_moment_after_the_transaction_began_is_fresh(
+    world: Any, monkeypatch: pytest.MonkeyPatch, age: float, stale: bool
+) -> None:
+    """Fifth review, 1/2/6: a small negative age is a row committed after the request's
+    transaction began (or a little clock skew): fresh. Only past CLOCK_SKEW_TOLERANCE_S is it a
+    clock step, stale like an old row."""
+    world(reset_script(gate_row=render(age=age, lms_reasons=["not_enrolled"])))
+    status, detail = refused(reset(monkeypatch))
+    assert status == 409
+    assert details(detail)["reason"] == ("gate_inputs_stale" if stale else "gate")
+
+
+def test_the_reset_hint_is_backed_by_a_follow_up_render_check(
+    world: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Fifth review, 3: a render check already running may have read before the teacher's
+    change; the reset's refresh asks for the follow-up beside it, as the teacher gate does."""
+    w = world(reset_script(gate_row=render(lms_reasons=["not_enrolled"])))
+    refused(reset(monkeypatch))
+    assert w.render_kw == [{"follow_up": True}]
+    w2 = world(reset_script(gate_row=render(age=500)))
+    refused(reset(monkeypatch))
+    assert w2.render_kw == [{"follow_up": True}]
+
+
+# --- sixth review of #221 ------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("gate_row", "expected"),
+    [
+        (
+            render(lms_reasons=["not_enrolled"]),
+            {"reason": "gate", "gate": "not_enrolled"},
+        ),
+        (render(age=500), {"reason": "gate_inputs_stale"}),
+    ],
+)
+def test_a_failing_render_queue_never_turns_the_reset_refusal_into_a_500(
+    world: Any, monkeypatch: pytest.MonkeyPatch, gate_row: Any, expected: Any
+) -> None:
+    """Sixth review, D: the render check is queued after the refusal, in its own
+    transaction, by a helper that never raises; the hint is present iff it was queued."""
+    world(reset_script(gate_row=gate_row))
+
+    async def broken(*_a: Any, **_k: Any) -> None:
+        raise RuntimeError("queue down")
+
+    monkeypatch.setattr(state_api, "queue_render_check", broken)
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(reset(monkeypatch))
+    assert exc.value.status_code == 409
+    assert details(exc.value.detail) == expected
+    assert not exc.value.headers

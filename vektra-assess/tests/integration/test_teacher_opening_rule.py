@@ -237,6 +237,70 @@ async def test_every_input_readable_refuses_the_date_and_requires_none(pg) -> No
             fallback_url(926), json=fb(CLOSE, activity_type="quiz"), headers=teacher()
         )
         assert r.status_code == 400, r.text
+        # decided on the cached facts too (automatic_close_at, close_at): a refresh may change
+        # it, so it hints (sixth review of #221, C: one wasted retry is acceptable)
+        assert err(r)["details"]["retry_after_s"] == 3
         assert err(r)["details"]["fields"] == [
             {"field": "opening_at", "code": "fallback_not_needed"}
         ]
+
+
+@pytest.mark.parametrize(
+    ("facts", "opening", "code"),
+    [
+        ({"close_at": 0}, CLOSE, "no_close_date"),  # no cut-off cached
+        (
+            {"close_at": None},
+            CLOSE,
+            "close_unreadable",
+        ),  # the cached cut-off unreadable
+        (
+            {"close_at": CLOSE},
+            CLOSE - 3600,
+            "before_close",
+        ),  # against the cached cut-off
+    ],
+)
+async def test_an_opening_fallback_refused_on_cached_facts_asks_for_a_retry(  # type: ignore[no-untyped-def]
+    pg, facts, opening, code
+) -> None:
+    """Fourth review of #221, 5: these refusals are decided on the worker's cached facts,
+    which the teacher may have just changed in the LMS: the refresh is queued and the 400
+    carries the retry hint."""
+    async with world(pg) as w:
+        with_transcript_key(w)
+        await configure_activity(pg, w.site, 930, attested=False, enabled=False)
+        await seed_teacher_gate(pg, w.site, 930, age="1 minute", **facts)
+        r = await w.client.put(fallback_url(930), json=fb(opening), headers=teacher())
+        assert r.status_code == 400, r.text
+        assert [f["code"] for f in err(r)["details"]["fields"]] == [code]
+        assert err(r)["details"]["retry_after_s"] == 3
+        assert r.headers["retry-after"] == "3"
+        jobs = await pg.run(
+            "super",
+            "SELECT count(*) FROM assess_jobs WHERE kind = 'teacher_gate' "
+            "AND args->>'site_id' = :s AND (args->>'cmid')::int = 930",
+            {"s": str(w.site)},
+        )
+        assert jobs[0][0] == 1
+
+
+async def test_a_failing_refresh_queue_never_turns_the_refusal_into_a_500(  # type: ignore[no-untyped-def]
+    pg, monkeypatch
+) -> None:
+    """Fifth review, 4: the refusal is the answer; queueing its refresh is best effort. A
+    failing queue still returns the 400, without the hint (nothing was queued)."""
+    from vektra_assess.api import teacher_ops
+
+    async def broken(*_a: Any, **_k: Any) -> bool:
+        raise RuntimeError("queue down")
+
+    monkeypatch.setattr(teacher_ops, "queue_teacher_gate", broken)
+    async with world(pg) as w:
+        with_transcript_key(w)
+        await configure_activity(pg, w.site, 931, attested=False, enabled=False)
+        await seed_teacher_gate(pg, w.site, 931, age="1 minute", close_at=0)
+        r = await w.client.put(fallback_url(931), json=fb(CLOSE), headers=teacher())
+        assert r.status_code == 400, r.text
+        assert [f["code"] for f in err(r)["details"]["fields"]] == ["no_close_date"]
+        assert "retry_after_s" not in err(r)["details"]

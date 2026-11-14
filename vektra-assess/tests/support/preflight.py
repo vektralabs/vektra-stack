@@ -159,13 +159,17 @@ def deps(
     source: StartSource,
     runner: Any | None = None,
     kek: AssessKeyring | None = None,
+    job_budget_s: float | None = None,
 ) -> PreflightDeps:
+    """``job_budget_s``: the budget the job runtime enforces (None: the handler's own fallback
+    to the policy default)."""
     return PreflightDeps(
         settings=settings,
         kek=kek or kek_ring(),
         handoff_public=handoff_public,
         source=source,
         runner=runner or FakePartB(),
+        job_budget_s=job_budget_s,
     )
 
 

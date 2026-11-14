@@ -39,7 +39,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from vektra_assess import privacy
-from vektra_assess.api.common import engine_of, fail
+from vektra_assess.api.common import engine_of, fail, is_fresh
 from vektra_assess.api.deps import settings_of, tokens_of
 from vektra_assess.api.gate import verify_assess_token_pre
 from vektra_assess.audit import AssessAuditEvent, write_event
@@ -98,7 +98,7 @@ _START_CAP = text(
 #: because the API role's own read of assess_sessions is bound to this site (ADR-0033 D9.2)
 _LIVE = text("SELECT assess_live_session_count()")
 _RENDER = text(
-    "SELECT status, reason_code, extract(epoch FROM now() - computed_at) AS age_s "
+    "SELECT status, reason_code, extract(epoch FROM clock_timestamp() - computed_at) AS age_s "
     "FROM assess_render_state WHERE site_id = :s AND student_userid = :u AND cmid = :c"
 )
 #: the render codes that refuse a Start before anything is written: definitive negative states
@@ -246,7 +246,7 @@ async def _advisory(request: Request, conn: AsyncConnection, claims: PreClaims) 
     ).first()
     if (
         render is not None
-        and float(render.age_s) <= settings.render_fresh_s
+        and is_fresh(render.age_s, settings.render_fresh_s)
         and render.reason_code in _REFUSING
     ):
         # a FRESH negative render state of a LMS-side gate: refused before anything is

@@ -81,17 +81,19 @@ async def check(pg, site, cmid, actor=EDITOR, hint=(COURSE, "assign")):  # type:
 
 async def test_absent_facts_refuse_and_queue_one_refresh(pg) -> None:  # type: ignore[no-untyped-def]
     site = await make_site(pg)
-    assert (await check(pg, site, 50)).check is TeacherCheck.STALE
-    assert (
-        await check(pg, site, 50)
-    ).check is TeacherCheck.STALE  # deduped while pending
-    (job,) = await jobs(pg, site)
-    assert job.args == {
-        "site_id": str(site),
-        "cmid": 50,
-        "courseid": COURSE,
-        "activity_type": "assign",
-    }
+    # the refresh, then its one follow-up (a pending job may already have read: review of
+    # #221), then nothing more while both are pending; every one of them is STALE
+    checked = [await check(pg, site, 50) for _ in range(3)]
+    assert {c.check for c in checked} == {TeacherCheck.STALE}
+    rows = await jobs(pg, site)
+    assert [r.dedupe_key.endswith(":next") for r in rows] == [False, True]
+    for job in rows:
+        assert job.args == {
+            "site_id": str(site),
+            "cmid": 50,
+            "courseid": COURSE,
+            "activity_type": "assign",
+        }
 
 
 async def test_fresh_editor_passes_and_others_are_refused_without_a_refresh(pg) -> None:  # type: ignore[no-untyped-def]

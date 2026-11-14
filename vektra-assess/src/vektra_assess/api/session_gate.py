@@ -238,9 +238,14 @@ async def gate(
     #    enrolment fails closed: refused, state unchanged, audited.
     if enrolment_fresh_s is not None and row.state in LIVE:
         check = (await conn.execute(_ENROLMENT, {"sid": sid})).first()
+        # unlike the upserted caches (``api.common.is_fresh``), any negative age is fresh here:
+        # enrolment checks are INSERTED and read newest first, so a row dated ahead by a
+        # backward clock step can never be replaced; refusing it would refuse every turn until
+        # the clock caught up. The age is still read against clock_timestamp()
         if (
             check is None
             or check.result != "enrolled"
+            or check.age_s is None
             or float(check.age_s) > enrolment_fresh_s
         ):
             raise GateRejected(assess_unavailable("enrolment_freshness"), "enrolment")
@@ -248,7 +253,7 @@ async def gate(
 
 
 _ENROLMENT = text(
-    "SELECT result, extract(epoch FROM now() - checked_at) AS age_s "
+    "SELECT result, extract(epoch FROM clock_timestamp() - checked_at) AS age_s "
     "FROM assess_enrolment_checks WHERE session_id = :sid ORDER BY checked_at DESC LIMIT 1"
 )
 

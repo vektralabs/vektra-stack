@@ -19,7 +19,9 @@ site id, cmid, course id hint, activity type hint) resolves the cmid INSIDE the 
   configured: BR-007), ``team_submission``, ``grading_method``, ``lms_rubric`` (a rubric is
   defined for the LMS-rubric source); each None when unreadable.
 
-Nothing else: no names, no addresses, no content. The API accepts the row only while it is at
+Nothing else: no names, no addresses, no content. An upsert never replaces a newer read (on the
+database clock; a row dated past that clock is always replaceable), nor a resolved row with an
+unresolved read for another course hint. The API accepts the row only while it is at
 most ``VEKTRA_ASSESS_TEACHER_GATE_MAX_AGE_S`` old, otherwise it queues this job and refuses.
 """
 
@@ -33,6 +35,7 @@ from uuid import UUID
 import structlog
 from sqlalchemy import text
 
+from vektra_assess.timing import CLOCK_SKEW_TOLERANCE_S
 from vektra_assess.worker.runner import AcquireDb, JobContext
 
 log = structlog.get_logger(__name__)
@@ -52,7 +55,19 @@ _CLOCK = text("SELECT clock_timestamp()")
 _UPSERT = text(
     "INSERT INTO assess_teacher_gate (site_id, cmid, inputs, refreshed_at) "
     "VALUES (:s, :c, CAST(:i AS jsonb), :t) ON CONFLICT (site_id, cmid) "
-    "DO UPDATE SET inputs = EXCLUDED.inputs, refreshed_at = EXCLUDED.refreshed_at"
+    "DO UPDATE SET inputs = EXCLUDED.inputs, refreshed_at = EXCLUDED.refreshed_at "
+    # a read that resolved nothing (not in that course, or a transient failure) for ANOTHER
+    # hint never replaces a resolved row: a wrong course in some request must not turn the
+    # activity's facts into activity_not_in_course (review of #221). The row's own hint
+    # still replaces it (the activity moved, or became unreadable): fail closed as before
+    "WHERE NOT ((EXCLUDED.inputs->>'resolved') IS DISTINCT FROM 'true' "
+    "AND assess_teacher_gate.inputs->>'resolved' = 'true' "
+    "AND assess_teacher_gate.inputs->'hint' IS DISTINCT FROM EXCLUDED.inputs->'hint') "
+    # monotonic: two refreshes finishing out of order never let the older read win. Read times
+    # are the database clock (assess_jobs ids would order enqueues, not reads); a stored time
+    # past that clock (the clock stepped back) never freezes the row: it is always replaceable
+    "AND (assess_teacher_gate.refreshed_at <= EXCLUDED.refreshed_at "
+    "OR assess_teacher_gate.refreshed_at > clock_timestamp() + make_interval(secs => :tol))"
 )
 
 
@@ -85,6 +100,7 @@ async def refresh_teacher_gate(
                     "c": int(cmid),
                     "i": json.dumps(facts, sort_keys=True),
                     "t": observed_at,
+                    "tol": CLOCK_SKEW_TOLERANCE_S,
                 },
             )
     return facts

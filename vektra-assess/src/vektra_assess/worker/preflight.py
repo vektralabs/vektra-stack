@@ -65,6 +65,7 @@ from vektra_assess.crypto.seal import seal
 from vektra_assess.gates import Code, GateInputs, evaluate_start_gates
 from vektra_assess.keys import AssessKeyring
 from vektra_assess.llm.activation import is_activated
+from vektra_assess.llm.probe import PROBE_MAX_S, refusal_is_configuration
 from vektra_assess.llm.types import (
     PartBRejectedError,
     ProviderOutageError,
@@ -74,13 +75,17 @@ from vektra_assess.llm.types import (
 from vektra_assess.provider_alerts import queue_provider_config_alert
 from vektra_assess.timing import session_duration_s
 from vektra_assess.worker import locks
-from vektra_assess.worker.policy import (
+from vektra_assess.worker.policy import (  # one value each, shared with the policy
     COMMIT_MARGIN_S,
-)  # one value, shared with the policy
+    preflight_defaults,
+)
 from vektra_assess.worker.runner import AcquireDb, JobContext
 from vektra_assess.worker.start_guard import StartLimits, after_commit, after_rollback
 
 log = structlog.get_logger(__name__)
+
+#: kept free of the job's hard budget after the confirming probe, for the rollback transaction
+PROBE_ROLLBACK_MARGIN_S = 2.0
 
 #: the ``previous_context`` line of Part A for session #N > 1 (REQ-094; plan 8 owns the wording)
 PREVIOUS_CONTEXT = "Le sessioni precedenti non sono riprese in questa discussione."
@@ -94,6 +99,8 @@ class Reason(StrEnum):
     CAPTURE_FAILED = "capture_failed"
     PART_B_REJECTED = "part_b_rejected"
     PROVIDER_UNAVAILABLE = "provider_unavailable"
+    # the provider refused the deployment's configuration (provider_alerts): operator alerted
+    SERVICE_MISCONFIGURED = "service_misconfigured"
     RAG_NOT_AVAILABLE = "rag_not_available"
     INTERNAL_ERROR = "internal_error"
     COMMIT_FAILED = (
@@ -205,6 +212,10 @@ class PreflightDeps:
     runner: PartBRunner
     clock: Callable[[], float] = time.monotonic
     privacy: PrivacyCheck = privacy_not_configured
+    #: the budget the job runtime ENFORCES on a pre-flight (``KindPolicy.budget_s``, after any
+    #: ``VEKTRA_ASSESS_JOB_PREFLIGHT_BUDGET_S`` override): the runtime cancels the handler there.
+    #: None: the policy's default for these settings (``preflight_defaults``)
+    job_budget_s: float | None = None
 
 
 class _AmbiguousCommit(Exception):
@@ -807,10 +818,37 @@ async def _run(deps: PreflightDeps, acquire: AcquireDb, sid: UUID) -> None:
     except ProviderOutageError as exc:
         spent = None if t_part_b is None else deps.clock() - t_part_b
         _log_part_b_outage(deps, sid, exc, remaining, spent)
-        # a configuration refusal keeps the reason the plugin and the UI read
-        # (provider_unavailable) and alerts the operator (provider_alerts)
+        # a refusal of the deployment's configuration (an auth_error; a non-429 4xx only when
+        # the turn-shaped probe is refused too, llm.probe) rolls back with its own reason, which
+        # the discussion UI reads from start_rolled_back; every config refusal alerts the
+        # operator (provider_alerts)
+        # the probe runs inside what is left of the Start's budget AND of the budget the job
+        # runtime enforces (it cancels the pre-flight there, counted from the job's start;
+        # PROBE_ROLLBACK_MARGIN_S keeps time for the rollback), at most PROBE_MAX_S: out of
+        # budget, or any failure of it, is "not confirmed" (provider_unavailable)
+        job_budget = (
+            deps.job_budget_s
+            if deps.job_budget_s is not None
+            else preflight_defaults(deps.settings.start_t_s).budget_s
+        )
+        hard_left = job_budget - (deps.clock() - t_load) - PROBE_ROLLBACK_MARGIN_S
+        left = min((remaining or 0.0) - (spent or 0.0), hard_left)
+        make_probe = getattr(deps.runner, "config_probe", None)
+        try:
+            configuration = await refusal_is_configuration(
+                exc,
+                make_probe if callable(make_probe) else None,
+                budget_s=min(PROBE_MAX_S, left),
+            )
+        except Exception as probe_exc:
+            log.warning(
+                "assess_config_probe_failed", error_type=type(probe_exc).__name__
+            )
+            configuration = False
         raise _Rollback(
-            Reason.PROVIDER_UNAVAILABLE,
+            Reason.SERVICE_MISCONFIGURED
+            if configuration
+            else Reason.PROVIDER_UNAVAILABLE,
             data={"cause": exc.cause},
             config_refusal=exc.cause if exc.is_config_refusal else None,
         ) from None

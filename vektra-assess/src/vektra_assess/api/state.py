@@ -28,11 +28,17 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 
-from vektra_assess.api.common import engine_of, fail, iso_time
+from vektra_assess.api.common import engine_of, fail, is_fresh, iso_time
 from vektra_assess.api.deps import settings_of
 from vektra_assess.api.gate import verify_assess_token_pre
 from vektra_assess.errors import assess_unavailable, rate_limited
-from vektra_assess.jobs import JobKind, enqueue_job, render_dedupe_key
+from vektra_assess.jobs import (
+    JobKind,
+    enqueue_job,
+    enqueue_with_followup,
+    render_dedupe_key,
+    render_followup_dedupe_key,
+)
 from vektra_assess.privacy import config as privacy_config
 from vektra_assess.timing import minutes_left, session_duration_s
 from vektra_assess.tokens import PreClaims
@@ -81,7 +87,7 @@ _FACTS = text(
     "(SELECT s.state FROM assess_sessions s WHERE s.site_id = c.site_id AND s.cmid = c.cmid "
     "AND s.student_userid = :u AND s.state <> 'CLOSED') AS open_state, "
     "rs.status, rs.reason_code, rs.computed_at, "
-    "extract(epoch FROM now() - rs.computed_at) AS age_s, gi.inputs "
+    "extract(epoch FROM clock_timestamp() - rs.computed_at) AS age_s, gi.inputs "
     "FROM assess_activity_config c "
     "LEFT JOIN assess_render_state rs ON rs.site_id = c.site_id AND rs.cmid = c.cmid "
     "AND rs.student_userid = :u "
@@ -97,9 +103,18 @@ _PENDING_INDEX = "uq_assess_render_checks_pending"
 
 
 async def queue_render_check(
-    conn: Any, site: Any, userid: int, cmid: int, courseid: int | None
+    conn: Any,
+    site: Any,
+    userid: int,
+    cmid: int,
+    courseid: int | None,
+    *,
+    follow_up: bool = False,
 ) -> None:
-    """One pending render check and one deduped job per (site, user, cmid)."""
+    """One pending render check and one deduped job per (site, user, cmid). ``follow_up``:
+    beside a pending job (which may already be running and have read before a change), queue
+    the single follow-up job too (``render_followup_dedupe_key``), so a refusal's retry hint is
+    backed by a read after it; nothing more while both are pending."""
     try:
         async with conn.begin_nested():
             await conn.execute(_PENDING, {"s": site, "u": userid, "c": cmid})
@@ -113,12 +128,17 @@ async def queue_render_check(
     }
     if courseid:
         args["courseid"] = courseid
-    await enqueue_job(
-        conn,
-        JobKind.RENDER_CHECK,
-        args,
-        dedupe_key=render_dedupe_key(site, userid, cmid),
-    )
+    key = render_dedupe_key(site, userid, cmid)
+    if follow_up:
+        await enqueue_with_followup(
+            conn,
+            JobKind.RENDER_CHECK,
+            args,
+            key,
+            render_followup_dedupe_key(site, userid, cmid),
+        )
+    else:
+        await enqueue_job(conn, JobKind.RENDER_CHECK, args, dedupe_key=key)
 
 
 def state_view(row: Any, fresh_s: int) -> dict[str, Any]:
@@ -138,7 +158,7 @@ def state_view(row: Any, fresh_s: int) -> dict[str, Any]:
         return {"state": "closed", "reason": "already_discussed"}
     if not row.enabled or row.cap_minutes is None:
         return {"state": "not_enabled", "reason": "not_enabled"}
-    if row.status is None or row.age_s is None or float(row.age_s) > fresh_s:
+    if row.status is None or not is_fresh(row.age_s, fresh_s):
         return {"state": "unavailable", "reason": "checking"}
     view: dict[str, Any] = {
         "state": row.status,

@@ -11,6 +11,7 @@ import {
   opened,
   said,
   send,
+  sendWithShortcut,
   serverSession,
   tabTo,
   TEXT,
@@ -84,10 +85,12 @@ test("start, two turns, warning, outage and Riprova, flag, Annulla and Fine: key
   await watchAnnouncements(ui);
   await opened(request, ui, t);
 
-  // two turns: the DOM shows exactly the persisted text, one announcement per reply
-  const messages = ["Ho scelto la struttura per capitoli.", "Il criterio C1 chiede chiarezza."];
+  // two turns: the DOM shows exactly the persisted text, one announcement per reply. The
+  // second is written on two lines (a plain Enter is a new line) and sent with Ctrl+Enter
+  const messages = ["Ho scelto la struttura per capitoli.", "Il criterio C1\nchiede chiarezza."];
   for (const [i, message] of messages.entries()) {
-    await send(page, ui, message);
+    if (i === 0) await send(page, ui, message);
+    else await sendWithShortcut(page, ui, message.split("\n"));
     await expect.poll(() => botReplies(request, t)).toBe(i + 1);
     await expect.poll(() => said(ui, TEXT.replyDone)).toBe(i + 1);
     const server = await serverSession(request, t);

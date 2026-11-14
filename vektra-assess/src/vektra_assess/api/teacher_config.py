@@ -16,6 +16,15 @@ Start (duration, cap, snapshot); only the transcript recipients are re-read at s
 GET: the non-secret values, ``impostata`` / ``non impostata`` for each secret field (plus the
 recipients' count), the computed opening condition, the end-date warning, the review-options
 warning and the number of active sessions. It never returns a solution, a rubric or an address.
+
+A PUT refused on an LMS fact (``teacher.validation.is_lms_fact_error``: no cut-off, no close
+date, team submission, marking guide, no LMS rubric, unreadable, or an end date refused against
+an opening that comes from the cached close date) queues a refresh of the facts; when every
+error of the refusal is such a fact, the 400 carries ``error.details.retry_after_s`` and
+``Retry-After`` (always: the plugin retries at most once, ``api.teachers``).
+
+``POST /activities/{cmid}/gate-refresh``: the plugin opens a teacher page; queue a refresh of the
+activity's facts now (coalesced, idempotent, never a refusal of the page). See ``gate_refresh``.
 """
 
 from __future__ import annotations
@@ -26,7 +35,7 @@ from typing import Any
 from uuid import UUID
 
 import structlog
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
 
@@ -34,6 +43,7 @@ from vektra_assess import privacy
 from vektra_assess.api.common import (
     engine_of,
     fail,
+    is_fresh,
     iso_time,
     opening_json,
     parse_body,
@@ -41,7 +51,18 @@ from vektra_assess.api.common import (
 )
 from vektra_assess.api.deps import settings_of
 from vektra_assess.api.teacher_ops import opening_for
-from vektra_assess.api.teachers import TeacherGate, header_int, path_id, verify_teacher
+from vektra_assess.api.teachers import (
+    GATE_ROW,
+    REFRESH_MIN_INTERVAL_S,
+    RETRY_AFTER_S,
+    TeacherGate,
+    header_int,
+    path_id,
+    queue_teacher_gate,
+    refresh_after_fact_refusal,
+    refresh_hint,
+    verify_teacher,
+)
 from vektra_assess.audit import AssessAuditEvent, write_event
 from vektra_assess.crypto.teacher_config import (
     PASTED_RUBRIC,
@@ -55,6 +76,7 @@ from vektra_assess.errors import (
     bad_request,
     config_conflict,
     config_invalid,
+    retry_headers,
 )
 from vektra_assess.keys import AssessKeyring
 from vektra_assess.teacher import validation as v
@@ -63,6 +85,7 @@ from vektra_assess.teacher.schemas import (
     MAX_RECIPIENT_ITEMS,
     ConfigPut,
     FieldError,
+    TeacherAction,
     TriState,
     field_errors,
     state,
@@ -129,6 +152,42 @@ _REVIEW = text(
 )
 
 
+class _Invalid(Exception):
+    """Field errors of a PUT: raised through the transaction (nothing is written), answered
+    after it by ``_refuse_invalid``, which may queue a fact refresh in a transaction of its
+    own."""
+
+    def __init__(self, errors: list[FieldError], opening_source: str | None) -> None:
+        super().__init__("invalid")
+        self.errors = errors
+        #: where the end date's floor came from (``gates.Opening.source``), when it was checked
+        self.opening_source = opening_source
+
+
+async def _refuse_invalid(
+    request: Request,
+    site: UUID,
+    cmid: int,
+    gate: TeacherGate,
+    errors: list[FieldError],
+    opening_source: str | None,
+) -> HTTPException:
+    """The 400 of a refused PUT. An LMS-fact refusal queues the refresh of the facts;
+    ``retry_after_s`` only when EVERY error is such a fact (the retry can then pass as it is;
+    any other error needs the teacher first). ``opening_source``: where the end date's floor
+    came from, so an end date refused against the teacher's own attested opening is not
+    taken for an LMS fact."""
+    on_facts = [e for e in errors if v.is_lms_fact_error(e, opening_source)]
+    queued = bool(on_facts) and await refresh_after_fact_refusal(
+        engine_of(request), site, cmid, gate
+    )
+    retry = queued and len(on_facts) == len(errors)
+    err = config_invalid(
+        field_errors(errors), retry_after_s=RETRY_AFTER_S if retry else None
+    )
+    return fail(err, retry_headers(err))
+
+
 def _facts(gate: TeacherGate) -> v.ActivityFacts:
     """The worker-written facts, typed; a missing or mistyped one is None (unreadable)."""
     f = gate.facts
@@ -174,15 +233,20 @@ async def put_config(
     if secrets_given and not isinstance(public, AssessKeyring):
         raise fail(assess_unavailable("teacher_config_key"))
     refused: Any = None
-    async with engine_of(request).begin() as conn:
-        site = await site_of_key(conn, key, "teacher")
-        gate, refused = await verify_teacher(
-            conn, site=site, cmid=c, actor=body.actor_userid, courseid=body.courseid,
-            kind=body.activity_type, max_age_s=settings.teacher_gate_max_age_s,
-            route="put_config", role="editor",
-        )  # fmt: skip
-        if refused is None:
-            view = await _save(conn, site, c, body, gate, settings, public)
+    try:
+        async with engine_of(request).begin() as conn:
+            site = await site_of_key(conn, key, "teacher")
+            gate, refused = await verify_teacher(
+                conn, site=site, cmid=c, actor=body.actor_userid, courseid=body.courseid,
+                kind=body.activity_type, max_age_s=settings.teacher_gate_max_age_s,
+                route="put_config", role="editor",
+            )  # fmt: skip
+            if refused is None:
+                view = await _save(conn, site, c, body, gate, settings, public)
+    except _Invalid as invalid:  # rolled back: nothing of the PUT was written
+        raise await _refuse_invalid(
+            request, site, c, gate, invalid.errors, invalid.opening_source
+        ) from None
     if refused is not None:
         raise refused  # after commit: the refusal stays audited, the refresh queued
     return JSONResponse(view, headers={"Cache-Control": "no-store"})
@@ -217,6 +281,7 @@ async def _save(
     }
     new: dict[str, Any] = dict(old)
     errors: list[FieldError] = []
+    opening_source: str | None = None
 
     # ``null`` clears only what can be empty (the write-only fields, the cap, the end date); on a
     # setting that always has a value it is a field error, never a silent false (review 8)
@@ -245,6 +310,7 @@ async def _save(
             opening = await opening_for(
                 conn, site, gate.facts, row.attested_at if row is not None else None
             )
+            opening_source = opening.source
             # the end date must follow the opening the view shows (grace included); with no
             # opening possible (no close, or the close unreadable) it is opening_unknown
             end_errors = v.check_end_date(end, opening.floor)
@@ -308,7 +374,7 @@ async def _save(
         for e in errors:
             if e not in unique:
                 unique.append(e)
-        raise fail(config_invalid(field_errors(unique)))
+        raise _Invalid(unique, opening_source)
 
     # --- write: the config row (version + 1), the sealed fields, the audit -------------------
     flags["show_solution"] = bool(new["show_solution"])
@@ -461,3 +527,60 @@ async def get_config(
     if refused is not None:
         raise refused
     return JSONResponse(view, headers={"Cache-Control": "no-store"})
+
+
+# --- gate refresh (live E2E follow-up) ----------------------------------------------------------
+
+
+@router.post("/activities/{cmid}/gate-refresh")
+async def gate_refresh(
+    cmid: str, request: Request, key: ApiKeyInfo = Depends(_guard)
+) -> JSONResponse:
+    """A teacher page of the activity opened (the Discussioni list, the activity settings, the
+    grader's page): read the activity's LMS facts again NOW, so the teacher's first action finds
+    them fresh instead of a "checking your role" refusal.
+
+    ``assess:teacher`` key (exact scope), bound to its site; the body is the common teacher
+    shape (``actor_userid``, ``courseid``, ``activity_type``). It verifies nobody and returns no
+    fact: the refresh is per activity (every teacher of it benefits) and ``actor_userid`` is only
+    checked for shape. The course and type are a hint used only while the activity has no
+    RESOLVED row: a resolved row is refreshed with its own course and type (``refresh_hint``), so
+    a wrong course in the body can never queue a read that says ``activity_not_in_course``.
+
+    Coalesced per cmid: nothing is queued while a refresh for that hint is pending, or when the
+    activity's facts were read less than ``REFRESH_MIN_INTERVAL_S`` ago (a resolved row, or an
+    unresolved one for the same hint). Always 202 for a well-formed request: the plugin may
+    ignore any failure and open the page.
+    """
+    c = path_id(cmid, "cmid")
+    body = await parse_body(request, TeacherAction)
+    async with engine_of(request).begin() as conn:
+        site = await site_of_key(conn, key, "teacher")
+        row = (await conn.execute(GATE_ROW, {"s": site, "c": c})).first()
+        facts = (
+            dict(row.inputs) if row is not None and isinstance(row.inputs, dict) else {}
+        )
+        hint = refresh_hint(facts, body.courseid, body.activity_type)
+        if hint is None:  # unreachable: the schema validated the body's hint
+            raise fail(bad_request("teacher_gate_hint"))
+        recent = (
+            row is not None
+            # the one freshness rule: a row dated well past the clock is not "recent"
+            and is_fresh(row.age_s, REFRESH_MIN_INTERVAL_S)
+            and (facts.get("resolved") is True or facts.get("hint") == list(hint))
+        )
+        queued = (
+            False
+            if recent
+            else await queue_teacher_gate(conn, site, c, *hint, follow_up=True)
+        )
+    log.info("assess_teacher_gate_refresh", site_id=str(site), cmid=c, queued=queued)
+    return JSONResponse(
+        {
+            "cmid": c,
+            "queued": queued,
+            "refreshed_at": iso_time(row.refreshed_at) if row is not None else None,
+        },
+        status_code=202,
+        headers={"Cache-Control": "no-store"},
+    )

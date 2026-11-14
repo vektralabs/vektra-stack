@@ -324,9 +324,12 @@ def _text(kind: JobKind, e: Event) -> tuple[str, str]:
             f"problema di configurazione: {problem}.\n\n"
             f"  sito: {e.site_id}\n"
             f"  causa: {e.reason}\n\n"
-            "Le discussioni non entrano in interruzione del servizio: ogni turno rifiutato "
-            "riceve la risposta interrotta e ogni avvio viene annullato (provider_unavailable) "
-            "finche' la configurazione non e' corretta. Controllare il registro "
+            "Ogni turno rifiutato riceve la risposta interrotta. Se il rifiuto riguarda la "
+            "configurazione (chiave rifiutata, oppure rifiutata anche una chiamata di prova) la "
+            "sessione entra in interruzione del servizio (il tempo non viene conteggiato allo "
+            "studente; oltre il limite la sessione si chiude service_failure) e ogni avvio viene "
+            "annullato (service_misconfigured) finche' la configurazione non e' corretta. "
+            "Controllare il registro "
             "(assess_turn_provider_failure, assess_preflight_provider_outage). L'avviso arriva "
             "al massimo una volta all'ora per sito e causa.\n" + _FOOTER,
         )

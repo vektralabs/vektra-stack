@@ -171,15 +171,28 @@ def test_a_row_without_a_usable_hint_queues_no_refresh_after_a_fact_refusal() ->
     from vektra_assess.api.teachers import TeacherGate, refresh_after_fact_refusal
 
     class Engine:
-        def begin(self) -> Any:
-            raise AssertionError("nothing may be queued")
+        """Counts transactions: the helper swallows exceptions (a failed queue only loses the
+        hint), so raising here could not prove that nothing was attempted."""
 
+        def __init__(self) -> None:
+            self.begun = 0
+
+        def begin(self) -> Any:
+            self.begun += 1
+            raise RuntimeError("nothing may be queued")
+
+    engine = Engine()
     for facts in ({}, {"hint": [7, "forum"]}, {"hint": [True, "quiz"]}, {"hint": "x"}):
         g = TeacherGate(TeacherCheck.OK, facts, age_s=60.0)
-        assert asyncio.run(refresh_after_fact_refusal(Engine(), SITE, 3, g)) is False
+        assert asyncio.run(refresh_after_fact_refusal(engine, SITE, 3, g)) is False
     # just read: final, nothing queued either
     g = TeacherGate(TeacherCheck.OK, {"hint": [7, "quiz"]}, age_s=1.0)
-    assert asyncio.run(refresh_after_fact_refusal(Engine(), SITE, 3, g)) is False
+    assert asyncio.run(refresh_after_fact_refusal(engine, SITE, 3, g)) is False
+    assert engine.begun == 0
+    # the control: a usable hint on old facts does open a transaction
+    g = TeacherGate(TeacherCheck.OK, {"hint": [7, "quiz"]}, age_s=60.0)
+    assert asyncio.run(refresh_after_fact_refusal(engine, SITE, 3, g)) is False
+    assert engine.begun == 1
 
 
 def test_the_retry_hint_is_in_one_place_capped_and_never_on_a_final_refusal() -> None:

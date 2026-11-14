@@ -29,6 +29,7 @@ from vektra_assess.api.deps import (
     settings_of,
     tokens_of,
 )
+from vektra_assess.api.events import OUTAGE_NO
 from vektra_assess.api.gate import verify_assess_token_any
 from vektra_assess.api.material import Material, MaterialUnavailable, load_material
 from vektra_assess.api.session_gate import (
@@ -66,10 +67,14 @@ def view(
     paused_at: Any = None,
     flagged: frozenset[int] = frozenset(),
     outage_code: Any = None,
+    outage_no: int | None = None,
 ) -> dict[str, Any]:
     """``paused_at``: the open outage's start while the session is in OUTAGE: the timer is
     paused there, so the time left is measured against it. ``outage_code``: that interval's
-    ``reason_code``, served as the closed ``outage_reason`` (OUTAGE only, optional)."""
+    ``reason_code``, served as the closed ``outage_reason`` (OUTAGE only, optional).
+    ``outage_no``: the session's outage ordinal, the same number the stream's ``outage_start`` /
+    ``outage_end`` carry (live states only, optional): the client ignores replayed outage events
+    not newer than the snapshot it applied."""
     turns = []
     if material is not None:
         turns = [
@@ -105,6 +110,8 @@ def view(
     }
     if row.state == "OUTAGE":
         body["outage_reason"] = outage_reason(outage_code)
+    if outage_no is not None:
+        body["outage_no"] = outage_no
     return body
 
 
@@ -164,6 +171,17 @@ async def get_session(
                 else None
             )
             paused_at = outage.started_at if outage is not None else None
+            outage_no = (
+                int(
+                    (
+                        await conn.execute(
+                            OUTAGE_NO, {"s": sid, "open_too": row.state == "OUTAGE"}
+                        )
+                    ).scalar_one()
+                )
+                if row.state in LIVE
+                else None
+            )
             flagged = (
                 frozenset(int(r[0]) for r in await conn.execute(_FLAGGED, {"s": sid}))
                 if material is not None
@@ -175,6 +193,7 @@ async def get_session(
                 paused_at,
                 flagged,
                 outage.reason_code if outage is not None else None,
+                outage_no,
             )
             if resume:
                 # minted INSIDE the transaction: a refusal (past deadline + grace) rolls the jti

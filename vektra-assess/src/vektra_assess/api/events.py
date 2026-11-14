@@ -12,6 +12,11 @@ The event catalogue is owned by this plan (plan 9 consumes it and adds none): ``
 ``outage_end``, ``closed``. Payloads are content-free (ids, states, timestamps, codes) except
 ``reply_delta``, which carries post-checked text only.
 
+``outage_start`` / ``outage_end`` (and the polled ``state`` payloads) carry ``outage_no``, the
+session's outage ordinal: how many outage intervals it has had, so the number of the latest
+(optional, additive). ``GET /sessions/{sid}`` serves the same number, so a client that applied a
+snapshot tells a replayed past incident (number not newer than the snapshot's) from a live one.
+
 State changes that happen elsewhere (the worker's commit or rollback, a close) are observed by
 polling the session row (1 s): the broker remembers the last state per session and publishes one
 event per CHANGE, however many connections poll. The broker is in-process: correct with a single
@@ -32,7 +37,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import StreamingResponse
-from sqlalchemy import text
+from sqlalchemy import Boolean, bindparam, text
 
 from vektra_assess.api.common import engine_of
 from vektra_assess.api.deps import settings_of
@@ -242,13 +247,28 @@ POLL_S = 1.0
 KEEPALIVE_S = 15.0
 MAX_STREAM_S = 3600.0  # the client reconnects with Last-Event-ID
 
+#: the session's outage ordinal (``outage_no``): its outage intervals, counted. Intervals are
+#: only ever added while the session is open (purge and shred run after the close), so the count
+#: is the number of the latest one and grows with each new outage. ``open_too`` false counts the
+#: ended ones only: a reader that took the state ACTIVE in an earlier statement must not count an
+#: interval opened since, whose ``outage_start`` is still to come as a live event
+OUTAGE_NO = text(
+    "SELECT count(*) FROM assess_outage_incidents "
+    "WHERE session_id = :s AND (:open_too OR ended_at IS NOT NULL)"
+).bindparams(bindparam("open_too", type_=Boolean))
 _STATUS = text(
     "SELECT state, close_reason, epoch, deadline_at, duration_s, now() AS server_now, "
     # the open outage interval's reason, read in OUTAGE only: what the student is told
     "CASE WHEN state = 'OUTAGE' THEN (SELECT i.reason_code FROM assess_outage_incidents i "
     "WHERE i.session_id = assess_sessions.id AND i.ended_at IS NULL "
-    "ORDER BY i.started_at DESC LIMIT 1) END AS outage_code "
+    "ORDER BY i.started_at DESC LIMIT 1) END AS outage_code, "
+    "(SELECT count(*) FROM assess_outage_incidents i "
+    "WHERE i.session_id = assess_sessions.id) AS outage_no "
     "FROM assess_sessions WHERE id = :s"
+)
+_OPEN_OUTAGE_CODE = text(
+    "SELECT reason_code FROM assess_outage_incidents WHERE session_id = :s "
+    "AND ended_at IS NULL ORDER BY started_at DESC LIMIT 1"
 )
 _ROLLBACK_REASON = text(
     "WITH rb AS (SELECT site_id, cmid, student_userid, reason_code FROM assess_start_attempts "
@@ -291,6 +311,7 @@ async def _poll(
         "message_code": close_message_code(row.close_reason),
         "deadline_at": _iso(row.deadline_at),
         "server_now": _iso(row.server_now),
+        "outage_no": int(row.outage_no),
     }
     if row.state == "OUTAGE":
         # optional, OUTAGE only: provider_unavailable | service_misconfigured
@@ -331,17 +352,27 @@ async def session_events(
             # the stream carries reply text: opening or reconnecting needs a fresh 'enrolled'
             # check (gate step 6, live rows only, so a CLOSED session still drains)
             require_enrolment=True,
-        ) as (_conn, row)
+        ) as (conn, row)
     ):
-        snapshot = {
+        snapshot: dict[str, Any] = {
             "state": row.state,
             "close_reason": row.close_reason,
             "message_code": close_message_code(row.close_reason),
             "deadline_at": _iso(row.deadline_at),
             "server_now": _iso(row.server_now),
         }
-        # no outage reason here: the gate's row has none, and a second read only for it is not
-        # worth it (the reason comes with outage_start and GET /sessions/{sid}.outage_reason)
+        if row.state in ("ACTIVE", "OUTAGE"):
+            # the seeding below may publish this connection's view as outage_start / outage_end
+            # (a change no poll saw): it carries the incident's number and reason like a poll's
+            in_outage = row.state == "OUTAGE"
+            snapshot["outage_no"] = int(
+                (
+                    await conn.execute(OUTAGE_NO, {"s": sid, "open_too": in_outage})
+                ).scalar_one()
+            )
+            if in_outage:
+                code = (await conn.execute(_OPEN_OUTAGE_CODE, {"s": sid})).scalar()
+                snapshot["reason"] = outage_reason(code)
     broker = broker_of(request)
     # seed the channel with the state this connection saw, so the next poll reports a change
     # (STARTING -> ACTIVE is ``committed``) even when no other connection observed it first

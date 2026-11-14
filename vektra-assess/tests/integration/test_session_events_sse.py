@@ -232,3 +232,65 @@ async def test_the_one_minute_warning_reaches_both_tabs_once(pg, worker) -> None
             assert [e["data"]["minutes"] for e in warnings] == [1]
             ids |= {e["id"] for e in warnings}
         assert len(ids) == 1, ids  # the same event in both tabs, published once
+
+
+async def test_outage_events_and_the_snapshot_carry_the_outage_number(
+    pg, worker
+) -> None:  # type: ignore[no-untyped-def]
+    """Live 2026-11-14: a reloaded page replays the ring; ``outage_no`` on the outage events and
+    on ``GET /sessions/{sid}`` lets it tell a past incident from a live one."""
+    async with world(pg, assess_sse_timing=TIMING) as w:
+        s = await seed_session(w, worker, "ACTIVE")
+        sid, auth = s.session_id, {"Authorization": f"Bearer {s.session_token}"}
+
+        async def enter() -> None:
+            got = await pg.run(
+                "api", "SELECT assess_enter_outage(:s, 1, now(), 'error')", {"s": sid}
+            )
+            assert got[0][0] == "outage", got
+
+        async def end() -> None:
+            async with worker.begin() as conn:
+                await conn.execute(text("SELECT assess_end_outage(:s, 0)"), {"s": sid})
+
+        r = await w.client.get(f"/api/v1/assess/sessions/{sid}", headers=auth)
+        assert r.json()["state"] == "ACTIVE" and r.json()["outage_no"] == 0
+        tab = asyncio.create_task(_stream(w, sid, s.session_token))
+        await asyncio.sleep(0.3)
+        await enter()
+        await asyncio.sleep(0.3)
+        await end()
+        await asyncio.sleep(0.3)
+        r = await w.client.get(f"/api/v1/assess/sessions/{sid}", headers=auth)
+        assert r.json()["state"] == "ACTIVE" and r.json()["outage_no"] == 1
+        assert "outage_reason" not in r.json()
+        await enter()
+        await asyncio.sleep(0.3)
+        r = await w.client.get(f"/api/v1/assess/sessions/{sid}", headers=auth)
+        assert r.json()["state"] == "OUTAGE" and r.json()["outage_no"] == 2
+        # a reader that took the state ACTIVE before this outage opened counts the ended ones
+        # only: the open interval's outage_start is still a live event for it
+        from vektra_assess.api.events import OUTAGE_NO
+
+        async with worker.connect() as conn:
+            for open_too, expected in ((True, 2), (False, 1)):
+                got = await conn.execute(OUTAGE_NO, {"s": sid, "open_too": open_too})
+                assert got.scalar_one() == expected
+        # a page reloaded now: the stream's opening snapshot says which incident is open
+        reload = asyncio.create_task(_stream(w, sid, s.session_token))
+        await asyncio.sleep(0.3)
+        async with worker.begin() as conn:
+            await conn.execute(
+                text("SELECT assess_close_session(:s, 1, 'finished')"), {"s": sid}
+            )
+        events = parse(await asyncio.wait_for(tab, 15))
+        outages = [
+            (e["event"], e["data"].get("outage_no"))
+            for e in events
+            if e["event"] in ("outage_start", "outage_end")
+        ]
+        assert outages == [("outage_start", 1), ("outage_end", 1), ("outage_start", 2)]
+        first = parse(await asyncio.wait_for(reload, 15))[0]
+        assert first["event"] == "state" and first["data"]["state"] == "OUTAGE"
+        assert first["data"]["outage_no"] == 2
+        assert first["data"]["reason"] == "provider_unavailable"

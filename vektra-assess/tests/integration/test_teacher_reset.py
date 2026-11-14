@@ -298,7 +298,13 @@ async def test_the_moodle_half_comes_from_a_fresh_render_or_is_refreshed(
         await seed_render(pg, w.site, 7101, cmid, lms_reasons=["not_released"])
         r = await reset(w, cmid, sid)
         assert r.status_code == 409
-        assert err(r)["details"] == {"reason": "gate", "gate": "not_released"}
+        # decided on the cached render evaluation: a render check is queued and the refusal
+        # hints (fourth review of #221; the client retries at most once)
+        assert err(r)["details"] == {
+            "reason": "gate",
+            "gate": "not_released",
+            "retry_after_s": 3,
+        }
         assert await grants(pg, w.site) == 0
         await seed_render(pg, w.site, 7101, cmid, lms_reasons=[])
         r = await reset(w, cmid, sid)

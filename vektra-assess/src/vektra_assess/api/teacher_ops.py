@@ -47,7 +47,9 @@ from vektra_assess.api.deps import settings_of
 from vektra_assess.api.teachers import (
     RETRY_AFTER_S,
     TeacherGate,
+    gate_hint,
     path_id,
+    queue_teacher_gate,
     verify_teacher,
 )
 from vektra_assess.api.transcripts import transcript_key_of
@@ -171,12 +173,17 @@ def _uuid(raw: str, name: str) -> UUID:
         raise fail(bad_request(name)) from None
 
 
-def _invalid(errors: list[FieldError]) -> HTTPException:
+def _invalid(
+    errors: list[FieldError], retry_after_s: int | None = None
+) -> HTTPException:
+    """The 400 of field errors; ``retry_after_s`` (and ``Retry-After``) when a refresh of the
+    cached LMS facts they were decided on was queued."""
     unique: list[FieldError] = []
     for e in errors:
         if e not in unique:
             unique.append(e)
-    return fail(config_invalid(field_errors(unique)))
+    err = config_invalid(field_errors(unique), retry_after_s=retry_after_s)
+    return fail(err, retry_headers(err))
 
 
 async def _run(
@@ -281,7 +288,8 @@ async def reset_session(
         fresh = (
             render is not None
             and render.age_s is not None
-            and float(render.age_s) <= settings.teacher_gate_max_age_s
+            # dated past the database clock (a backward clock step): not fresh
+            and 0 <= float(render.age_s) <= settings.teacher_gate_max_age_s
             and isinstance(inputs, dict)
             and isinstance(inputs.get("lms_reasons"), list)
             # evaluated with the REQ-091 date in force now (a moved date changes gate (d))
@@ -296,7 +304,14 @@ async def reset_session(
             raise _Refused(fail(err, retry_headers(err)))
         code = gate_code([str(x) for x in inputs["lms_reasons"]])  # type: ignore[index]
         if code is not None:
-            raise refuse_gate(code)
+            # the database half passed above: this refusal is the CACHED LMS half, which the
+            # teacher may have just changed in the LMS. Re-evaluate it and hint (the client
+            # retries at most once)
+            from vektra_assess.api.state import queue_render_check
+
+            await queue_render_check(conn, site, student, c, body.courseid)
+            err = reset_refused("gate", gate=code, **retry_details(RETRY_AFTER_S))
+            raise _Refused(fail(err, retry_headers(err)))
         # the LOCKED row's close reason: the worker may have closed the session between the
         # unlocked read and the lock
         include = v.include_previous_turns(
@@ -584,6 +599,13 @@ async def put_opening_fallback(
             end_at=cfg.end_at,
         )
         if errors:
+            hint = gate_hint(gate)
+            if hint is not None and all(e.code in v.OPENING_FACT_CODES for e in errors):
+                # decided on the CACHED gate facts (the close date, its readability): the
+                # teacher may have just changed them in the LMS. Re-read and hint (the client
+                # retries at most once); this transaction commits with the refusal
+                await queue_teacher_gate(conn, site, c, *hint, follow_up=True)
+                raise _Refused(_invalid(errors, RETRY_AFTER_S))
             raise _Refused(_invalid(errors))
         at = int(body.opening_at.timestamp())
         version = (

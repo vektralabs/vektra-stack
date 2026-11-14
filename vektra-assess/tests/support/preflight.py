@@ -159,13 +159,21 @@ def deps(
     source: StartSource,
     runner: Any | None = None,
     kek: AssessKeyring | None = None,
+    job_budget_s: float | None = None,
 ) -> PreflightDeps:
+    """``job_budget_s``: the budget the job runtime enforces; by default the worker policy's
+    own default for these settings (``preflight_defaults``)."""
+    from vektra_assess.worker.policy import preflight_defaults
+
     return PreflightDeps(
         settings=settings,
         kek=kek or kek_ring(),
         handoff_public=handoff_public,
         source=source,
         runner=runner or FakePartB(),
+        job_budget_s=job_budget_s
+        if job_budget_s is not None
+        else preflight_defaults(settings.start_t_s).budget_s,
     )
 
 

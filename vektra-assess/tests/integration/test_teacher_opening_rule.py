@@ -240,3 +240,43 @@ async def test_every_input_readable_refuses_the_date_and_requires_none(pg) -> No
         assert err(r)["details"]["fields"] == [
             {"field": "opening_at", "code": "fallback_not_needed"}
         ]
+
+
+@pytest.mark.parametrize(
+    ("facts", "opening", "code"),
+    [
+        ({"close_at": 0}, CLOSE, "no_close_date"),  # no cut-off cached
+        (
+            {"close_at": None},
+            CLOSE,
+            "close_unreadable",
+        ),  # the cached cut-off unreadable
+        (
+            {"close_at": CLOSE},
+            CLOSE - 3600,
+            "before_close",
+        ),  # against the cached cut-off
+    ],
+)
+async def test_an_opening_fallback_refused_on_cached_facts_asks_for_a_retry(  # type: ignore[no-untyped-def]
+    pg, facts, opening, code
+) -> None:
+    """Fourth review of #221, 5: these refusals are decided on the worker's cached facts,
+    which the teacher may have just changed in the LMS: the refresh is queued and the 400
+    carries the retry hint."""
+    async with world(pg) as w:
+        with_transcript_key(w)
+        await configure_activity(pg, w.site, 930, attested=False, enabled=False)
+        await seed_teacher_gate(pg, w.site, 930, age="1 minute", **facts)
+        r = await w.client.put(fallback_url(930), json=fb(opening), headers=teacher())
+        assert r.status_code == 400, r.text
+        assert [f["code"] for f in err(r)["details"]["fields"]] == [code]
+        assert err(r)["details"]["retry_after_s"] == 3
+        assert r.headers["retry-after"] == "3"
+        jobs = await pg.run(
+            "super",
+            "SELECT count(*) FROM assess_jobs WHERE kind = 'teacher_gate' "
+            "AND args->>'site_id' = :s AND (args->>'cmid')::int = 930",
+            {"s": str(w.site)},
+        )
+        assert jobs[0][0] == 1

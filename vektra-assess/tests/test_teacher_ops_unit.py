@@ -428,10 +428,20 @@ def test_a_stale_render_queues_a_refresh_and_asks_to_retry(
 def test_the_lms_half_of_the_render_refuses(
     world: Any, monkeypatch: pytest.MonkeyPatch, reasons: list[str], gate: str
 ) -> None:
+    """Fourth review of #221, 4: the LMS half comes from the CACHED render evaluation, which
+    the teacher may have just changed in the LMS: the refusal queues a render check and
+    carries the retry hint (the client retries at most once)."""
     w = world(reset_script(gate_row=render(lms_reasons=reasons)))
-    status, detail = refused(reset(monkeypatch))
-    assert status == 409 and details(detail)["gate"] == gate
-    assert w.renders == []
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(reset(monkeypatch))
+    assert exc.value.status_code == 409
+    assert details(exc.value.detail) == {
+        "reason": "gate",
+        "gate": gate,
+        "retry_after_s": 3,
+    }
+    assert exc.value.headers == {"Retry-After": "3"}
+    assert len(w.renders) == 1
 
 
 # --- terminate -----------------------------------------------------------------------------------

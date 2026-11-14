@@ -169,14 +169,14 @@ async def _refuse_invalid(
     cmid: int,
     gate: TeacherGate,
     errors: list[FieldError],
-    opening_source: str | None = None,
+    opening_source: str | None,
 ) -> HTTPException:
     """The 400 of a refused PUT. An LMS-fact refusal queues the refresh of the facts;
     ``retry_after_s`` only when EVERY error is such a fact (the retry can then pass as it is;
     any other error needs the teacher first). ``opening_source``: where the end date's floor
     came from, so an end date refused against the teacher's own attested opening is not
     taken for an LMS fact."""
-    on_facts = [e for e in errors if v.is_lms_fact_error(e, gate.facts, opening_source)]
+    on_facts = [e for e in errors if v.is_lms_fact_error(e, opening_source)]
     queued = bool(on_facts) and await refresh_after_fact_refusal(
         engine_of(request), site, cmid, gate
     )
@@ -565,7 +565,8 @@ async def gate_refresh(
         recent = (
             row is not None
             and row.age_s is not None
-            and float(row.age_s) <= REFRESH_MIN_INTERVAL_S
+            # a row dated past the database clock (a backward clock step) is not "recent"
+            and 0 <= float(row.age_s) <= REFRESH_MIN_INTERVAL_S
             and (facts.get("resolved") is True or facts.get("hint") == list(hint))
         )
         queued = (

@@ -137,10 +137,11 @@ async def queue_teacher_gate(
     *,
     follow_up: bool = False,
 ) -> bool:
-    """Queue a refresh for this hint; True only when a job was inserted NOW (it reads after the
-    caller's transaction). False: one is already pending. ``follow_up``: beside a pending one,
-    queue the single follow-up (``teacher_gate_followup_dedupe_key``), so a refusal can be sure
-    of a read after it even when the pending job is already running; False again when both are
+    """Queue a refresh for this hint, in the caller's transaction. ``follow_up``: beside a
+    pending one (which may already be running and have read before a change), queue the single
+    follow-up (``teacher_gate_followup_dedupe_key``); nothing more while both are pending, which
+    bounds the LMS reads per activity. Returns whether a job was inserted now: only
+    ``gate-refresh`` reports it (``queued``); a refusal hints whenever a refresh is queued or
     pending. The caller checks ``usable_hint`` first: without one nothing can be resolved."""
     if courseid is None or kind is None or not usable_hint(courseid, kind):
         raise ValueError("a teacher_gate refresh needs a course and type hint")
@@ -205,7 +206,9 @@ async def check_fresh_teacher(
     row = (await conn.execute(GATE_ROW, {"s": site, "c": int(cmid)})).first()
     facts = dict(row.inputs) if row is not None and isinstance(row.inputs, dict) else {}
     age = float(row.age_s) if row is not None and row.age_s is not None else None
-    fresh = age is not None and age <= max_age_s
+    # a negative age (the row dated past the database clock, after a backward clock step) is
+    # not fresh: the refresh is queued and the stale refusal hints
+    fresh = age is not None and 0 <= age <= max_age_s
 
     async def refresh() -> TeacherGate:
         hint = refresh_hint(facts, courseid_hint, kind_hint)
@@ -246,11 +249,11 @@ def gate_hint(gate: TeacherGate) -> tuple[int, str] | None:
 async def refresh_after_fact_refusal(
     engine: Any, site: UUID, cmid: int, gate: TeacherGate
 ) -> bool:
-    """A refusal decided on an LMS fact of ``gate``: queue a refresh of the row (its own
-    transaction: the refused request's rolls back; coalesced with a pending refresh and its
-    follow-up) and return whether the caller tells the plugin to retry: True whenever a refresh
-    is queued or pending. The server never declares such a refusal final (it cannot know when
-    the LMS changed): the plugin retries at most once. Never raises: no usable hint, or a
+    """A refusal decided on an LMS fact of ``gate``: queue a refresh of the row in its own
+    transaction (the refused request's rolls back), coalesced with a pending refresh and its
+    follow-up. Returns whether a refresh is now queued or pending, i.e. whether the refusal
+    carries ``retry_after_s``: the server always hints on such a refusal (it cannot know when
+    the LMS changed) and the client retries at most once. Never raises: no usable hint, or a
     failed queue, means no refresh and no hint."""
     hint = gate_hint(gate)
     if hint is None:

@@ -476,6 +476,15 @@ def _session_handlers(checked: Checked, audit: Any) -> dict[Any, Any]:
         engine.connect,
         teacher_private=checked.keys["assess_teacher_config_private"],
     )
+    from vektra_assess.worker.policy import load_policy
+
+    # the budget the job runtime enforces on a pre-flight (with any operator override): the
+    # handler keeps its confirming probe inside it
+    preflight_budget = (
+        load_policy(os.environ, lms_call_deadline_s=_lms_call_deadline(checked))
+        .kinds[JobKind.PREFLIGHT]
+        .budget_s
+    )
     preflight = make_preflight_handler(
         PreflightDeps(
             settings=settings,
@@ -483,6 +492,7 @@ def _session_handlers(checked: Checked, audit: Any) -> dict[Any, Any]:
             handoff_public=checked.keys["assess_handoff_public"],
             source=source,
             runner=runner,
+            job_budget_s=preflight_budget,
         )
     )
     # the transcript recipients: the sealed teacher config, opened by the worker only

@@ -984,22 +984,18 @@ async def test_a_probe_that_cannot_be_built_rolls_back_provider_unavailable(  # 
 
 
 async def test_the_confirming_probe_stays_inside_the_jobs_hard_budget(  # type: ignore[no-untyped-def]
-    pg, worker_engine, monkeypatch
+    pg, worker_engine
 ) -> None:
-    """Third review of #221, finding 4: the runtime cancels a pre-flight at its hard budget
-    (T - PREFLIGHT_BUDGET_MARGIN_S from the job's start), which is tighter than the Start's own
-    remaining time. A probe that would only answer past it is not run: provider_unavailable,
-    never a cancelled job."""
+    """Third / fourth review of #221: the runtime cancels a pre-flight at the budget its
+    policy ENFORCES (``KindPolicy.budget_s``, ``VEKTRA_ASSESS_JOB_PREFLIGHT_BUDGET_S``), which
+    can be tighter than the Start's own remaining time. It reaches the handler through its
+    deps; a probe that would only answer past it is not run: provider_unavailable, never a
+    cancelled job."""
     from datetime import UTC, datetime, timedelta
 
     from vektra_assess.llm.types import ProviderCallRecord, ProviderOutageError
-    from vektra_assess.worker import preflight as mod
 
     settings = default_settings()
-    # the hard budget is (almost) spent as soon as the job starts; the Start's own budget is not
-    monkeypatch.setattr(
-        mod, "PREFLIGHT_BUDGET_MARGIN_S", float(settings.start_t_s) - 0.5
-    )
 
     class _Resp:
         status_code = 404
@@ -1024,8 +1020,13 @@ async def test_the_confirming_probe_stays_inside_the_jobs_hard_budget(  # type: 
         part_b = FakePartB(fail=outage)
         part_b.config_probe = lambda: refused_after_a_second  # type: ignore[attr-defined]
         sid = await _start(w)
+        # an operator override that leaves the job almost no time: it is what the runtime
+        # enforces, so it is what bounds the probe
         handler = make_preflight_handler(
-            deps(settings, w.handoff_public, start_source(worker_engine), part_b)
-        )
+            deps(
+                settings, w.handoff_public, start_source(worker_engine), part_b,
+                job_budget_s=2.5,
+            )
+        )  # fmt: skip
         await handler(job_context(worker_engine, sid))
         await _rolled_back(pg, sid, "provider_unavailable")

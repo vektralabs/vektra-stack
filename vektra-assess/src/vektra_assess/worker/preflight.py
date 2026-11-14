@@ -77,7 +77,7 @@ from vektra_assess.timing import session_duration_s
 from vektra_assess.worker import locks
 from vektra_assess.worker.policy import (  # one value each, shared with the policy
     COMMIT_MARGIN_S,
-    PREFLIGHT_BUDGET_MARGIN_S,
+    preflight_defaults,
 )
 from vektra_assess.worker.runner import AcquireDb, JobContext
 from vektra_assess.worker.start_guard import StartLimits, after_commit, after_rollback
@@ -212,6 +212,10 @@ class PreflightDeps:
     runner: PartBRunner
     clock: Callable[[], float] = time.monotonic
     privacy: PrivacyCheck = privacy_not_configured
+    #: the budget the job runtime ENFORCES on a pre-flight (``KindPolicy.budget_s``, after any
+    #: ``VEKTRA_ASSESS_JOB_PREFLIGHT_BUDGET_S`` override): the runtime cancels the handler there.
+    #: None: the policy's default for these settings (``preflight_defaults``)
+    job_budget_s: float | None = None
 
 
 class _AmbiguousCommit(Exception):
@@ -818,16 +822,16 @@ async def _run(deps: PreflightDeps, acquire: AcquireDb, sid: UUID) -> None:
         # the turn-shaped probe is refused too, llm.probe) rolls back with its own reason, which
         # the discussion UI reads from start_rolled_back; every config refusal alerts the
         # operator (provider_alerts)
-        # the probe runs inside what is left of the Start's budget AND of the job's hard budget
-        # (the runtime cancels the pre-flight at T - PREFLIGHT_BUDGET_MARGIN_S from its start;
+        # the probe runs inside what is left of the Start's budget AND of the budget the job
+        # runtime enforces (it cancels the pre-flight there, counted from the job's start;
         # PROBE_ROLLBACK_MARGIN_S keeps time for the rollback), at most PROBE_MAX_S: out of
         # budget, or any failure of it, is "not confirmed" (provider_unavailable)
-        hard_left = (
-            deps.settings.start_t_s
-            - PREFLIGHT_BUDGET_MARGIN_S
-            - (deps.clock() - t_load)
-            - PROBE_ROLLBACK_MARGIN_S
+        job_budget = (
+            deps.job_budget_s
+            if deps.job_budget_s is not None
+            else preflight_defaults(deps.settings.start_t_s).budget_s
         )
+        hard_left = job_budget - (deps.clock() - t_load) - PROBE_ROLLBACK_MARGIN_S
         left = min((remaining or 0.0) - (spent or 0.0), hard_left)
         make_probe = getattr(deps.runner, "config_probe", None)
         try:

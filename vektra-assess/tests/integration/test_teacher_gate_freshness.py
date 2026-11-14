@@ -549,3 +549,30 @@ async def test_an_older_read_never_overwrites_a_newer_one(pg) -> None:  # type: 
     )
     inputs = inputs if isinstance(inputs, dict) else json.loads(inputs)
     assert inputs["editors"] == [EDITOR, 99]
+
+
+# --- fourth review of #221 -----------------------------------------------------------------------
+
+
+async def test_facts_dated_in_the_future_are_neither_fresh_nor_recent(
+    pg, monkeypatch
+) -> None:  # type: ignore[no-untyped-def]
+    """Fourth review, 2 / 3: after a backward step of the database clock a row can be dated in
+    the future (a negative age). It is not trusted: the role check refuses it as stale (and
+    queues the refresh), and gate-refresh does not take it for a recent read."""
+    ctx, w = await ready(pg, monkeypatch)
+    try:
+        await seed_gate(pg, w.site, 94, age="-1 hour")
+        r = await w.client.put(config_url(94), json=enable(), headers=auth("teacher"))
+        assert r.status_code == 403, r.text
+        assert err(r)["details"] == {
+            "reason": "editor_check_stale",
+            "retry_after_s": RETRY_AFTER_S,
+        }
+        assert len(await gate_jobs(pg, w.site, 94)) == 1
+
+        await seed_gate(pg, w.site, 95, age="-1 hour")
+        r = await w.client.post(refresh_url(95), json=action(), headers=auth("teacher"))
+        assert r.status_code == 202 and r.json()["queued"] is True
+    finally:
+        await ctx.__aexit__(None, None, None)

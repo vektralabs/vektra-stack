@@ -451,20 +451,23 @@ LMS_FACT_CODES = frozenset(
 )
 
 
-def is_lms_fact_error(
-    error: FieldError, facts: Mapping[str, Any], opening_source: str | None = None
-) -> bool:
-    """Whether a PUT field error was decided on a cached LMS fact: an ``LMS_FACT_CODES`` code;
-    ``opening_unknown`` when the cached facts have no close date / cut-off (unset or
-    unreadable); ``not_after_opening`` when the floor it was checked against came from the
-    cached close date, not from the teacher's own attested opening (``attested``, REQ-091). An
-    unknown opening for another reason, or an end date before the teacher's date, is not
-    something a fresh read of the facts changes."""
+#: the ``PUT opening-fallback`` refusals decided on the cached gate facts (the close date and
+#: whether it is readable, merged with the capability matrix): a refresh may lift them
+OPENING_FACT_CODES = frozenset(
+    {"fallback_not_needed", "close_unreadable", "no_close_date", "before_close"}
+)
+
+
+def is_lms_fact_error(error: FieldError, opening_source: str | None) -> bool:
+    """Whether a PUT config field error was decided on a cached LMS fact: an
+    ``LMS_FACT_CODES`` code, or an end-date refusal (``opening_unknown``,
+    ``not_after_opening``) whose opening did not come from the teacher's own attested date
+    (``opening_source``, ``gates.Opening.source``: ``activity_close`` is the cached close date,
+    ``unreadable`` / ``unknown`` the cached close missing or unreadable). ``None``: the end date
+    was not checked."""
     if error.code in LMS_FACT_CODES:
         return True
-    if error.code == "opening_unknown":
-        return epoch_fact(facts, "close_at") in (None, 0)
-    if error.code == "not_after_opening":
+    if error.code in ("opening_unknown", "not_after_opening"):
         return opening_source is not None and opening_source != "attested"
     return False
 

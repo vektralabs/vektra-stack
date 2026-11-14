@@ -981,3 +981,51 @@ async def test_a_probe_that_cannot_be_built_rolls_back_provider_unavailable(  # 
         )
         await handler(job_context(worker_engine, sid))
         await _rolled_back(pg, sid, "provider_unavailable")
+
+
+async def test_the_confirming_probe_stays_inside_the_jobs_hard_budget(  # type: ignore[no-untyped-def]
+    pg, worker_engine, monkeypatch
+) -> None:
+    """Third review of #221, finding 4: the runtime cancels a pre-flight at its hard budget
+    (T - PREFLIGHT_BUDGET_MARGIN_S from the job's start), which is tighter than the Start's own
+    remaining time. A probe that would only answer past it is not run: provider_unavailable,
+    never a cancelled job."""
+    from datetime import UTC, datetime, timedelta
+
+    from vektra_assess.llm.types import ProviderCallRecord, ProviderOutageError
+    from vektra_assess.worker import preflight as mod
+
+    settings = default_settings()
+    # the hard budget is (almost) spent as soon as the job starts; the Start's own budget is not
+    monkeypatch.setattr(
+        mod, "PREFLIGHT_BUDGET_MARGIN_S", float(settings.start_t_s) - 0.5
+    )
+
+    class _Resp:
+        status_code = 404
+
+    async def refused_after_a_second() -> bool:
+        await asyncio.sleep(1.0)
+        exc = type("NotFoundError", (Exception,), {})("refused")
+        exc.response = _Resp()  # type: ignore[attr-defined]
+        raise exc
+
+    await _reset(pg)
+    await activate(pg)
+    async with world(pg, settings) as w:
+        await configure_activity(pg, w.site, CMID)
+        start = datetime.now(UTC)
+        outage = ProviderOutageError(
+            ProviderCallRecord(
+                start, None, start + timedelta(seconds=1), "error", "NotFoundError",
+                "http_4xx", 404,
+            )
+        )  # fmt: skip
+        part_b = FakePartB(fail=outage)
+        part_b.config_probe = lambda: refused_after_a_second  # type: ignore[attr-defined]
+        sid = await _start(w)
+        handler = make_preflight_handler(
+            deps(settings, w.handoff_public, start_source(worker_engine), part_b)
+        )
+        await handler(job_context(worker_engine, sid))
+        await _rolled_back(pg, sid, "provider_unavailable")

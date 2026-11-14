@@ -82,10 +82,9 @@ async def check(pg, site, cmid, actor=EDITOR, hint=(COURSE, "assign")):  # type:
 async def test_absent_facts_refuse_and_queue_one_refresh(pg) -> None:  # type: ignore[no-untyped-def]
     site = await make_site(pg)
     # the refresh, then its one follow-up (a pending job may already have read: review of
-    # #221), then nothing more while both are pending
+    # #221), then nothing more while both are pending; every one of them is STALE
     checked = [await check(pg, site, 50) for _ in range(3)]
     assert {c.check for c in checked} == {TeacherCheck.STALE}
-    assert [c.refresh_queued for c in checked] == [True, True, False]
     rows = await jobs(pg, site)
     assert [r.dedupe_key.endswith(":next") for r in rows] == [False, True]
     for job in rows:
@@ -94,7 +93,6 @@ async def test_absent_facts_refuse_and_queue_one_refresh(pg) -> None:  # type: i
             "cmid": 50,
             "courseid": COURSE,
             "activity_type": "assign",
-            "queued_by": "refusal",
         }
 
 

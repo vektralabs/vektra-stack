@@ -27,28 +27,23 @@ grader check of the transcript routes stays ``api.graders`` (per student, plan 1
 
 Freshness for the plugin (live E2E follow-up, 2026-11-13; reviews of #221). The row is a cache,
 so it can be older than a change the teacher just made in the LMS (a cut-off date set a moment
-ago), however recently it was read: its AGE says nothing about that. What does is WHY it was read:
+ago), and the server cannot know when that change happened. So the server never declares such a
+refusal final; the client does:
 
 - ``POST /activities/{cmid}/gate-refresh`` (``api.teacher_config``) lets the plugin ask for a
   refresh when a teacher page opens, so the first click finds fresh facts;
-- a refusal that a refresh may lift (stale or absent facts; a PUT refused on an LMS fact) is
-  final only when its facts ARE the answer to a refusal: read by a refresh a refusal queued
-  (the worker stamps ``queued_by: refusal`` and the job's enqueue time ``queued_at``) in the last
-  ``ANSWER_WINDOW_S``, and read after that enqueue. The teacher's change came before the first
-  refusal, the refusal's refresh read after it, so the retry the refusal asked for gets a final
-  answer. Any other facts (read for a page open, by an older refusal, of unknown origin) make
-  the refusal queue its own refresh and say when to retry, in ``error.details.retry_after_s``
-  (``RETRY_AFTER_S``, never above ``errors.RETRY_AFTER_MAX_S``) and ``Retry-After``;
-- a retry is promised only when a refresh that surely reads AFTER the refusal was inserted by
-  it. The API role may only INSERT into ``assess_jobs``: it cannot see whether a pending job is
-  ``ready`` (it covers the change) or ``leased`` (it may have read before), so beside a pending
-  one a single follow-up is queued (``jobs.teacher_gate_followup_dedupe_key``; when the pending
-  one was ``ready`` this costs one redundant read). With both pending (a worker that is down or
-  slow) nothing is queued and the refusal comes without a hint: at most two hints in a row
-  without a fresh read;
+- every refusal a refresh may lift (stale or absent facts; a PUT refused only on LMS facts; a
+  reset whose student facts are stale) queues the refresh and ALWAYS says when to retry, in
+  ``error.details.retry_after_s`` (``RETRY_AFTER_S``, never above ``errors.RETRY_AFTER_MAX_S``)
+  and ``Retry-After``. The hint repeats on every such refusal: the plugin retries AT MOST ONCE,
+  then shows the refusal;
+- the LMS load stays bounded by the job dedupe: the refresh, and beside a pending one a single
+  follow-up (``jobs.teacher_gate_followup_dedupe_key``: the pending one may already be running
+  and have read before the change; the API role may only INSERT into ``assess_jobs``, so it
+  cannot tell). Nothing more is queued while both are pending;
 - a resolved row is refreshed with ITS course and type (the worker's own resolution), never a
   request's hint: a wrong course in a request cannot turn the facts into
-  ``activity_not_in_course``.
+  ``activity_not_in_course``. ``not_an_editor`` / ``not_a_grader`` on fresh facts carry no hint.
 
 The API role cannot write this table (SELECT only). Fail closed throughout: a stale fact is never
 used to ACCEPT anything the freshness bound did not accept before.
@@ -89,20 +84,13 @@ NOT_IN_COURSE = "activity_not_in_course"
 
 #: the one read of an activity's cached facts (the role checks and ``gate-refresh``)
 GATE_ROW = text(
-    "SELECT inputs, refreshed_at, extract(epoch FROM now() - refreshed_at) AS age_s, "
-    "extract(epoch FROM refreshed_at) AS read_at, extract(epoch FROM now()) AS db_now "
+    "SELECT inputs, refreshed_at, extract(epoch FROM now() - refreshed_at) AS age_s "
     "FROM assess_teacher_gate WHERE site_id = :s AND cmid = :c"
 )
 
 #: how long after a refusal that queued a refresh the plugin should retry: the job wakes the
 #: worker at once (NOTIFY) and one teacher_gate read is a handful of LMS calls
 RETRY_AFTER_S = 3
-#: a refresh a refusal queued answers that refusal's retries for this long after its enqueue
-#: (database clock): the plugin retries after RETRY_AFTER_S, twice at most, well inside it
-ANSWER_WINDOW_S = 20
-#: who queued a teacher_gate refresh (job arg ``queued_by``, stamped into the row by the worker)
-QUEUED_BY_REFUSAL = "refusal"
-QUEUED_BY_PAGE = "page"
 #: ``gate-refresh`` coalescing: a row of the activity this recent is not read again
 REFRESH_MIN_INTERVAL_S = 10
 
@@ -130,33 +118,10 @@ class TeacherGate:
     facts: dict[str, Any] = field(default_factory=dict)
     #: the row's age in seconds when it was checked (None: no row)
     age_s: float | None = None
-    #: a refresh that reads after this check was queued by it (STALE): a retry may pass
-    refresh_queued: bool = False
-    #: when the row's read began and the database clock at the check (epoch seconds)
-    read_at: float | None = None
-    db_now: float | None = None
 
     @property
     def ok(self) -> bool:
         return self.check is TeacherCheck.OK
-
-    @property
-    def answers_a_refusal(self) -> bool:
-        """The facts were read for a refresh a refusal queued in the last ANSWER_WINDOW_S,
-        after its enqueue: they are the answer to that refusal, a refusal on them is final."""
-        queued_at = self.facts.get("queued_at")
-        if (
-            self.facts.get("queued_by") != QUEUED_BY_REFUSAL
-            or not isinstance(queued_at, int | float)
-            or isinstance(queued_at, bool)
-            or self.read_at is None
-            or self.db_now is None
-        ):
-            return False
-        return (
-            self.read_at >= float(queued_at)
-            and self.db_now - float(queued_at) <= ANSWER_WINDOW_S
-        )
 
 
 def usable_hint(courseid: int | None, kind: str | None) -> bool:
@@ -171,14 +136,12 @@ async def queue_teacher_gate(
     kind: str | None,
     *,
     follow_up: bool = False,
-    queued_by: str = QUEUED_BY_REFUSAL,
 ) -> bool:
     """Queue a refresh for this hint; True only when a job was inserted NOW (it reads after the
     caller's transaction). False: one is already pending. ``follow_up``: beside a pending one,
     queue the single follow-up (``teacher_gate_followup_dedupe_key``), so a refusal can be sure
     of a read after it even when the pending job is already running; False again when both are
-    pending. ``queued_by`` (``refusal`` or ``page``) is stamped into the row by the worker.
-    The caller checks ``usable_hint`` first: without one nothing can be resolved."""
+    pending. The caller checks ``usable_hint`` first: without one nothing can be resolved."""
     if courseid is None or kind is None or not usable_hint(courseid, kind):
         raise ValueError("a teacher_gate refresh needs a course and type hint")
     args: dict[str, str | int] = {
@@ -186,7 +149,6 @@ async def queue_teacher_gate(
         "cmid": int(cmid),
         "courseid": int(courseid),
         "activity_type": str(kind),
-        "queued_by": queued_by,
     }
     keys = [teacher_gate_dedupe_key(site, cmid, int(courseid), str(kind))]
     if follow_up:
@@ -244,21 +206,14 @@ async def check_fresh_teacher(
     facts = dict(row.inputs) if row is not None and isinstance(row.inputs, dict) else {}
     age = float(row.age_s) if row is not None and row.age_s is not None else None
     fresh = age is not None and age <= max_age_s
-    stamps: dict[str, Any] = (
-        {
-            "read_at": float(row.read_at) if row.read_at is not None else None,
-            "db_now": float(row.db_now) if row.db_now is not None else None,
-        }
-        if row is not None
-        else {}
-    )
 
     async def refresh() -> TeacherGate:
         hint = refresh_hint(facts, courseid_hint, kind_hint)
         if hint is None:
             return TeacherGate(TeacherCheck.HINT_MISSING)
-        queued = await queue_teacher_gate(conn, site, cmid, *hint, follow_up=True)
-        return TeacherGate(TeacherCheck.STALE, refresh_queued=queued)
+        # pending already (the refresh and its follow-up): coalesced, still STALE
+        await queue_teacher_gate(conn, site, cmid, *hint, follow_up=True)
+        return TeacherGate(TeacherCheck.STALE)
 
     if not fresh:
         return await refresh()
@@ -269,7 +224,7 @@ async def check_fresh_teacher(
             facts.get("hint") == [courseid_hint, kind_hint]
             and facts.get("reason") == NOT_IN_COURSE
         ):
-            return TeacherGate(refused, age_s=age, **stamps)
+            return TeacherGate(refused, age_s=age)
         return await refresh()
     members = facts.get(_ROLE_KEY[role])
     if not isinstance(members, list):
@@ -279,8 +234,8 @@ async def check_fresh_teacher(
     if int(actor_userid) not in {
         int(e) for e in members if isinstance(e, int) and not isinstance(e, bool)
     }:
-        return TeacherGate(refused, facts, age, **stamps)
-    return TeacherGate(TeacherCheck.OK, facts, age, **stamps)
+        return TeacherGate(refused, facts, age)
+    return TeacherGate(TeacherCheck.OK, facts, age)
 
 
 def gate_hint(gate: TeacherGate) -> tuple[int, str] | None:
@@ -291,23 +246,22 @@ def gate_hint(gate: TeacherGate) -> tuple[int, str] | None:
 async def refresh_after_fact_refusal(
     engine: Any, site: UUID, cmid: int, gate: TeacherGate
 ) -> bool:
-    """A refusal decided on an LMS fact of ``gate``: queue a refresh of
-    the row (its own transaction: the refused request's rolls back) and return whether the
-    caller may tell the plugin to retry: never when the facts already answer a refusal
-    (``answers_a_refusal``: final), and only when a job that reads after this refusal was
-    inserted now (a pending one may already have read: ``queue_teacher_gate`` ``follow_up``).
-    Never raises: a failed queue only means no retry."""
-    if gate.answers_a_refusal:
-        return False
+    """A refusal decided on an LMS fact of ``gate``: queue a refresh of the row (its own
+    transaction: the refused request's rolls back; coalesced with a pending refresh and its
+    follow-up) and return whether the caller tells the plugin to retry: True whenever a refresh
+    is queued or pending. The server never declares such a refusal final (it cannot know when
+    the LMS changed): the plugin retries at most once. Never raises: no usable hint, or a
+    failed queue, means no refresh and no hint."""
     hint = gate_hint(gate)
     if hint is None:
         return False
     try:
         async with engine.begin() as conn:
-            return await queue_teacher_gate(conn, site, cmid, *hint, follow_up=True)
+            await queue_teacher_gate(conn, site, cmid, *hint, follow_up=True)
     except Exception as exc:  # the refusal stands; only the retry hint is lost
         log.warning("assess_teacher_gate_queue_failed", error_type=type(exc).__name__)
         return False
+    return True
 
 
 def can_view_overrides(gate: TeacherGate, actor_userid: int) -> bool:
@@ -389,7 +343,7 @@ async def verify_teacher(
     err = teacher_unverified(
         stale=stale,
         role=role,
-        # a retry is promised only for a refresh this check queued (bounded: two at most)
-        retry_after_s=RETRY_AFTER_S if stale and gate.refresh_queued else None,
+        # a refresh is queued or pending: always the hint (the client retries at most once)
+        retry_after_s=RETRY_AFTER_S if stale else None,
     )
     return gate, fail(err, retry_headers(err))

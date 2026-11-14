@@ -34,9 +34,7 @@ class Conn:
 
 def gate(age: float = 1.0, **facts: Any) -> SimpleNamespace:
     inputs = {"resolved": True, "editors": [5], "hint": [7, "quiz"], **facts}
-    return SimpleNamespace(
-        inputs=inputs, age_s=age, read_at=1000.0, db_now=1000.0 + age
-    )
+    return SimpleNamespace(inputs=inputs, age_s=age)
 
 
 def check(
@@ -88,7 +86,6 @@ def test_the_editor_check_decision_table(
     for params in sent:
         assert json.loads(params["args"]) == {
             "site_id": str(SITE), "cmid": 3, "courseid": hint[0], "activity_type": hint[1],
-            "queued_by": "refusal",
         }  # fmt: skip
 
 
@@ -161,32 +158,12 @@ def _checked(age: float) -> Any:
     )
 
 
-def test_only_the_answer_to_a_refusal_is_final_whatever_its_age() -> None:
-    """Second review, A: the age of the facts says nothing about a change made in the LMS a
-    moment ago; facts read for a refusal's own refresh, enqueued within ANSWER_WINDOW_S and
-    read after that, do."""
-    from vektra_assess.api.teachers import (
-        ANSWER_WINDOW_S,
-        TeacherGate,
-        gate_hint,
-    )
+def test_the_gate_records_its_age_and_hint() -> None:
+    from vektra_assess.api.teachers import gate_hint
 
-    got = _checked(1.0)  # read a second ago, not for a refusal
-    assert got.ok and got.age_s == 1.0 and not got.answers_a_refusal
+    got = _checked(1.0)
+    assert got.ok and got.age_s == 1.0
     assert gate_hint(got) == (7, "quiz")
-
-    def g(queued_by: Any, queued_at: Any, read_at: float, now: float) -> TeacherGate:
-        facts = {"hint": [7, "quiz"], "queued_by": queued_by, "queued_at": queued_at}
-        return TeacherGate(TeacherCheck.OK, facts, 1.0, read_at=read_at, db_now=now)
-
-    assert g("refusal", 100.0, 101.0, 104.0).answers_a_refusal
-    assert not g("page", 100.0, 101.0, 104.0).answers_a_refusal
-    assert not g(
-        "refusal", 100.0, 99.0, 104.0
-    ).answers_a_refusal  # read before the queue
-    assert not g("refusal", 100.0, 101.0, 101.0 + ANSWER_WINDOW_S).answers_a_refusal
-    assert not g("refusal", "100", 101.0, 104.0).answers_a_refusal
-    assert not g("refusal", True, 101.0, 104.0).answers_a_refusal
 
 
 def test_a_row_without_a_usable_hint_queues_no_refresh_after_a_fact_refusal() -> None:
@@ -207,10 +184,6 @@ def test_a_row_without_a_usable_hint_queues_no_refresh_after_a_fact_refusal() ->
     for facts in ({}, {"hint": [7, "forum"]}, {"hint": [True, "quiz"]}, {"hint": "x"}):
         g = TeacherGate(TeacherCheck.OK, facts, age_s=60.0)
         assert asyncio.run(refresh_after_fact_refusal(engine, SITE, 3, g)) is False
-    # the answer to a refusal: final, nothing queued either
-    answer = {"hint": [7, "quiz"], "queued_by": "refusal", "queued_at": 100.0}
-    g = TeacherGate(TeacherCheck.OK, answer, 1.0, read_at=101.0, db_now=103.0)
-    assert asyncio.run(refresh_after_fact_refusal(engine, SITE, 3, g)) is False
     assert engine.begun == 0
     # the control: a usable hint on old facts does open a transaction
     g = TeacherGate(TeacherCheck.OK, {"hint": [7, "quiz"]}, age_s=60.0)

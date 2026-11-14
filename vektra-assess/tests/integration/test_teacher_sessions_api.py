@@ -368,8 +368,8 @@ async def test_stale_facts_refuse_every_operation_queue_a_refresh_and_change_not
             assert r.status_code == 403, (route, r.text)
             assert err(r)["details"]["reason"] == "grader_check_stale", route
             hints.append(err(r)["details"].get("retry_after_s"))
-        # a refresh and one follow-up for the hint, deduplicated while pending; a retry is
-        # promised only by the two calls that queued one (review of #221)
+        # a refresh and one follow-up for the hint, deduplicated while pending; every stale
+        # refusal carries the hint, the client retries at most once (third review of #221)
         assert (
             await count(
                 pg,
@@ -379,7 +379,7 @@ async def test_stale_facts_refuse_every_operation_queue_a_refresh_and_change_not
             )
             == 2
         )
-        assert hints == [3, 3, None, None, None]
+        assert hints == [3] * 5
         rows = await pg.run(
             "super",
             "SELECT event, reason_code FROM assess_audit_events WHERE site_id = :s "

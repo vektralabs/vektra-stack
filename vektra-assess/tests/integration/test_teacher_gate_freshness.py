@@ -24,7 +24,7 @@ from support.world import auth, default_settings, err, make_key, world
 
 from integration.test_teacher_authz import COURSE, EDITOR, seed_gate
 from vektra_assess.api import teacher_config as route
-from vektra_assess.api.teachers import ANSWER_WINDOW_S, RETRY_AFTER_S
+from vektra_assess.api.teachers import RETRY_AFTER_S
 from vektra_assess.errors import RETRY_AFTER_MAX_S
 
 pytestmark = pytest.mark.integration
@@ -92,24 +92,9 @@ async def ready(pg, monkeypatch):  # type: ignore[no-untyped-def]
     return ctx, w
 
 
-def test_the_retry_hint_stays_low_and_below_the_answer_window() -> None:
-    """The plugin retries server-side (PHP): the wait is a few seconds, and the retries land
-    inside the window in which the refusal's own refresh counts as the answer (no loop)."""
+def test_the_retry_hint_stays_low() -> None:
+    """The plugin retries server-side (PHP), at most once: the wait is a few seconds."""
     assert 1 <= RETRY_AFTER_S <= RETRY_AFTER_MAX_S <= 5
-    assert 2 * RETRY_AFTER_S < ANSWER_WINDOW_S
-
-
-async def db_epoch(pg) -> float:  # type: ignore[no-untyped-def]
-    return float((await pg.run("super", "SELECT extract(epoch FROM now())"))[0][0])
-
-
-async def answered(pg, site, cmid: int, queued_ago_s: float, **facts: Any) -> None:  # type: ignore[no-untyped-def]
-    """The row a refresh queued BY A REFUSAL wrote (the worker stamps ``queued_by`` and the
-    job's enqueue time ``queued_at``), read one second ago."""
-    now = await db_epoch(pg)
-    await seed_gate(
-        pg, site, cmid, queued_by="refusal", queued_at=now - queued_ago_s, **facts
-    )
 
 
 async def test_gate_refresh_queues_once_per_hint_and_coalesces(pg, monkeypatch) -> None:  # type: ignore[no-untyped-def]
@@ -132,7 +117,6 @@ async def test_gate_refresh_queues_once_per_hint_and_coalesces(pg, monkeypatch) 
             "cmid": 70,
             "courseid": COURSE,
             "activity_type": "assign",
-            "queued_by": "page",
         }
 
         # facts for this hint read a moment ago: nothing to read again
@@ -246,38 +230,26 @@ async def test_a_cutoff_refusal_on_facts_not_just_read_asks_for_a_retry(
         await ctx.__aexit__(None, None, None)
 
 
-async def test_the_facts_a_refusal_had_read_again_are_final(pg, monkeypatch) -> None:  # type: ignore[no-untyped-def]
-    """Second review, A: the answer to a refusal is the read its own refresh made (queued by a
-    refusal, enqueued in the last ANSWER_WINDOW_S, read after that): final, no hint, no job."""
-    ctx, w = await ready(pg, monkeypatch)
-    try:
-        await answered(pg, w.site, 76, queued_ago_s=4, close_at=0)
-        r = await w.client.put(config_url(76), json=enable(), headers=auth("teacher"))
-        assert r.status_code == 400
-        assert "retry_after_s" not in err(r)["details"]
-        assert "retry-after" not in r.headers
-        assert await gate_jobs(pg, w.site, 76) == []
-    finally:
-        await ctx.__aexit__(None, None, None)
-
-
-async def test_facts_read_moments_ago_by_another_refresh_are_not_final(
+async def test_every_lms_fact_refusal_hints_and_the_client_decides(
     pg, monkeypatch
 ) -> None:  # type: ignore[no-untyped-def]
-    """Second review, A: facts read a second ago by the page-open refresh may still predate the
-    cut-off the teacher set since; the age of a row says nothing about that. The refusal
-    queues its own refresh and hints."""
+    """Third review: the server cannot know when the teacher changed the LMS, so it never
+    declares an LMS-fact refusal final. Facts read a second ago still get a refresh and the
+    hint; the plugin retries at most once and then shows the refusal."""
     ctx, w = await ready(pg, monkeypatch)
     try:
-        await seed_gate(pg, w.site, 86, close_at=0)  # read 1 s ago, not for a refusal
-        r = await w.client.put(config_url(86), json=enable(), headers=auth("teacher"))
-        assert r.status_code == 400
-        assert err(r)["details"]["retry_after_s"] == RETRY_AFTER_S
-        assert len(await gate_jobs(pg, w.site, 86)) == 1
-        # a refusal's own answer from long ago does not answer a new refusal either
-        await answered(pg, w.site, 87, queued_ago_s=ANSWER_WINDOW_S + 30, close_at=0)
-        r = await w.client.put(config_url(87), json=enable(), headers=auth("teacher"))
-        assert err(r)["details"]["retry_after_s"] == RETRY_AFTER_S
+        await seed_gate(pg, w.site, 76, close_at=0)  # read 1 s ago
+        hints = []
+        for _ in range(3):
+            r = await w.client.put(
+                config_url(76), json=enable(), headers=auth("teacher")
+            )
+            assert r.status_code == 400
+            hints.append(err(r)["details"].get("retry_after_s"))
+            assert r.headers["retry-after"] == str(RETRY_AFTER_S)
+        assert hints == [RETRY_AFTER_S] * 3
+        # the LMS load stays bounded: the refresh and one follow-up, however many refusals
+        assert len(await gate_jobs(pg, w.site, 76)) == 2
     finally:
         await ctx.__aexit__(None, None, None)
 
@@ -353,24 +325,11 @@ async def test_a_leased_refresh_gets_a_follow_up_before_a_retry_is_promised(
         await ctx.__aexit__(None, None, None)
 
 
-async def test_the_retry_hint_is_bounded_without_a_fresh_read(pg, monkeypatch) -> None:  # type: ignore[no-untyped-def]
-    """Finding 4: with the worker not reading (down, slow), the hint is given at most twice
-    (one refresh and one follow-up queued); the third refusal is final, no retry_after_s."""
+async def test_the_stale_role_check_always_hints_and_jobs_stay_bounded(
+    pg, monkeypatch
+) -> None:  # type: ignore[no-untyped-def]
     ctx, w = await ready(pg, monkeypatch)
     try:
-        await seed_gate(pg, w.site, 81, age="1 minute", close_at=0)
-        hints = []
-        for _ in range(3):
-            r = await w.client.put(
-                config_url(81), json=enable(), headers=auth("teacher")
-            )
-            assert r.status_code == 400
-            hints.append(err(r)["details"].get("retry_after_s"))
-            assert ("retry-after" in r.headers) is (hints[-1] is not None)
-        assert hints == [RETRY_AFTER_S, RETRY_AFTER_S, None]
-        assert len(await gate_jobs(pg, w.site, 81)) == 2
-
-        # the same bound on the stale role check
         await seed_gate(pg, w.site, 82, age="10 minutes")
         hints = []
         for _ in range(3):
@@ -380,7 +339,8 @@ async def test_the_retry_hint_is_bounded_without_a_fresh_read(pg, monkeypatch) -
             assert r.status_code == 403
             assert err(r)["details"]["reason"] == "editor_check_stale"
             hints.append(err(r)["details"].get("retry_after_s"))
-        assert hints == [RETRY_AFTER_S, RETRY_AFTER_S, None]
+        assert hints == [RETRY_AFTER_S] * 3
+        assert len(await gate_jobs(pg, w.site, 82)) == 2
     finally:
         await ctx.__aexit__(None, None, None)
 
@@ -388,42 +348,51 @@ async def test_the_retry_hint_is_bounded_without_a_fresh_read(pg, monkeypatch) -
 async def test_an_end_date_refused_on_the_cached_opening_asks_for_a_retry(
     pg, monkeypatch
 ) -> None:  # type: ignore[no-untyped-def]
-    """Finding 3 / second review G: ``opening_unknown`` because the cached facts have no close
-    date is an LMS fact (hint); ``not_after_opening`` is the teacher's date (final)."""
+    """Third review, 3: an end date refused against an opening that comes from the cached LMS
+    close date (``opening_unknown`` with no close cached, ``not_after_opening`` with one) is an
+    LMS fact: refresh and hint. Against the teacher's own attested opening it is not."""
     ctx, w = await ready(pg, monkeypatch)
+    end = {**action(), "expected_version": 0, "available_until": "2020-01-01T00:00:00Z"}
     try:
         await seed_gate(
             pg, w.site, 88, age="1 minute"
-        )  # a close date: the opening is known
+        )  # a cut-off cached: the floor is it
+        r = await w.client.put(config_url(88), json=end, headers=auth("teacher"))
+        assert r.status_code == 400, r.text
+        assert [f["code"] for f in err(r)["details"]["fields"]] == ["not_after_opening"]
+        assert err(r)["details"]["retry_after_s"] == RETRY_AFTER_S
+        assert len(await gate_jobs(pg, w.site, 88)) == 1
+
+        await seed_gate(pg, w.site, 83, age="1 minute", close_at=0)  # no cut-off cached
+        r = await w.client.put(config_url(83), json=end, headers=auth("teacher"))
+        assert r.status_code == 400, r.text
+        (field,) = err(r)["details"]["fields"]
+        assert (field["field"], field["code"]) == ("available_until", "opening_unknown")
+        assert err(r)["details"]["retry_after_s"] == RETRY_AFTER_S
+        assert len(await gate_jobs(pg, w.site, 83)) == 1
+
+        # the teacher's attested opening (REQ-091) is the floor: the teacher's input, final
+        await seed_gate(pg, w.site, 92, age="1 minute")
+        await pg.run(
+            "super",
+            "INSERT INTO assess_activity_config (site_id, cmid, activity_type, version, "
+            "attested_opening_at, attested_by) VALUES (:s, 92, 'assign', 1, "
+            "to_timestamp(1950000000), '31')",
+            {"s": w.site},
+        )
         r = await w.client.put(
-            config_url(88),
+            config_url(92),
             json={
-                **action(),
-                "expected_version": 0,
-                "available_until": "2020-01-01T00:00:00Z",
+                **end,
+                "expected_version": 1,
+                "available_until": "2031-01-01T00:00:00Z",
             },
             headers=auth("teacher"),
         )
         assert r.status_code == 400, r.text
         assert [f["code"] for f in err(r)["details"]["fields"]] == ["not_after_opening"]
         assert "retry_after_s" not in err(r)["details"]
-        assert await gate_jobs(pg, w.site, 88) == []
-
-        await seed_gate(pg, w.site, 83, age="1 minute", close_at=0)  # no cut-off cached
-        r = await w.client.put(
-            config_url(83),
-            json={
-                **action(),
-                "expected_version": 0,
-                "available_until": "2020-01-01T00:00:00Z",
-            },
-            headers=auth("teacher"),
-        )
-        assert r.status_code == 400, r.text
-        (field,) = err(r)["details"]["fields"]
-        assert (field["field"], field["code"]) == ("available_until", "opening_unknown")
-        assert err(r)["details"]["retry_after_s"] == RETRY_AFTER_S
-        assert len(await gate_jobs(pg, w.site, 83)) == 1
+        assert await gate_jobs(pg, w.site, 92) == []
     finally:
         await ctx.__aexit__(None, None, None)
 
@@ -522,50 +491,32 @@ async def test_gate_refresh_queues_a_follow_up_beside_a_running_refresh(
         await ctx.__aexit__(None, None, None)
 
 
-async def test_a_refusal_queued_refresh_stamps_its_provenance(pg) -> None:  # type: ignore[no-untyped-def]
-    """Second review, A: the worker records which kind of request queued the read and when
-    (the job's enqueue time); the read itself is dated when it began, after that."""
+async def test_a_row_dated_in_the_future_is_not_frozen(pg) -> None:  # type: ignore[no-untyped-def]
+    """Third review, 7: the monotonic upsert compares read times on the database clock; a row
+    dated past that clock (the clock stepped back) must still be replaceable."""
     from sqlalchemy.ext.asyncio import create_async_engine
     from support.world import make_site
 
-    from vektra_assess.jobs import JobKind
-    from vektra_assess.worker.runner import JobContext
-    from vektra_assess.worker.teacher_gate import make_teacher_gate_handler
+    from vektra_assess.worker.teacher_gate import refresh_teacher_gate
 
     class Source:
         async def teacher_facts(self, *_a: Any, **_k: Any) -> dict[str, Any]:
-            return {"resolved": True, "editors": [EDITOR]}
+            return {"resolved": True, "editors": [EDITOR, 98]}
 
     site = await make_site(pg)
-    args = {
-        "site_id": str(site), "cmid": 90, "courseid": COURSE, "activity_type": "assign",
-        "queued_by": "refusal",
-    }  # fmt: skip
-    ((job_id, queued_at),) = await pg.run(
-        "super",
-        "INSERT INTO assess_jobs (kind, args, state) VALUES ('teacher_gate', CAST(:a AS jsonb), "
-        "'leased') RETURNING id, extract(epoch FROM created_at)",
-        {"a": json.dumps(args)},
-    )
+    await seed_gate(pg, site, 93, age="-1 hour")  # refreshed_at an hour ahead
     engine = create_async_engine(pg.url("worker"))
     try:
-        ctx = JobContext(
-            job_id=int(job_id), kind=JobKind.TEACHER_GATE, args=args, attempt=1,
-            acquire=engine.connect, log=__import__("logging").getLogger("t"),
-        )  # fmt: skip
-        await make_teacher_gate_handler(Source())(ctx)
+        await refresh_teacher_gate(Source(), engine.connect, site, 93, COURSE, "assign")
     finally:
         await engine.dispose()
-    ((inputs, read_at),) = await pg.run(
+    ((inputs,),) = await pg.run(
         "super",
-        "SELECT inputs, extract(epoch FROM refreshed_at) FROM assess_teacher_gate "
-        "WHERE site_id = :s AND cmid = 90",
+        "SELECT inputs FROM assess_teacher_gate WHERE site_id = :s AND cmid = 93",
         {"s": site},
     )
     inputs = inputs if isinstance(inputs, dict) else json.loads(inputs)
-    assert inputs["queued_by"] == "refusal"
-    assert inputs["queued_at"] == pytest.approx(float(queued_at), abs=1e-3)
-    assert float(read_at) >= float(queued_at)
+    assert inputs["editors"] == [EDITOR, 98]
 
 
 async def test_an_older_read_never_overwrites_a_newer_one(pg) -> None:  # type: ignore[no-untyped-def]

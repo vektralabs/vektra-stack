@@ -18,10 +18,10 @@ recipients' count), the computed opening condition, the end-date warning, the re
 warning and the number of active sessions. It never returns a solution, a rubric or an address.
 
 A PUT refused on an LMS fact (``teacher.validation.is_lms_fact_error``: no cut-off, no close
-date, team submission, marking guide, no LMS rubric, unreadable, or an end date with no opening
-because the cached facts have no close date) queues a refresh of the facts unless they already
-answer a refusal (``api.teachers``); when every error of the refusal is such a fact and a
-refresh was queued now, the 400 carries ``error.details.retry_after_s`` and ``Retry-After``.
+date, team submission, marking guide, no LMS rubric, unreadable, or an end date refused against
+an opening that comes from the cached close date) queues a refresh of the facts; when every
+error of the refusal is such a fact, the 400 carries ``error.details.retry_after_s`` and
+``Retry-After`` (always: the plugin retries at most once, ``api.teachers``).
 
 ``POST /activities/{cmid}/gate-refresh``: the plugin opens a teacher page; queue a refresh of the
 activity's facts now (coalesced, idempotent, never a refusal of the page). See ``gate_refresh``.
@@ -52,7 +52,6 @@ from vektra_assess.api.deps import settings_of
 from vektra_assess.api.teacher_ops import opening_for
 from vektra_assess.api.teachers import (
     GATE_ROW,
-    QUEUED_BY_PAGE,
     REFRESH_MIN_INTERVAL_S,
     RETRY_AFTER_S,
     TeacherGate,
@@ -157,18 +156,27 @@ class _Invalid(Exception):
     after it by ``_refuse_invalid``, which may queue a fact refresh in a transaction of its
     own."""
 
-    def __init__(self, errors: list[FieldError]) -> None:
+    def __init__(self, errors: list[FieldError], opening_source: str | None) -> None:
         super().__init__("invalid")
         self.errors = errors
+        #: where the end date's floor came from (``gates.Opening.source``), when it was checked
+        self.opening_source = opening_source
 
 
 async def _refuse_invalid(
-    request: Request, site: UUID, cmid: int, gate: TeacherGate, errors: list[FieldError]
+    request: Request,
+    site: UUID,
+    cmid: int,
+    gate: TeacherGate,
+    errors: list[FieldError],
+    opening_source: str | None = None,
 ) -> HTTPException:
-    """The 400 of a refused PUT. An LMS-fact refusal on facts that were not just read queues
-    their refresh; ``retry_after_s`` only when EVERY error is such a fact (the retry can then
-    pass as it is; any other error needs the teacher first)."""
-    on_facts = [e for e in errors if v.is_lms_fact_error(e, gate.facts)]
+    """The 400 of a refused PUT. An LMS-fact refusal queues the refresh of the facts;
+    ``retry_after_s`` only when EVERY error is such a fact (the retry can then pass as it is;
+    any other error needs the teacher first). ``opening_source``: where the end date's floor
+    came from, so an end date refused against the teacher's own attested opening is not
+    taken for an LMS fact."""
+    on_facts = [e for e in errors if v.is_lms_fact_error(e, gate.facts, opening_source)]
     queued = bool(on_facts) and await refresh_after_fact_refusal(
         engine_of(request), site, cmid, gate
     )
@@ -235,7 +243,9 @@ async def put_config(
             if refused is None:
                 view = await _save(conn, site, c, body, gate, settings, public)
     except _Invalid as invalid:  # rolled back: nothing of the PUT was written
-        raise await _refuse_invalid(request, site, c, gate, invalid.errors) from None
+        raise await _refuse_invalid(
+            request, site, c, gate, invalid.errors, invalid.opening_source
+        ) from None
     if refused is not None:
         raise refused  # after commit: the refusal stays audited, the refresh queued
     return JSONResponse(view, headers={"Cache-Control": "no-store"})
@@ -270,6 +280,7 @@ async def _save(
     }
     new: dict[str, Any] = dict(old)
     errors: list[FieldError] = []
+    opening_source: str | None = None
 
     # ``null`` clears only what can be empty (the write-only fields, the cap, the end date); on a
     # setting that always has a value it is a field error, never a silent false (review 8)
@@ -298,6 +309,7 @@ async def _save(
             opening = await opening_for(
                 conn, site, gate.facts, row.attested_at if row is not None else None
             )
+            opening_source = opening.source
             # the end date must follow the opening the view shows (grace included); with no
             # opening possible (no close, or the close unreadable) it is opening_unknown
             end_errors = v.check_end_date(end, opening.floor)
@@ -361,7 +373,7 @@ async def _save(
         for e in errors:
             if e not in unique:
                 unique.append(e)
-        raise _Invalid(unique)
+        raise _Invalid(unique, opening_source)
 
     # --- write: the config row (version + 1), the sealed fields, the audit -------------------
     flags["show_solution"] = bool(new["show_solution"])
@@ -559,9 +571,7 @@ async def gate_refresh(
         queued = (
             False
             if recent
-            else await queue_teacher_gate(
-                conn, site, c, *hint, follow_up=True, queued_by=QUEUED_BY_PAGE
-            )
+            else await queue_teacher_gate(conn, site, c, *hint, follow_up=True)
         )
     log.info("assess_teacher_gate_refresh", site_id=str(site), cmid=c, queued=queued)
     return JSONResponse(

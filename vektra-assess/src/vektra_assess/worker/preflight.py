@@ -75,13 +75,17 @@ from vektra_assess.llm.types import (
 from vektra_assess.provider_alerts import queue_provider_config_alert
 from vektra_assess.timing import session_duration_s
 from vektra_assess.worker import locks
-from vektra_assess.worker.policy import (
+from vektra_assess.worker.policy import (  # one value each, shared with the policy
     COMMIT_MARGIN_S,
-)  # one value, shared with the policy
+    PREFLIGHT_BUDGET_MARGIN_S,
+)
 from vektra_assess.worker.runner import AcquireDb, JobContext
 from vektra_assess.worker.start_guard import StartLimits, after_commit, after_rollback
 
 log = structlog.get_logger(__name__)
+
+#: kept free of the job's hard budget after the confirming probe, for the rollback transaction
+PROBE_ROLLBACK_MARGIN_S = 2.0
 
 #: the ``previous_context`` line of Part A for session #N > 1 (REQ-094; plan 8 owns the wording)
 PREVIOUS_CONTEXT = "Le sessioni precedenti non sono riprese in questa discussione."
@@ -814,9 +818,17 @@ async def _run(deps: PreflightDeps, acquire: AcquireDb, sid: UUID) -> None:
         # the turn-shaped probe is refused too, llm.probe) rolls back with its own reason, which
         # the discussion UI reads from start_rolled_back; every config refusal alerts the
         # operator (provider_alerts)
-        # the probe runs inside what is left of the Start's budget (at most PROBE_MAX_S): out
-        # of budget, or any failure of it, is "not confirmed" (provider_unavailable)
-        left = (remaining or 0.0) - (spent or 0.0)
+        # the probe runs inside what is left of the Start's budget AND of the job's hard budget
+        # (the runtime cancels the pre-flight at T - PREFLIGHT_BUDGET_MARGIN_S from its start;
+        # PROBE_ROLLBACK_MARGIN_S keeps time for the rollback), at most PROBE_MAX_S: out of
+        # budget, or any failure of it, is "not confirmed" (provider_unavailable)
+        hard_left = (
+            deps.settings.start_t_s
+            - PREFLIGHT_BUDGET_MARGIN_S
+            - (deps.clock() - t_load)
+            - PROBE_ROLLBACK_MARGIN_S
+        )
+        left = min((remaining or 0.0) - (spent or 0.0), hard_left)
         make_probe = getattr(deps.runner, "config_probe", None)
         try:
             configuration = await refusal_is_configuration(

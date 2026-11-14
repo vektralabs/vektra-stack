@@ -19,10 +19,9 @@ site id, cmid, course id hint, activity type hint) resolves the cmid INSIDE the 
   configured: BR-007), ``team_submission``, ``grading_method``, ``lms_rubric`` (a rubric is
   defined for the LMS-rubric source); each None when unreadable.
 
-Nothing else: no names, no addresses, no content (plus, for a job that says who queued it, that
-``queued_by`` and the job's enqueue time ``queued_at``: the API's refusal finality, ``api.teachers``).
-An upsert never replaces a newer read, nor a resolved row with an unresolved read for another
-course hint. The API accepts the row only while it is at
+Nothing else: no names, no addresses, no content. An upsert never replaces a newer read (on the
+database clock; a row dated past that clock is always replaceable), nor a resolved row with an
+unresolved read for another course hint. The API accepts the row only while it is at
 most ``VEKTRA_ASSESS_TEACHER_GATE_MAX_AGE_S`` old, otherwise it queues this job and refuses.
 """
 
@@ -63,15 +62,12 @@ _UPSERT = text(
     "WHERE NOT ((EXCLUDED.inputs->>'resolved') IS DISTINCT FROM 'true' "
     "AND assess_teacher_gate.inputs->>'resolved' = 'true' "
     "AND assess_teacher_gate.inputs->'hint' IS DISTINCT FROM EXCLUDED.inputs->'hint') "
-    # monotonic: two refreshes finishing out of order never let the older read win
-    "AND assess_teacher_gate.refreshed_at <= EXCLUDED.refreshed_at"
+    # monotonic: two refreshes finishing out of order never let the older read win. Read times
+    # are the database clock (assess_jobs ids would order enqueues, not reads); a stored time
+    # past that clock (the clock stepped back) never freezes the row: it is always replaceable
+    "AND (assess_teacher_gate.refreshed_at <= EXCLUDED.refreshed_at "
+    "OR assess_teacher_gate.refreshed_at > clock_timestamp())"
 )
-#: the job's enqueue time, stamped into the row with who queued it (``queued_by``): the API
-#: takes the facts a refusal's own refresh read as that refusal's final answer
-_QUEUED_AT = text(
-    "SELECT extract(epoch FROM created_at) FROM assess_jobs WHERE id = :id"
-)
-QUEUED_BY = ("refusal", "page")
 
 
 async def refresh_teacher_gate(
@@ -81,11 +77,9 @@ async def refresh_teacher_gate(
     cmid: int,
     courseid: int,
     kind: str,
-    provenance: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Read the facts fresh and store them, dated when the reads began; returns what was
-    stored. ``provenance``: ``{queued_by, queued_at}`` of the job that asked for the read,
-    stored with the facts (ids and a timestamp only)."""
+    stored."""
     async with acquire() as conn:
         observed_at = (await conn.execute(_CLOCK)).scalar()
         await conn.rollback()
@@ -96,7 +90,6 @@ async def refresh_teacher_gate(
         facts = {"resolved": False, "reason": "error"}
     # the hint this row answers: the API re-queues when a request brings another one
     facts["hint"] = [int(courseid), kind]
-    facts.update(provenance or {})
     async with acquire() as conn:
         async with conn.begin():
             await conn.execute(
@@ -124,18 +117,6 @@ def make_teacher_gate_handler(
             return  # a malformed job is a stale no-op
         if kind not in KINDS or cmid < 1 or courseid < 1:
             return
-        provenance: dict[str, Any] = {}
-        queued_by = ctx.args.get("queued_by")
-        if queued_by in QUEUED_BY:
-            async with ctx.acquire() as conn:
-                queued_at = (
-                    await conn.execute(_QUEUED_AT, {"id": ctx.job_id})
-                ).scalar()
-                await conn.rollback()
-            if queued_at is not None:
-                provenance = {"queued_by": queued_by, "queued_at": float(queued_at)}
-        await refresh_teacher_gate(
-            source, ctx.acquire, site_id, cmid, courseid, kind, provenance
-        )
+        await refresh_teacher_gate(source, ctx.acquire, site_id, cmid, courseid, kind)
 
     return handle

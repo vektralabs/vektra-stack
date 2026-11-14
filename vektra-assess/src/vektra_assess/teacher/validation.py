@@ -437,9 +437,8 @@ class Proposed:
 
 #: the PUT config codes decided on a worker-read LMS fact (the cached teacher gate row), which the
 #: teacher may have just changed in the LMS: a refusal made of these only queues a refresh and
-#: tells the plugin to retry (``api.teacher_config``). The enable refusals only: an end date
-#: before the opening (``not_after_opening``) is the teacher's own input, and ``opening_unknown``
-#: is an LMS fact only when the cached facts lack the close date (``is_lms_fact_error``)
+#: tells the plugin to retry (``api.teacher_config``). The enable refusals; the ``available_until``
+#: ones are LMS facts only in the cases ``is_lms_fact_error`` names
 LMS_FACT_CODES = frozenset(
     {
         "lms_facts_unreadable",
@@ -452,17 +451,22 @@ LMS_FACT_CODES = frozenset(
 )
 
 
-def is_lms_fact_error(error: FieldError, facts: Mapping[str, Any]) -> bool:
-    """Whether a PUT field error was decided on a cached LMS fact: an ``LMS_FACT_CODES`` code,
-    or ``opening_unknown`` when the cached facts have no close date / cut-off (unset or
-    unreadable); an unknown opening for any other reason (the capability matrix, no teacher
-    date) is not something a fresh read of the facts changes."""
+def is_lms_fact_error(
+    error: FieldError, facts: Mapping[str, Any], opening_source: str | None = None
+) -> bool:
+    """Whether a PUT field error was decided on a cached LMS fact: an ``LMS_FACT_CODES`` code;
+    ``opening_unknown`` when the cached facts have no close date / cut-off (unset or
+    unreadable); ``not_after_opening`` when the floor it was checked against came from the
+    cached close date, not from the teacher's own attested opening (``attested``, REQ-091). An
+    unknown opening for another reason, or an end date before the teacher's date, is not
+    something a fresh read of the facts changes."""
     if error.code in LMS_FACT_CODES:
         return True
-    return error.code == "opening_unknown" and epoch_fact(facts, "close_at") in (
-        None,
-        0,
-    )
+    if error.code == "opening_unknown":
+        return epoch_fact(facts, "close_at") in (None, 0)
+    if error.code == "not_after_opening":
+        return opening_source is not None and opening_source != "attested"
+    return False
 
 
 def enable_refusals(

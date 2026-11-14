@@ -186,7 +186,8 @@ def test_the_retry_hint_is_in_one_place_capped_and_never_on_a_final_refusal() ->
     from vektra_assess.errors import (
         RETRY_AFTER_MAX_S,
         config_invalid,
-        reset_inputs_stale,
+        reset_refused,
+        retry_details,
         retry_headers,
         teacher_unverified,
     )
@@ -198,14 +199,14 @@ def test_the_retry_hint_is_in_one_place_capped_and_never_on_a_final_refusal() ->
     }
     assert stale.retry_after is None  # not the envelope's top-level field
     assert retry_headers(stale) == {"Retry-After": str(RETRY_AFTER_MAX_S)}
-    final = teacher_unverified(stale=False, role="editor", retry_after_s=3)
+    final = teacher_unverified(stale=False, role="editor")
     assert final.details == {"reason": "not_an_editor"} and retry_headers(final) is None
     assert config_invalid([], retry_after_s=0).details == {
         "fields": [],
         "retry_after_s": 1,
     }
     assert "retry_after_s" not in config_invalid([]).details
-    assert reset_inputs_stale(3).details == {
+    assert reset_refused("gate_inputs_stale", **retry_details(3)).details == {
         "reason": "gate_inputs_stale",
         "retry_after_s": 3,
     }

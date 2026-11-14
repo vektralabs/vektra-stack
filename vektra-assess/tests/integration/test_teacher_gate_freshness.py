@@ -124,11 +124,14 @@ async def test_gate_refresh_queues_once_per_hint_and_coalesces(pg, monkeypatch) 
         assert r.status_code == 202 and r.json()["queued"] is False
         assert r.json()["refreshed_at"] is not None
         assert await gate_jobs(pg, w.site, 71) == []
-        # ...but another hint is not answered by them, and old facts are read again
+        # coalesced per cmid (review of #221, finding 5): a resolved row read a moment ago
+        # answers whatever hint the body brings
         r = await w.client.post(
             refresh_url(71), json=action(activity_type="quiz"), headers=auth("teacher")
         )
-        assert r.json()["queued"] is True
+        assert r.json()["queued"] is False
+        assert await gate_jobs(pg, w.site, 71) == []
+        # old facts are read again
         await seed_gate(pg, w.site, 72, age="5 minutes")
         r = await w.client.post(refresh_url(72), json=action(), headers=auth("teacher"))
         assert r.json()["queued"] is True
@@ -260,3 +263,178 @@ async def test_a_refusal_with_a_non_lms_error_refreshes_but_claims_no_retry(
         assert len(await gate_jobs(pg, w.site, 77)) == 1
     finally:
         await ctx.__aexit__(None, None, None)
+
+
+# --- review of #221 ------------------------------------------------------------------------------
+
+
+async def lease_job(pg, site: uuid.UUID, cmid: int, key: str) -> None:  # type: ignore[no-untyped-def]
+    """A teacher_gate job the worker is running now: it read its inputs before this test's
+    request (so it does not cover a change made after)."""
+    await pg.run(
+        "super",
+        "INSERT INTO assess_jobs (kind, args, dedupe_key, state, lease_until, leased_by) "
+        "VALUES ('teacher_gate', CAST(:a AS jsonb), :k, 'leased', now() + interval '1 minute', "
+        "'w1')",
+        {
+            "a": json.dumps(
+                {
+                    "site_id": str(site),
+                    "cmid": cmid,
+                    "courseid": COURSE,
+                    "activity_type": "assign",
+                }
+            ),
+            "k": key,
+        },
+    )
+
+
+async def test_a_leased_refresh_gets_a_follow_up_before_a_retry_is_promised(
+    pg, monkeypatch
+) -> None:  # type: ignore[no-untyped-def]
+    """Finding 2: the job already running read the LMS before this refusal; it does not cover
+    the teacher's change. A follow-up job (ready, reads after the refusal) is queued, and only
+    then is a retry promised."""
+    from vektra_assess.jobs import teacher_gate_dedupe_key
+
+    ctx, w = await ready(pg, monkeypatch)
+    try:
+        await seed_gate(pg, w.site, 80, age="1 minute", close_at=0)
+        await lease_job(
+            pg, w.site, 80, teacher_gate_dedupe_key(w.site, 80, COURSE, "assign")
+        )
+        r = await w.client.put(config_url(80), json=enable(), headers=auth("teacher"))
+        assert r.status_code == 400
+        assert err(r)["details"]["retry_after_s"] == RETRY_AFTER_S
+        states = sorted(j.state for j in await gate_jobs(pg, w.site, 80))
+        assert states == ["leased", "ready"]
+    finally:
+        await ctx.__aexit__(None, None, None)
+
+
+async def test_the_retry_hint_is_bounded_without_a_fresh_read(pg, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """Finding 4: with the worker not reading (down, slow), the hint is given at most twice
+    (one refresh and one follow-up queued); the third refusal is final, no retry_after_s."""
+    ctx, w = await ready(pg, monkeypatch)
+    try:
+        await seed_gate(pg, w.site, 81, age="1 minute", close_at=0)
+        hints = []
+        for _ in range(3):
+            r = await w.client.put(
+                config_url(81), json=enable(), headers=auth("teacher")
+            )
+            assert r.status_code == 400
+            hints.append(err(r)["details"].get("retry_after_s"))
+            assert ("retry-after" in r.headers) is (hints[-1] is not None)
+        assert hints == [RETRY_AFTER_S, RETRY_AFTER_S, None]
+        assert len(await gate_jobs(pg, w.site, 81)) == 2
+
+        # the same bound on the stale role check
+        await seed_gate(pg, w.site, 82, age="10 minutes")
+        hints = []
+        for _ in range(3):
+            r = await w.client.put(
+                config_url(82), json=enable(), headers=auth("teacher")
+            )
+            assert r.status_code == 403
+            assert err(r)["details"]["reason"] == "editor_check_stale"
+            hints.append(err(r)["details"].get("retry_after_s"))
+        assert hints == [RETRY_AFTER_S, RETRY_AFTER_S, None]
+    finally:
+        await ctx.__aexit__(None, None, None)
+
+
+async def test_an_end_date_refused_on_the_cached_opening_asks_for_a_retry(
+    pg, monkeypatch
+) -> None:  # type: ignore[no-untyped-def]
+    """Finding 3: ``opening_unknown`` / ``not_after_opening`` come from the cached LMS close
+    date: on facts not just read they queue a refresh and carry the hint like the others."""
+    ctx, w = await ready(pg, monkeypatch)
+    try:
+        await seed_gate(pg, w.site, 83, age="1 minute")
+        r = await w.client.put(
+            config_url(83),
+            json={
+                **action(),
+                "expected_version": 0,
+                "available_until": "2020-01-01T00:00:00Z",
+            },
+            headers=auth("teacher"),
+        )
+        assert r.status_code == 400, r.text
+        (field,) = err(r)["details"]["fields"]
+        assert field["field"] == "available_until"
+        assert field["code"] in {"opening_unknown", "not_after_opening"}
+        assert err(r)["details"]["retry_after_s"] == RETRY_AFTER_S
+        assert len(await gate_jobs(pg, w.site, 83)) == 1
+    finally:
+        await ctx.__aexit__(None, None, None)
+
+
+async def test_gate_refresh_uses_the_resolved_course_not_the_body_hint(
+    pg, monkeypatch
+) -> None:  # type: ignore[no-untyped-def]
+    """Finding 5: a resolved row knows the activity's course; a wrong courseid in the body
+    must not queue a read that answers activity_not_in_course."""
+    ctx, w = await ready(pg, monkeypatch)
+    try:
+        await seed_gate(pg, w.site, 84, age="5 minutes")
+        r = await w.client.post(
+            refresh_url(84),
+            json=action(courseid=COURSE + 1000),
+            headers=auth("teacher"),
+        )
+        assert r.status_code == 202 and r.json()["queued"] is True
+        (job,) = await gate_jobs(pg, w.site, 84)
+        args = job.args if isinstance(job.args, dict) else json.loads(job.args)
+        assert (args["courseid"], args["activity_type"]) == (COURSE, "assign")
+    finally:
+        await ctx.__aexit__(None, None, None)
+
+
+async def test_a_not_in_course_read_for_another_hint_keeps_the_resolved_row(pg) -> None:  # type: ignore[no-untyped-def]
+    """Finding 5, worker side: a read that says the cmid is not in the hinted course replaces
+    the row only when it answers the row's own hint; a resolved row of another hint stays."""
+    from sqlalchemy.ext.asyncio import create_async_engine
+    from support.world import make_site
+
+    from vektra_assess.worker.teacher_gate import refresh_teacher_gate
+
+    class Source:
+        def __init__(self, facts: dict[str, Any]) -> None:
+            self.facts = facts
+
+        async def teacher_facts(self, *_a: Any, **_k: Any) -> dict[str, Any]:
+            return dict(self.facts)
+
+    site = await make_site(pg)
+    await seed_gate(pg, site, 85, age="5 minutes")
+    engine = create_async_engine(pg.url("worker"))
+    not_here = {"resolved": False, "reason": "activity_not_in_course"}
+    try:
+        await refresh_teacher_gate(
+            Source(not_here), engine.connect, site, 85, COURSE + 1, "assign"
+        )
+
+        async def row() -> Any:
+            return (
+                await pg.run(
+                    "super",
+                    "SELECT inputs FROM assess_teacher_gate WHERE site_id = :s AND cmid = 85",
+                    {"s": site},
+                )
+            )[0][0]
+
+        inputs = await row()
+        inputs = inputs if isinstance(inputs, dict) else json.loads(inputs)
+        assert inputs["resolved"] is True and inputs["hint"] == [COURSE, "assign"]
+        # the row's own hint answering "not in course" does replace it (the activity moved)
+        await refresh_teacher_gate(
+            Source(not_here), engine.connect, site, 85, COURSE, "assign"
+        )
+        inputs = await row()
+        inputs = inputs if isinstance(inputs, dict) else json.loads(inputs)
+        assert inputs["resolved"] is False
+    finally:
+        await engine.dispose()

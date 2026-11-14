@@ -435,9 +435,11 @@ class Proposed:
     recipients_count: int
 
 
-#: the ``enable_refusals`` codes decided on a worker-read LMS fact (the cached teacher gate row),
-#: which the teacher may have just changed in the LMS: a refusal made of these only, on facts
-#: not just read, queues a refresh and tells the plugin to retry (``api.teacher_config``)
+#: the PUT config codes decided on a worker-read LMS fact (the cached teacher gate row), which the
+#: teacher may have just changed in the LMS: a refusal made of these only, on facts not just
+#: read, queues a refresh and tells the plugin to retry (``api.teacher_config``). The enable
+#: refusals, and the ``available_until`` checks against the opening (``check_end_date``), whose
+#: floor comes from the cached close date / cut-off (``opening_of``)
 LMS_FACT_CODES = frozenset(
     {
         "lms_facts_unreadable",
@@ -446,6 +448,8 @@ LMS_FACT_CODES = frozenset(
         "team_submission",
         "marking_guide",
         "lms_rubric_missing",
+        "opening_unknown",
+        "not_after_opening",
     }
 )
 

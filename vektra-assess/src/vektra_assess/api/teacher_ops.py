@@ -57,8 +57,8 @@ from vektra_assess.crypto.teacher_reason import encrypt_reason
 from vektra_assess.errors import (
     bad_request,
     config_invalid,
-    reset_inputs_stale,
     reset_refused,
+    retry_details,
     retry_headers,
     session_not_found,
     terminate_count_mismatch,
@@ -292,7 +292,7 @@ async def reset_session(
             from vektra_assess.api.state import queue_render_check
 
             await queue_render_check(conn, site, student, c, body.courseid)
-            err = reset_inputs_stale(RETRY_AFTER_S)
+            err = reset_refused("gate_inputs_stale", **retry_details(RETRY_AFTER_S))
             raise _Refused(fail(err, retry_headers(err)))
         code = gate_code([str(x) for x in inputs["lms_reasons"]])  # type: ignore[index]
         if code is not None:

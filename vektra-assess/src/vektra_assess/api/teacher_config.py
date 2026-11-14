@@ -50,6 +50,7 @@ from vektra_assess.api.common import (
 from vektra_assess.api.deps import settings_of
 from vektra_assess.api.teacher_ops import opening_for
 from vektra_assess.api.teachers import (
+    GATE_ROW,
     REFRESH_MIN_INTERVAL_S,
     RETRY_AFTER_S,
     TeacherGate,
@@ -57,6 +58,7 @@ from vektra_assess.api.teachers import (
     path_id,
     queue_teacher_gate,
     refresh_after_fact_refusal,
+    refresh_hint,
     verify_teacher,
 )
 from vektra_assess.audit import AssessAuditEvent, write_event
@@ -514,12 +516,6 @@ async def get_config(
 
 # --- gate refresh (live E2E follow-up) ----------------------------------------------------------
 
-_GATE_ROW = text(
-    "SELECT inputs, refreshed_at, "
-    "extract(epoch FROM now() - refreshed_at) AS age_s "
-    "FROM assess_teacher_gate WHERE site_id = :s AND cmid = :c"
-)
-
 
 @router.post("/activities/{cmid}/gate-refresh")
 async def gate_refresh(
@@ -531,31 +527,34 @@ async def gate_refresh(
 
     ``assess:teacher`` key (exact scope), bound to its site; the body is the common teacher
     shape (``actor_userid``, ``courseid``, ``activity_type``). It verifies nobody and returns no
-    fact: the refresh is per activity (every teacher of it benefits), the course and type are the
-    worker's resolution hints as on every teacher route, and ``actor_userid`` is only checked for
-    shape. Coalesced per (site, cmid, hint): nothing is queued while a refresh for the hint is
-    pending, or when the facts for that hint were read less than ``REFRESH_MIN_INTERVAL_S`` ago.
-    Always 202 for a well-formed request: the plugin may ignore any failure and open the page.
+    fact: the refresh is per activity (every teacher of it benefits) and ``actor_userid`` is only
+    checked for shape. The course and type are a hint used only while the activity has no
+    RESOLVED row: a resolved row is refreshed with its own course and type (``refresh_hint``), so
+    a wrong course in the body can never queue a read that says ``activity_not_in_course``.
+
+    Coalesced per cmid: nothing is queued while a refresh for that hint is pending, or when the
+    activity's facts were read less than ``REFRESH_MIN_INTERVAL_S`` ago (a resolved row, or an
+    unresolved one for the same hint). Always 202 for a well-formed request: the plugin may
+    ignore any failure and open the page.
     """
     c = path_id(cmid, "cmid")
     body = await parse_body(request, TeacherAction)
     async with engine_of(request).begin() as conn:
         site = await site_of_key(conn, key, "teacher")
-        row = (await conn.execute(_GATE_ROW, {"s": site, "c": c})).first()
+        row = (await conn.execute(GATE_ROW, {"s": site, "c": c})).first()
+        facts = (
+            dict(row.inputs) if row is not None and isinstance(row.inputs, dict) else {}
+        )
+        hint = refresh_hint(facts, body.courseid, body.activity_type)
+        if hint is None:  # unreachable: the schema validated the body's hint
+            raise fail(bad_request("teacher_gate_hint"))
         recent = (
             row is not None
-            and isinstance(row.inputs, dict)
-            and row.inputs.get("hint") == [body.courseid, body.activity_type]
             and row.age_s is not None
             and float(row.age_s) <= REFRESH_MIN_INTERVAL_S
+            and (facts.get("resolved") is True or facts.get("hint") == list(hint))
         )
-        queued = (
-            False
-            if recent
-            else await queue_teacher_gate(
-                conn, site, c, body.courseid, body.activity_type
-            )
-        )
+        queued = False if recent else await queue_teacher_gate(conn, site, c, *hint)
     log.info("assess_teacher_gate_refresh", site_id=str(site), cmid=c, queued=queued)
     return JSONResponse(
         {

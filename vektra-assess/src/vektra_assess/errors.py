@@ -374,7 +374,8 @@ RETRY_AFTER_KEY = "retry_after_s"
 RETRY_AFTER_MAX_S = 5
 
 
-def _retry_details(retry_after_s: int | None) -> dict[str, int]:
+def retry_details(retry_after_s: int | None) -> dict[str, int]:
+    """``{"retry_after_s": n}`` (n clamped to 1..RETRY_AFTER_MAX_S), or ``{}`` for None."""
     if retry_after_s is None:
         return {}
     return {RETRY_AFTER_KEY: max(1, min(int(retry_after_s), RETRY_AFTER_MAX_S))}
@@ -390,8 +391,9 @@ def teacher_unverified(
     *, stale: bool, role: str = "grader", retry_after_s: int | None = None
 ) -> ErrorResponse:
     """403. ``stale``: the worker-written role list was absent, too old or unreadable and a
-    refresh WAS queued (retry after ``retry_after_s``); otherwise the fresh list does not name
-    the teacher (no refresh, no point retrying, no ``retry_after_s``). ``role``: ``grader``
+    refresh is pending; ``retry_after_s`` is given by the caller only when its check queued one
+    that reads after it (``api.teachers``). Otherwise the fresh list does not name the teacher
+    (no refresh, no point retrying, never a ``retry_after_s``). ``role``: ``grader``
     (download, resend) or ``editor`` (configuration, REQ-077 "activity editors only")."""
     what = "an editor" if role == "editor" else "a grader"
     refused = what.replace(" ", "_")  # not_a_grader | not_an_editor
@@ -407,7 +409,7 @@ def teacher_unverified(
         ),
         details={
             "reason": f"{role}_check_stale" if stale else f"not_{refused}",
-            **(_retry_details(retry_after_s) if stale else {}),
+            **retry_details(retry_after_s),
         },
     )
 
@@ -431,7 +433,7 @@ def config_invalid(
             if retry_after_s is not None
             else "Correct the fields listed in details.fields and save again."
         ),
-        details={"fields": fields, **_retry_details(retry_after_s)},
+        details={"fields": fields, **retry_details(retry_after_s)},
     )
 
 
@@ -465,14 +467,6 @@ def reset_refused(reason: str, **details: object) -> ErrorResponse:
         ),
         details={"reason": reason, **details},
     )
-
-
-def reset_inputs_stale(retry_after_s: int) -> ErrorResponse:
-    """``reset_refused("gate_inputs_stale")``: the student's LMS gate half was not fresh and a
-    render check was queued; the same reset may pass after ``retry_after_s``."""
-    err = reset_refused("gate_inputs_stale")
-    err.details.update(_retry_details(retry_after_s))
-    return err
 
 
 def terminate_count_mismatch(current: int) -> ErrorResponse:

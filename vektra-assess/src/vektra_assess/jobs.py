@@ -78,6 +78,17 @@ def teacher_gate_dedupe_key(
     return f"teacher_gate:{site_id}:{cmid}:{courseid}:{activity_type}"
 
 
+def teacher_gate_followup_dedupe_key(
+    site_id: object, cmid: int, courseid: int, activity_type: str
+) -> str:
+    """The ONE follow-up refresh allowed beside a pending one (review of #221): the API cannot
+    tell a ``ready`` pending job (it will read after the request: it covers it) from a ``leased``
+    one (it may have read before: it does not). A second key lets a refusal queue a job that
+    surely reads after it; with both keys pending nothing more is queued, which also bounds
+    the retry hints a worker that does not read can cause to two."""
+    return teacher_gate_dedupe_key(site_id, cmid, courseid, activity_type) + ":next"
+
+
 def render_dedupe_key(site_id: object, userid: int, cmid: int) -> str:
     """One pending render check per (site, user, cmid), whoever queues it (API or tick)."""
     return f"render_check:{site_id}:{userid}:{cmid}"

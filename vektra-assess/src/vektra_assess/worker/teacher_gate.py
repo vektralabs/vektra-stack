@@ -52,7 +52,14 @@ _CLOCK = text("SELECT clock_timestamp()")
 _UPSERT = text(
     "INSERT INTO assess_teacher_gate (site_id, cmid, inputs, refreshed_at) "
     "VALUES (:s, :c, CAST(:i AS jsonb), :t) ON CONFLICT (site_id, cmid) "
-    "DO UPDATE SET inputs = EXCLUDED.inputs, refreshed_at = EXCLUDED.refreshed_at"
+    "DO UPDATE SET inputs = EXCLUDED.inputs, refreshed_at = EXCLUDED.refreshed_at "
+    # a read that resolved nothing (not in that course, or a transient failure) for ANOTHER
+    # hint never replaces a resolved row: a wrong course in some request must not turn the
+    # activity's facts into activity_not_in_course (review of #221). The row's own hint
+    # still replaces it (the activity moved, or became unreadable): fail closed as before
+    "WHERE NOT ((EXCLUDED.inputs->>'resolved') IS DISTINCT FROM 'true' "
+    "AND assess_teacher_gate.inputs->>'resolved' = 'true' "
+    "AND assess_teacher_gate.inputs->'hint' IS DISTINCT FROM EXCLUDED.inputs->'hint')"
 )
 
 

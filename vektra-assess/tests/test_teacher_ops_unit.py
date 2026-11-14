@@ -409,8 +409,15 @@ def test_a_stale_render_queues_a_refresh_and_asks_to_retry(
     world: Any, monkeypatch: pytest.MonkeyPatch, gate_row: Any
 ) -> None:
     w = world(reset_script(gate_row=gate_row))
-    status, detail = refused(reset(monkeypatch))
-    assert status == 409 and details(detail) == {"reason": "gate_inputs_stale"}
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(reset(monkeypatch))
+    status, detail = exc.value.status_code, exc.value.detail
+    # the render check was queued: the plugin is told when to retry (live E2E follow-up)
+    assert status == 409 and details(detail) == {
+        "reason": "gate_inputs_stale",
+        "retry_after_s": 3,
+    }
+    assert exc.value.headers == {"Retry-After": "3"}
     assert len(w.renders) == 1
     assert w.conn.ran("INSERT INTO assess_reset_grants") == []
 

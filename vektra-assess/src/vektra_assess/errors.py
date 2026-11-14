@@ -367,11 +367,32 @@ def transcript_integrity() -> ErrorResponse:
     )
 
 
-def teacher_unverified(*, stale: bool, role: str = "grader") -> ErrorResponse:
+#: the ONE place a refusal that a queued LMS refresh may lift says when to retry:
+#: ``error.details.retry_after_s`` (integer seconds, at most ``RETRY_AFTER_MAX_S``), mirrored in
+#: the ``Retry-After`` header. A refusal decided on a FRESH fact never carries it.
+RETRY_AFTER_KEY = "retry_after_s"
+RETRY_AFTER_MAX_S = 5
+
+
+def _retry_details(retry_after_s: int | None) -> dict[str, int]:
+    if retry_after_s is None:
+        return {}
+    return {RETRY_AFTER_KEY: max(1, min(int(retry_after_s), RETRY_AFTER_MAX_S))}
+
+
+def retry_headers(err: ErrorResponse) -> dict[str, str] | None:
+    """The ``Retry-After`` header of an envelope that carries ``details.retry_after_s``."""
+    wait = err.details.get(RETRY_AFTER_KEY)
+    return {"Retry-After": str(wait)} if isinstance(wait, int) else None
+
+
+def teacher_unverified(
+    *, stale: bool, role: str = "grader", retry_after_s: int | None = None
+) -> ErrorResponse:
     """403. ``stale``: the worker-written role list was absent, too old or unreadable and a
-    refresh WAS queued (retry); otherwise the fresh list does not name the teacher (no refresh,
-    no point retrying). ``role``: ``grader`` (download, resend) or ``editor`` (configuration,
-    REQ-077 "activity editors only")."""
+    refresh WAS queued (retry after ``retry_after_s``); otherwise the fresh list does not name
+    the teacher (no refresh, no point retrying, no ``retry_after_s``). ``role``: ``grader``
+    (download, resend) or ``editor`` (configuration, REQ-077 "activity editors only")."""
     what = "an editor" if role == "editor" else "a grader"
     refused = what.replace(" ", "_")  # not_a_grader | not_an_editor
     return ErrorResponse(
@@ -384,23 +405,33 @@ def teacher_unverified(*, stale: bool, role: str = "grader") -> ErrorResponse:
             else f"The LMS does not list this user as {what} of the activity's course; "
             "a retry will not succeed until that changes in the LMS."
         ),
-        details={"reason": f"{role}_check_stale" if stale else f"not_{refused}"},
+        details={
+            "reason": f"{role}_check_stale" if stale else f"not_{refused}",
+            **(_retry_details(retry_after_s) if stale else {}),
+        },
     )
 
 
 # --- teacher configuration (plan assess-teacher-ops) ----------------------------------------
 
 
-def config_invalid(fields: list[dict[str, object]]) -> ErrorResponse:
+def config_invalid(
+    fields: list[dict[str, object]], retry_after_s: int | None = None
+) -> ErrorResponse:
     """400 with every field-level error (BR-013, REQ-077). Each item is ``{field, code}`` plus
     the rule's bounds (``range``, ``allowed_domains``...): codes and limits only, never the
-    submitted value."""
+    submitted value. ``retry_after_s``: every error is an LMS fact read before the request and
+    a refresh of it was queued, so the same request may pass once it lands."""
     return ErrorResponse(
         category=ErrorCategory.PERMANENT,
         code=ERR_ASSESS_022,
         message="The discussion configuration was not saved: some fields are invalid.",
-        remediation="Correct the fields listed in details.fields and save again.",
-        details={"fields": fields},
+        remediation=(
+            "The LMS settings are being read again: retry the same request in a few seconds."
+            if retry_after_s is not None
+            else "Correct the fields listed in details.fields and save again."
+        ),
+        details={"fields": fields, **_retry_details(retry_after_s)},
     )
 
 
@@ -420,9 +451,9 @@ def config_conflict(current_version: int) -> ErrorResponse:
 
 def reset_refused(reason: str, **details: object) -> ErrorResponse:
     """409 (REQ-087). ``reason``: ``not_closed``, ``not_latest``, ``already_reset``,
-    ``gate_inputs_stale`` (a render check was queued: retry in a few seconds) or ``gate`` (with
-    ``gate``: the START-gate code, and ``field`` when a teacher setting must change first, e.g.
-    ``available_until`` after the end date). A session not in the activity is
+    ``gate_inputs_stale`` (a render check was queued: retry after ``retry_after_s``) or ``gate``
+    (with ``gate``: the START-gate code, and ``field`` when a teacher setting must change first,
+    e.g. ``available_until`` after the end date). A session not in the activity is
     ``session_not_found`` (404), never this code."""
     return ErrorResponse(
         category=ErrorCategory.PERMANENT,
@@ -434,6 +465,14 @@ def reset_refused(reason: str, **details: object) -> ErrorResponse:
         ),
         details={"reason": reason, **details},
     )
+
+
+def reset_inputs_stale(retry_after_s: int) -> ErrorResponse:
+    """``reset_refused("gate_inputs_stale")``: the student's LMS gate half was not fresh and a
+    render check was queued; the same reset may pass after ``retry_after_s``."""
+    err = reset_refused("gate_inputs_stale")
+    err.details.update(_retry_details(retry_after_s))
+    return err
 
 
 def terminate_count_mismatch(current: int) -> ErrorResponse:

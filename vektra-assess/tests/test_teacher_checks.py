@@ -138,3 +138,74 @@ def test_one_fresh_check_entry_and_no_name_clash_with_the_transcript_grader_chec
     assert not hasattr(teachers, "check_fresh_grader")
     assert not hasattr(teachers, "check_fresh_editor")
     assert callable(graders.check_fresh_grader)
+
+
+# --- freshness for the plugin (live E2E follow-up) ---------------------------------------------
+
+
+def _checked(age: float) -> Any:
+    return asyncio.run(
+        check_fresh_teacher(
+            Conn(gate(age=age)),
+            site=SITE,
+            cmid=3,
+            actor_userid=5,
+            max_age_s=120,
+            courseid_hint=7,
+            kind_hint="quiz",
+            role="editor",
+        )
+    )
+
+
+def test_the_gate_records_its_age_and_only_a_just_read_row_is_final() -> None:
+    from vektra_assess.api.teachers import FACT_FRESH_S, gate_hint
+
+    got = _checked(FACT_FRESH_S + 1)
+    assert got.ok and got.age_s == FACT_FRESH_S + 1 and not got.just_read
+    assert gate_hint(got) == (7, "quiz")
+    assert _checked(1.0).just_read
+
+
+def test_a_row_without_a_usable_hint_queues_no_refresh_after_a_fact_refusal() -> None:
+    from vektra_assess.api.teachers import TeacherGate, refresh_after_fact_refusal
+
+    class Engine:
+        def begin(self) -> Any:
+            raise AssertionError("nothing may be queued")
+
+    for facts in ({}, {"hint": [7, "forum"]}, {"hint": [True, "quiz"]}, {"hint": "x"}):
+        g = TeacherGate(TeacherCheck.OK, facts, age_s=60.0)
+        assert asyncio.run(refresh_after_fact_refusal(Engine(), SITE, 3, g)) is False
+    # just read: final, nothing queued either
+    g = TeacherGate(TeacherCheck.OK, {"hint": [7, "quiz"]}, age_s=1.0)
+    assert asyncio.run(refresh_after_fact_refusal(Engine(), SITE, 3, g)) is False
+
+
+def test_the_retry_hint_is_in_one_place_capped_and_never_on_a_final_refusal() -> None:
+    from vektra_assess.errors import (
+        RETRY_AFTER_MAX_S,
+        config_invalid,
+        reset_inputs_stale,
+        retry_headers,
+        teacher_unverified,
+    )
+
+    stale = teacher_unverified(stale=True, role="editor", retry_after_s=60)
+    assert stale.details == {
+        "reason": "editor_check_stale",
+        "retry_after_s": RETRY_AFTER_MAX_S,
+    }
+    assert stale.retry_after is None  # not the envelope's top-level field
+    assert retry_headers(stale) == {"Retry-After": str(RETRY_AFTER_MAX_S)}
+    final = teacher_unverified(stale=False, role="editor", retry_after_s=3)
+    assert final.details == {"reason": "not_an_editor"} and retry_headers(final) is None
+    assert config_invalid([], retry_after_s=0).details == {
+        "fields": [],
+        "retry_after_s": 1,
+    }
+    assert "retry_after_s" not in config_invalid([]).details
+    assert reset_inputs_stale(3).details == {
+        "reason": "gate_inputs_stale",
+        "retry_after_s": 3,
+    }

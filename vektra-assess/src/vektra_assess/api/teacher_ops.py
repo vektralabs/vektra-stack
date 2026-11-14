@@ -44,7 +44,12 @@ from sqlalchemy import text
 from vektra_assess import privacy
 from vektra_assess.api.common import engine_of, fail, iso_time, parse_body, site_of_key
 from vektra_assess.api.deps import settings_of
-from vektra_assess.api.teachers import TeacherGate, path_id, verify_teacher
+from vektra_assess.api.teachers import (
+    RETRY_AFTER_S,
+    TeacherGate,
+    path_id,
+    verify_teacher,
+)
 from vektra_assess.api.transcripts import transcript_key_of
 from vektra_assess.audit import AssessAuditEvent, write_event
 from vektra_assess.capabilities import capability
@@ -52,7 +57,9 @@ from vektra_assess.crypto.teacher_reason import encrypt_reason
 from vektra_assess.errors import (
     bad_request,
     config_invalid,
+    reset_inputs_stale,
     reset_refused,
+    retry_headers,
     session_not_found,
     terminate_count_mismatch,
 )
@@ -285,7 +292,8 @@ async def reset_session(
             from vektra_assess.api.state import queue_render_check
 
             await queue_render_check(conn, site, student, c, body.courseid)
-            raise _Refused(fail(reset_refused("gate_inputs_stale")))
+            err = reset_inputs_stale(RETRY_AFTER_S)
+            raise _Refused(fail(err, retry_headers(err)))
         code = gate_code([str(x) for x in inputs["lms_reasons"]])  # type: ignore[index]
         if code is not None:
             raise refuse_gate(code)

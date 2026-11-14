@@ -24,6 +24,21 @@ grader check of the transcript routes stays ``api.graders`` (per student, plan 1
 ``verify_teacher`` is the one route-level entry: the check, the audited refusal
 (``assess_teacher_unverified``), and the refusal envelope to raise AFTER the transaction commits
 (so the audit row and the queued refresh survive the refusal).
+
+Freshness for the plugin (live E2E follow-up, 2026-11-13). The row is a cache, so it can be
+older than a change the teacher just made in the LMS (a cut-off date set a moment ago):
+
+- ``POST /activities/{cmid}/gate-refresh`` (``api.teacher_config``) lets the plugin ask for a
+  refresh when a teacher page opens, so the first click finds fresh facts;
+- a refusal that a refresh may lift (stale or absent facts; an enable refusal decided on an LMS
+  fact read more than ``FACT_FRESH_S`` ago) queues the refresh and says when to retry, in
+  ``error.details.retry_after_s`` (``RETRY_AFTER_S``, never above ``errors.RETRY_AFTER_MAX_S``)
+  and the ``Retry-After`` header. The queued job wakes the worker at once (``NOTIFY``), so the
+  facts are normally re-read before the retry. A refusal decided on a fact read in the last
+  ``FACT_FRESH_S`` is an answer: it carries no retry. The API role cannot write this table
+  (SELECT only), so "invalidating" a fact means exactly that: the refusal is not final until a
+  refresh newer than ``FACT_FRESH_S`` has answered. Fail closed throughout: a stale fact is never
+  used to ACCEPT anything the freshness bound did not accept before.
 """
 
 from __future__ import annotations
@@ -33,13 +48,20 @@ from enum import StrEnum
 from typing import Any, Literal
 from uuid import UUID
 
+import structlog
 from fastapi import HTTPException, Request
 from sqlalchemy import text
 
 from vektra_assess.api.common import fail
 from vektra_assess.audit import AssessAuditEvent, write_event
-from vektra_assess.errors import bad_request, teacher_unverified
+from vektra_assess.errors import (
+    bad_request,
+    retry_headers,
+    teacher_unverified,
+)
 from vektra_assess.jobs import JobKind, enqueue_job, teacher_gate_dedupe_key
+
+log = structlog.get_logger(__name__)
 
 KINDS = ("quiz", "assign")
 #: the only unresolved outcome that is an answer: the worker read the hinted course and the cmid
@@ -48,9 +70,19 @@ KINDS = ("quiz", "assign")
 NOT_IN_COURSE = "activity_not_in_course"
 
 _GATE = text(
-    "SELECT inputs, extract(epoch FROM now() - refreshed_at) AS age_s "
+    "SELECT inputs, refreshed_at, extract(epoch FROM now() - refreshed_at) AS age_s "
     "FROM assess_teacher_gate WHERE site_id = :s AND cmid = :c"
 )
+
+#: how long after a refusal that queued a refresh the plugin should retry: the job wakes the
+#: worker at once (NOTIFY) and one teacher_gate read is a handful of LMS calls
+RETRY_AFTER_S = 3
+#: facts read at most this long ago are an ANSWER: a refusal decided on them carries no retry
+#: and queues nothing. Above ``RETRY_AFTER_S``, so the retry a refusal asked for normally finds
+#: the refreshed row inside this window and gets a final answer (no retry loop)
+FACT_FRESH_S = 5
+#: ``gate-refresh`` coalescing: a row this recent for the same hint is not read again
+REFRESH_MIN_INTERVAL_S = 10
 
 
 Role = Literal["editor", "grader"]
@@ -74,10 +106,17 @@ class TeacherGate:
 
     check: TeacherCheck
     facts: dict[str, Any] = field(default_factory=dict)
+    #: the row's age in seconds when it was checked (None: no row)
+    age_s: float | None = None
 
     @property
     def ok(self) -> bool:
         return self.check is TeacherCheck.OK
+
+    @property
+    def just_read(self) -> bool:
+        """The facts were read in the last ``FACT_FRESH_S``: a refusal on them is final."""
+        return self.age_s is not None and self.age_s <= FACT_FRESH_S
 
 
 def usable_hint(courseid: int | None, kind: str | None) -> bool:
@@ -120,7 +159,8 @@ async def check_fresh_teacher(
     )
     row = (await conn.execute(_GATE, {"s": site, "c": int(cmid)})).first()
     facts = dict(row.inputs) if row is not None and isinstance(row.inputs, dict) else {}
-    fresh = row is not None and row.age_s is not None and float(row.age_s) <= max_age_s
+    age = float(row.age_s) if row is not None and row.age_s is not None else None
+    fresh = age is not None and age <= max_age_s
 
     async def refresh() -> TeacherGate:
         if not usable_hint(courseid_hint, kind_hint):
@@ -137,7 +177,7 @@ async def check_fresh_teacher(
             facts.get("hint") == [courseid_hint, kind_hint]
             and facts.get("reason") == NOT_IN_COURSE
         ):
-            return TeacherGate(refused)
+            return TeacherGate(refused, age_s=age)
         return await refresh()
     members = facts.get(_ROLE_KEY[role])
     if not isinstance(members, list):
@@ -147,8 +187,44 @@ async def check_fresh_teacher(
     if int(actor_userid) not in {
         int(e) for e in members if isinstance(e, int) and not isinstance(e, bool)
     }:
-        return TeacherGate(refused, facts)
-    return TeacherGate(TeacherCheck.OK, facts)
+        return TeacherGate(refused, facts, age)
+    return TeacherGate(TeacherCheck.OK, facts, age)
+
+
+def gate_hint(gate: TeacherGate) -> tuple[int, str] | None:
+    """The ``[courseid, type]`` hint the verified row answers (the worker's own record of
+    what it resolved), or None when the row carries no usable one."""
+    hint = gate.facts.get("hint")
+    if (
+        isinstance(hint, list)
+        and len(hint) == 2
+        and isinstance(hint[0], int)
+        and not isinstance(hint[0], bool)
+        and usable_hint(hint[0], hint[1])
+    ):
+        return int(hint[0]), str(hint[1])
+    return None
+
+
+async def refresh_after_fact_refusal(
+    engine: Any, site: UUID, cmid: int, gate: TeacherGate
+) -> bool:
+    """A refusal decided on an LMS fact of ``gate`` that was NOT just read: queue a refresh of
+    the row (its own transaction: the refused request's rolls back) and return whether the
+    caller may tell the plugin to retry. Never raises: a failed queue only means no retry."""
+    if gate.just_read:
+        return False
+    hint = gate_hint(gate)
+    if hint is None:
+        return False
+    try:
+        async with engine.begin() as conn:
+            # a pending job for this hint covers it: the retry is still worth it
+            await queue_teacher_gate(conn, site, cmid, *hint)
+    except Exception as exc:  # the refusal stands; only the retry hint is lost
+        log.warning("assess_teacher_gate_queue_failed", error_type=type(exc).__name__)
+        return False
+    return True
 
 
 def can_view_overrides(gate: TeacherGate, actor_userid: int) -> bool:
@@ -226,6 +302,8 @@ async def verify_teacher(
     if gate.check is TeacherCheck.HINT_MISSING:
         # nothing was queued: name the missing hint, never "retry in a few seconds"
         return gate, fail(bad_request("teacher_gate_hint"))
-    return gate, fail(
-        teacher_unverified(stale=gate.check is TeacherCheck.STALE, role=role)
+    stale = gate.check is TeacherCheck.STALE
+    err = teacher_unverified(
+        stale=stale, role=role, retry_after_s=RETRY_AFTER_S if stale else None
     )
+    return gate, fail(err, retry_headers(err))

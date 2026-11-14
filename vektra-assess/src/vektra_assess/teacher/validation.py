@@ -435,6 +435,21 @@ class Proposed:
     recipients_count: int
 
 
+#: the ``enable_refusals`` codes decided on a worker-read LMS fact (the cached teacher gate row),
+#: which the teacher may have just changed in the LMS: a refusal made of these only, on facts
+#: not just read, queues a refresh and tells the plugin to retry (``api.teacher_config``)
+LMS_FACT_CODES = frozenset(
+    {
+        "lms_facts_unreadable",
+        "quiz_without_close_date",
+        "assignment_without_cutoff",
+        "team_submission",
+        "marking_guide",
+        "lms_rubric_missing",
+    }
+)
+
+
 def enable_refusals(
     p: Proposed,
     facts: ActivityFacts,

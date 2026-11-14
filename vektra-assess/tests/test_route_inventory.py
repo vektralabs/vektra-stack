@@ -93,6 +93,8 @@ TEACHER_ROUTES = {
     ("/api/v1/assess/activities/{cmid}/terminate", "POST"),
     ("/api/v1/assess/activities/{cmid}/students/{userid}/extra-time", "PUT"),
     ("/api/v1/assess/activities/{cmid}/opening-fallback", "PUT"),
+    # the plugin asks for a fresh LMS read when a teacher page opens (live E2E follow-up)
+    ("/api/v1/assess/activities/{cmid}/gate-refresh", "POST"),
 }
 
 

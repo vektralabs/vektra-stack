@@ -429,7 +429,7 @@ async def test_a_config_refusal_pauses_the_time_and_is_credited_on_recovery(
     async with rigged(pg, worker) as rig:
         rig.llm.mode = "litellm:NotFoundError:404"  # a wrong model name
         # an open stream has seen the session ACTIVE (the broker publishes on a change)
-        broker_of(_Req(rig.w.app)).observe(rig.sid, "ACTIVE", {})  # type: ignore[arg-type]
+        broker_of(_Req(rig.w.app)).observe(rig.sid, "ACTIVE", {}, outage_count=0)  # type: ignore[arg-type]
         await rig.say()
         row = await rig.row()
         assert (row.state, row.last) == ("OUTAGE", "bot/interrupted")
@@ -444,6 +444,8 @@ async def test_a_config_refusal_pauses_the_time_and_is_credited_on_recovery(
         started = [e for e in events if e.type == "outage_start"]
         assert [e.data["reason"] for e in interrupted] == ["service_misconfigured"]
         assert [e.data["reason"] for e in started] == ["service_misconfigured"]
+        # decided by the driver: the deadline and, as ``at``, the clock after the commit
+        assert started[0].data["deadline_at"] and started[0].data["at"]
         assert events.index(interrupted[0]) < events.index(started[0])
 
         # the session snapshot says why, for a reload during the pause

@@ -91,11 +91,13 @@ async def test_a_misconfigured_start_rollback_reaches_the_ui_and_counts_as_syste
     limits = StartLimits(breaker_rollbacks=1000, rollback_notify_after=1000)
     async with world(pg) as w:
         first = await rolled_back(w, worker, "service_misconfigured", limits)
-        state, _epoch, data = await _poll(_Req(w.app), first.session_id)  # type: ignore[arg-type]
+        polled = await _poll(_Req(w.app), first.session_id)  # type: ignore[arg-type]
+        state, data = polled.state, polled.data
         assert state is None and data == {"reason": "service_misconfigured"}
         await rolled_back(w, worker, "service_misconfigured", limits)
         last = await rolled_back(w, worker, "service_misconfigured", limits)
-        _state, _epoch, data = await _poll(_Req(w.app), last.session_id)  # type: ignore[arg-type]
+        polled = await _poll(_Req(w.app), last.session_id)  # type: ignore[arg-type]
+        _state, data = polled.state, polled.data
         assert data == {"reason": "technical_problem_persistent"}
 
 
@@ -121,7 +123,8 @@ async def test_three_consecutive_system_rollbacks_notify_teacher_and_operator_on
             ("teacher_notify", "rollback_cap"),
         ]
         # the student reads "Problema tecnico persistente" for that rollback
-        state, _epoch, data = await _poll(_Req(w.app), last.session_id)  # type: ignore[arg-type]
+        polled = await _poll(_Req(w.app), last.session_id)  # type: ignore[arg-type]
+        state, data = polled.state, polled.data
         assert state is None and data == {"reason": "technical_problem_persistent"}
         # a fourth one in the same streak notifies nobody again
         await rolled_back(w, worker, "internal_error", limits)
@@ -317,7 +320,8 @@ async def test_capture_failures_count_as_system_rollbacks(pg, worker) -> None:  
             )
             == 1
         )
-        _state, _e, data = await _poll(_Req(w.app), last.session_id)  # type: ignore[arg-type]
+        polled = await _poll(_Req(w.app), last.session_id)  # type: ignore[arg-type]
+        _state, data = polled.state, polled.data
         assert data == {"reason": "technical_problem_persistent"}
 
 

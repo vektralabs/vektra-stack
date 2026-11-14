@@ -16,11 +16,24 @@ from fastapi import FastAPI, Request
 from vektra_assess.api.common import read_capped_body
 from vektra_assess.api.deps import parse_version
 from vektra_assess.api.download_tokens import DownloadTokens
-from vektra_assess.api.events import _last_event_id
+from vektra_assess.api.events import EventBroker
 from vektra_assess.config import VektraAssessSettings
 from vektra_assess.keys import AssessKeyring
 from vektra_assess.tokens import AssessTokens, TokenError, keyring_from
 from vektra_shared.http_errors import register_error_handlers
+
+_SID = uuid.UUID(int=1)
+
+
+def _last_event_id(request: Request) -> int:
+    """The stream's reading of the header's ``<n>`` (after this broker's own prefix), against a
+    channel with 50 events."""
+    broker = EventBroker()
+    for _ in range(50):
+        broker.publish(_SID, "turn_accepted")
+    n = request.headers.get("last-event-id", "")
+    return broker.last_event_id(_SID, f"{broker.id_prefix(_SID)}:{n}")
+
 
 NOT_ASCII = ["²", "١٢", "\uff11\uff12", "12²"]
 #: as a header carries them: the UTF-8 bytes (Starlette decodes headers as Latin-1) and the

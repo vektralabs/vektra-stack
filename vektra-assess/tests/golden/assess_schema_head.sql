@@ -1815,6 +1815,8 @@ CREATE INDEX ix_assess_jobs_root ON public.assess_jobs USING btree (((args ->> '
 
 CREATE INDEX ix_assess_model_activations_triple ON public.assess_model_activations USING btree (model, prompt_version) WHERE hard_pass;
 
+CREATE INDEX ix_assess_outage_incidents_session ON public.assess_outage_incidents USING btree (session_id);
+
 CREATE INDEX ix_assess_purge_records_subject ON public.assess_purge_records USING btree (site_id, cmid, subject_ref);
 
 CREATE INDEX ix_assess_purge_records_transcript ON public.assess_purge_records USING btree (transcript_id) WHERE (transcript_id IS NOT NULL);

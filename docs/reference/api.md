@@ -316,8 +316,12 @@ job wakes the worker at once, `NOTIFY`) and ALWAYS carries the hint:
 |---------------|-----------|------|
 | `403 ERR-ASSESS-021` | `reason: editor_check_stale` or `grader_check_stale` | the activity's facts are absent, older than `VEKTRA_ASSESS_TEACHER_GATE_MAX_AGE_S`, or unreadable |
 | `400 ERR-ASSESS-022` (PUT config) | `fields` | EVERY field error is an LMS fact: `assignment_without_cutoff`, `quiz_without_close_date`, `team_submission`, `marking_guide`, `lms_rubric_missing`, `lms_facts_unreadable`; on `available_until`, `opening_unknown` when the cached facts have no close date, and `not_after_opening` when the opening it was checked against comes from the cached close date (not from the teacher's attested opening) |
-| `400 ERR-ASSESS-022` (PUT opening-fallback) | `fields` | EVERY field error is decided on the cached gate facts: `close_unreadable`, `no_close_date`, `before_close` (not `fallback_not_needed`: it follows from the capability matrix) |
+| `400 ERR-ASSESS-022` (PUT opening-fallback) | `fields` | EVERY field error is decided on the cached gate facts: `fallback_not_needed`, `close_unreadable`, `no_close_date`, `before_close` |
 | `409 ERR-ASSESS-024` (reset) | `reason: gate_inputs_stale`, or `reason: gate` with a `gate` code from the student's cached render evaluation | the student's LMS gate half was not fresh, or refused on cached LMS facts; a render check was queued |
+
+**The hint is present only if the refresh was queued.** The refresh is queued after the refusal,
+in a transaction of its own; if that fails, the same refusal comes back WITHOUT `retry_after_s`
+(never a 500), and for the client it is then final.
 
 **The hint repeats: clients must retry at most once.** Vektra cannot know when the teacher changed
 the LMS, so it never declares these refusals final: the same refusal on a retry carries the hint

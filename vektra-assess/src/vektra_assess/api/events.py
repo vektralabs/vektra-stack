@@ -39,6 +39,7 @@ from vektra_assess.api.deps import settings_of
 from vektra_assess.api.gate import verify_assess_token_session
 from vektra_assess.api.session_gate import ANY_OPEN, session_tx
 from vektra_assess.errors import close_message_code
+from vektra_assess.provider_alerts import outage_reason
 from vektra_assess.start_rules import SYSTEM_ROLLBACK_REASONS
 from vektra_assess.timing import due_warnings
 from vektra_assess.tokens import SessionClaims
@@ -245,6 +246,11 @@ _STATUS = text(
     "SELECT state, close_reason, epoch, deadline_at, duration_s, now() AS server_now "
     "FROM assess_sessions WHERE id = :s"
 )
+#: the open outage interval's reason (read in OUTAGE only): what the student is told
+_OUTAGE_CODE = text(
+    "SELECT reason_code FROM assess_outage_incidents WHERE session_id = :s "
+    "AND ended_at IS NULL ORDER BY started_at DESC LIMIT 1"
+)
 _ROLLBACK_REASON = text(
     "WITH rb AS (SELECT site_id, cmid, student_userid, reason_code FROM assess_start_attempts "
     "WHERE session_id = :s AND outcome = 'rolled_back' ORDER BY id DESC LIMIT 1) "
@@ -266,6 +272,11 @@ async def _poll(
 ) -> tuple[str | None, int | None, dict[str, Any]]:
     async with engine_of(request).connect() as conn:
         row = (await conn.execute(_STATUS, {"s": sid})).first()
+        outage_code = (
+            (await conn.execute(_OUTAGE_CODE, {"s": sid})).scalar()
+            if row is not None and row.state == "OUTAGE"
+            else None
+        )
         if row is None:
             rb = (await conn.execute(_ROLLBACK_REASON, {"s": sid})).first()
             reason = rb.reason_code if rb is not None else None
@@ -280,17 +291,17 @@ async def _poll(
         broker_of(request).warn(
             sid, row.deadline_at, row.server_now, int(row.duration_s)
         )
-    return (
-        str(row.state),
-        int(row.epoch),
-        {
-            "state": row.state,
-            "close_reason": row.close_reason,
-            "message_code": close_message_code(row.close_reason),
-            "deadline_at": _iso(row.deadline_at),
-            "server_now": _iso(row.server_now),
-        },
-    )
+    data = {
+        "state": row.state,
+        "close_reason": row.close_reason,
+        "message_code": close_message_code(row.close_reason),
+        "deadline_at": _iso(row.deadline_at),
+        "server_now": _iso(row.server_now),
+    }
+    if row.state == "OUTAGE":
+        # optional, OUTAGE only: provider_unavailable | service_misconfigured
+        data["reason"] = outage_reason(outage_code)
+    return str(row.state), int(row.epoch), data
 
 
 def _last_event_id(request: Request) -> int:
@@ -335,6 +346,9 @@ async def session_events(
             "deadline_at": _iso(row.deadline_at),
             "server_now": _iso(row.server_now),
         }
+        if row.state == "OUTAGE":
+            code = (await _conn.execute(_OUTAGE_CODE, {"s": sid})).scalar()
+            snapshot["reason"] = outage_reason(code)
     broker = broker_of(request)
     # seed the channel with the state this connection saw, so the next poll reports a change
     # (STARTING -> ACTIVE is ``committed``) even when no other connection observed it first

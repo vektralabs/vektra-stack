@@ -85,3 +85,13 @@ def test_warnings_are_published_once_per_threshold_and_deadline() -> None:
     new5 = credited - timedelta(minutes=5)
     assert [e.data["minutes"] for e in b.warn(sid, credited, new5, 1800)] == [5]
     assert [e.type for e in b.after(sid, 0)] == ["warning", "warning"]
+
+
+def test_the_outage_reason_is_a_closed_pair() -> None:
+    """Live E2E follow-up: the open interval's ``reason_code`` tells a configuration refusal
+    apart; any other stored value (older intervals carry the call outcome) is an outage."""
+    from vektra_assess.provider_alerts import outage_reason
+
+    assert outage_reason("service_misconfigured") == "service_misconfigured"
+    for code in (None, "error", "first_token_timeout", "provider_unavailable", "x"):
+        assert outage_reason(code) == "provider_unavailable"

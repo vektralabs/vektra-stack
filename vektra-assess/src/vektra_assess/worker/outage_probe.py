@@ -28,6 +28,10 @@ well, so the outage is NOT ended; the tick logs ``assess_outage_probe_failed`` w
 ``reason_code=provider_refused`` and the closed cause at warning level. A 429 is transient: it
 is logged like an unreachable provider (``provider_unavailable``, info). Left unfixed, the outage
 reaches C and the session closes ``service_failure`` as usual.
+
+A discussion turn refused for the configuration puts its session here too, with the interval's
+``reason_code`` ``service_misconfigured`` (``provider_alerts``): this probe is what ends it once
+the operator fixes the configuration, crediting the paused time by the same rule.
 """
 
 from __future__ import annotations

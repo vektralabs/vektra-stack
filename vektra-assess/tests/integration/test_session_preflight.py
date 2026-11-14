@@ -344,7 +344,8 @@ async def test_every_failure_rolls_back_to_eligible(  # type: ignore[no-untyped-
     [
         ("InternalServerError", "http_5xx", 503, None, None),
         # no API key: litellm's AuthenticationError with a synthetic 500 is a configuration
-        # refusal; the Start rolls back provider_unavailable and the audit names auth_error
+        # refusal; the Start rolls back service_misconfigured (its own reason since the live
+        # E2E follow-up, so the UI can say so) and the audit names auth_error
         ("AuthenticationError", "auth_error", None, None, None),
         # a reasoning model that spent max_tokens before any text (measured: ~9 s, no text)
         (
@@ -412,13 +413,16 @@ async def test_a_part_b_outage_logs_its_reason_and_cause_and_audits_the_cause(  
             deps(settings, w.handoff_public, start_source(worker_engine), FakePartB(fail=outage))
         )  # fmt: skip
         await handler(job_context(worker_engine, sid))
-        await _rolled_back(pg, sid, "provider_unavailable")
+        reason = (
+            "service_misconfigured" if cause == "auth_error" else "provider_unavailable"
+        )
+        await _rolled_back(pg, sid, reason)
 
         lines = [json.loads(ln) for ln in canary_log_capture.lines()]
         (rolled,) = [
             ln for ln in lines if ln.get("event") == "assess_preflight_rolled_back"
         ]
-        assert rolled["reason_code"] == "provider_unavailable"
+        assert rolled["reason_code"] == reason
         assert DROPPED not in rolled.values()
         (line,) = [
             ln for ln in lines if ln.get("event") == "assess_preflight_provider_outage"

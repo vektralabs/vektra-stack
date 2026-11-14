@@ -94,6 +94,8 @@ class Reason(StrEnum):
     CAPTURE_FAILED = "capture_failed"
     PART_B_REJECTED = "part_b_rejected"
     PROVIDER_UNAVAILABLE = "provider_unavailable"
+    # the provider refused the deployment's configuration (provider_alerts): operator alerted
+    SERVICE_MISCONFIGURED = "service_misconfigured"
     RAG_NOT_AVAILABLE = "rag_not_available"
     INTERNAL_ERROR = "internal_error"
     COMMIT_FAILED = (
@@ -807,10 +809,12 @@ async def _run(deps: PreflightDeps, acquire: AcquireDb, sid: UUID) -> None:
     except ProviderOutageError as exc:
         spent = None if t_part_b is None else deps.clock() - t_part_b
         _log_part_b_outage(deps, sid, exc, remaining, spent)
-        # a configuration refusal keeps the reason the plugin and the UI read
-        # (provider_unavailable) and alerts the operator (provider_alerts)
+        # a configuration refusal rolls back with its own reason, which the discussion UI
+        # reads from start_rolled_back, and alerts the operator (provider_alerts)
         raise _Rollback(
-            Reason.PROVIDER_UNAVAILABLE,
+            Reason.SERVICE_MISCONFIGURED
+            if exc.is_config_refusal
+            else Reason.PROVIDER_UNAVAILABLE,
             data={"cause": exc.cause},
             config_refusal=exc.cause if exc.is_config_refusal else None,
         ) from None

@@ -20,6 +20,12 @@ the ``PendingTurnDriver`` answers it once the worker's probe ends the outage. Th
 failed call closes the session ``service_failure`` instead (in the same function). An unexpected
 error or a refused bot append still ends the attempt with the marked bot turn "[risposta
 interrotta]" (``turn_markers``), which clears the pending marker, then ``reply_interrupted``.
+
+A configuration refusal (``ProviderOutageError.is_config_refusal``: the operator must fix the key,
+the model or a parameter) does both, in this order: the marked turn with ``reply_interrupted``
+``reason: service_misconfigured`` (the turn is answered, never replayed), then OUTAGE with that
+reason, so the timer stops and the outage probe credits the time once the provider answers again
+(``provider_alerts``). The operator alert is queued once per site, cause and hour.
 """
 
 from __future__ import annotations
@@ -73,7 +79,11 @@ from vektra_assess.llm.types import (
     StudentTurn,
     TurnResult,
 )
-from vektra_assess.provider_alerts import queue_provider_config_alert
+from vektra_assess.provider_alerts import (
+    PROVIDER_UNAVAILABLE,
+    SERVICE_MISCONFIGURED,
+    queue_provider_config_alert,
+)
 from vektra_assess.tokens import SessionClaims
 from vektra_assess.turn_markers import INTERRUPTED_REPLY, REPLY_CLAIM_KEY_SQL
 
@@ -419,6 +429,8 @@ class TurnDriver:
         result: TurnResult | None = None
         failure: str | None = None
         outage: ProviderCallRecord | None = None
+        #: a configuration refusal: the marked turn first, then OUTAGE with this reason
+        misconfigured: ProviderCallRecord | None = None
         stop = asyncio.Event()
         cut = (
             asyncio.get_running_loop().call_later(max(cut_after_s, 0.0), stop.set)
@@ -434,17 +446,22 @@ class TurnDriver:
                 elif isinstance(item, TurnResult):
                     result = item
         except ProviderOutageError as exc:
-            if exc.is_refusal:
+            if exc.is_config_refusal:
+                failure = SERVICE_MISCONFIGURED
+                misconfigured = exc.record
+                await self._alert_config_refusal(sid, exc.cause)
+            elif exc.is_refusal:
                 failure = "provider_refused"
-                if exc.is_config_refusal:
-                    await self._alert_config_refusal(sid, exc.cause)
             else:
                 # the server-side record: the interval starts at the call's own start
                 outage = exc.record
             log.warning(
                 "assess_turn_provider_failure",
                 session_id=str(sid),
-                reason_code=failure or "provider_unavailable",
+                # the log keeps its two codes: a configuration refusal is a refusal
+                reason_code="provider_refused"
+                if exc.is_refusal
+                else "provider_unavailable",
                 **exc.log_fields(getattr(self.runner, "max_tokens", None)),
             )
         except Exception as exc:
@@ -460,6 +477,12 @@ class TurnDriver:
                 await self._outage(sid, epoch, outage)
             elif failure is not None or result is None:
                 await self._interrupted(sid, epoch, failure or "internal_error")
+                if misconfigured is not None:
+                    # the student's time stops until the configuration is fixed (credited
+                    # like an outage by the probe); the turn is already answered above
+                    await self._outage(
+                        sid, epoch, misconfigured, reason=SERVICE_MISCONFIGURED
+                    )
             else:
                 await self._persist(sid, epoch, result)
         except Exception as exc:
@@ -483,9 +506,20 @@ class TurnDriver:
         except Exception as exc:
             log.warning("assess_provider_alert_failed", error_type=type(exc).__name__)
 
-    async def _outage(self, sid: UUID, epoch: int, record: ProviderCallRecord) -> None:
+    async def _outage(
+        self,
+        sid: UUID,
+        epoch: int,
+        record: ProviderCallRecord,
+        *,
+        reason: str | None = None,
+    ) -> None:
         """ACTIVE -> OUTAGE (M4.1): the pending turn is kept for the ``PendingTurnDriver``. The
-        stream learns it from ``observe`` here (``outage_start``) or from its own poll."""
+        stream learns it from ``observe`` here (``outage_start``) or from its own poll.
+
+        ``reason``: ``service_misconfigured`` for a configuration refusal (stored as the
+        interval's ``reason_code``, which the snapshot and the stream's poll read back); None
+        is a provider outage, whose interval records the call outcome as before."""
         async with self.engine.begin() as conn:
             got = (
                 await conn.execute(
@@ -494,13 +528,15 @@ class TurnDriver:
                         "sid": sid,
                         "epoch": epoch,
                         "started": record.started_at,
-                        "reason": record.outcome,
+                        "reason": reason or record.outcome,
                     },
                 )
             ).scalar()
         if got == "outage":
             self.broker.observe(
-                sid, "OUTAGE", {"state": "OUTAGE", "reason": "provider_unavailable"}
+                sid,
+                "OUTAGE",
+                {"state": "OUTAGE", "reason": reason or PROVIDER_UNAVAILABLE},
             )
         elif got == "closed":
             # the third consecutive failed call: closed service_failure (M4.5)
@@ -514,10 +550,11 @@ class TurnDriver:
                     "message_code": close_message_code("service_failure"),
                 },
             )
-        else:
+        elif reason is None:
             # not ACTIVE at this epoch any more (closed, revoked): nothing is moved; the marked
-            # turn is attempted and refused by the database when the session is gone
-            await self._interrupted(sid, epoch, "provider_unavailable")
+            # turn is attempted and refused by the database when the session is gone. A
+            # configuration refusal already wrote its marked turn
+            await self._interrupted(sid, epoch, PROVIDER_UNAVAILABLE)
 
     async def _append_bot(
         self,

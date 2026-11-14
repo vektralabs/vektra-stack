@@ -43,15 +43,16 @@ from vektra_assess.api.session_gate import (
 )
 from vektra_assess.api.start import CONSUME_JTI
 from vektra_assess.errors import state_conflict, token_invalid
+from vektra_assess.provider_alerts import outage_reason
 from vektra_assess.timing import remaining_s
 from vektra_assess.tokens import PreClaims, SessionClaims, TokenError
 
 router = APIRouter()
 
 _FLAGGED = text("SELECT turn_no FROM assess_turn_flags WHERE session_id = :s")
-_OUTAGE_START = text(
-    "SELECT max(started_at) FROM assess_outage_incidents "
-    "WHERE session_id = :s AND ended_at IS NULL"
+_OUTAGE_OPEN = text(
+    "SELECT started_at, reason_code FROM assess_outage_incidents "
+    "WHERE session_id = :s AND ended_at IS NULL ORDER BY started_at DESC LIMIT 1"
 )
 
 
@@ -64,9 +65,11 @@ def view(
     material: Material | None,
     paused_at: Any = None,
     flagged: frozenset[int] = frozenset(),
+    outage_code: Any = None,
 ) -> dict[str, Any]:
     """``paused_at``: the open outage's start while the session is in OUTAGE: the timer is
-    paused there, so the time left is measured against it."""
+    paused there, so the time left is measured against it. ``outage_code``: that interval's
+    ``reason_code``, served as the closed ``outage_reason`` (OUTAGE only, optional)."""
     turns = []
     if material is not None:
         turns = [
@@ -83,7 +86,7 @@ def view(
     pending = bool(
         material is not None and material.turns and material.turns[-1].role == "student"
     )
-    return {
+    body: dict[str, Any] = {
         "session_id": str(row.id),
         "state": row.state,
         "close_reason": row.close_reason,
@@ -100,6 +103,9 @@ def view(
         "reply_pending": pending,
         "turns": turns,
     }
+    if row.state == "OUTAGE":
+        body["outage_reason"] = outage_reason(outage_code)
+    return body
 
 
 @router.get("/sessions/{sid}")
@@ -152,17 +158,24 @@ async def get_session(
                     )
                 except MaterialUnavailable:
                     raise GateRejected(state_conflict(row.state), "material") from None
-            paused_at = (
-                (await conn.execute(_OUTAGE_START, {"s": sid})).scalar()
+            outage = (
+                (await conn.execute(_OUTAGE_OPEN, {"s": sid})).first()
                 if row.state == "OUTAGE"
                 else None
             )
+            paused_at = outage.started_at if outage is not None else None
             flagged = (
                 frozenset(int(r[0]) for r in await conn.execute(_FLAGGED, {"s": sid}))
                 if material is not None
                 else frozenset()
             )
-            body = view(row, material, paused_at, flagged)
+            body = view(
+                row,
+                material,
+                paused_at,
+                flagged,
+                outage.reason_code if outage is not None else None,
+            )
             if resume:
                 # minted INSIDE the transaction: a refusal (past deadline + grace) rolls the jti
                 # consumption back, so the pre-session token is not burnt for nothing

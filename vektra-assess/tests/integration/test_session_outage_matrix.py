@@ -270,6 +270,14 @@ async def test_a_slow_success_is_not_an_outage(pg, worker) -> None:  # type: ign
         )
 
 
+#: refusals of the CONFIGURATION (``is_config_refusal``: auth_error, a non-429 4xx): the turn is
+#: marked interrupted, then the session pauses in OUTAGE ``service_misconfigured`` (live E2E
+#: follow-up). Every other refusal leaves the session ACTIVE, as before.
+CONFIG_REFUSALS = frozenset(
+    {"ContextWindowExceededError", "ContentPolicyViolationError", "AuthenticationError"}
+)
+
+
 @pytest.mark.parametrize(
     "refusal",
     [
@@ -281,7 +289,7 @@ async def test_a_slow_success_is_not_an_outage(pg, worker) -> None:  # type: ign
         "reasoning_only",  # max_tokens spent on reasoning: max_tokens_exhausted
     ],
 )
-async def test_provider_refusals_never_set_outage_nor_earn_credit(
+async def test_provider_refusals_mark_the_turn_and_never_replay_it(
     pg, worker, refusal, canary_log_capture
 ) -> None:  # type: ignore[no-untyped-def]
     import json
@@ -290,10 +298,11 @@ async def test_provider_refusals_never_set_outage_nor_earn_credit(
         rig.llm.mode = refusal
         await rig.say()
         row = await rig.row()
+        config = refusal in CONFIG_REFUSALS
         assert (row.state, row.credited_outage_s, row.intervals, row.last) == (
-            "ACTIVE",
+            "OUTAGE" if config else "ACTIVE",
             0,
-            0,
+            1 if config else 0,
             "bot/interrupted",
         )
     lines = [json.loads(ln) for ln in canary_log_capture.lines()]
@@ -327,7 +336,7 @@ async def test_provider_refusals_never_set_outage_nor_earn_credit(
         ("litellm:RateLimitError:429", "http_4xx", 429),
     ],
 )
-async def test_real_litellm_refusals_never_set_outage(
+async def test_real_litellm_refusals_mark_the_turn(
     pg, worker, mode, cause, status, canary_log_capture
 ) -> None:  # type: ignore[no-untyped-def]
     import json
@@ -336,7 +345,9 @@ async def test_real_litellm_refusals_never_set_outage(
         rig.llm.mode = mode
         await rig.say()
         row = await rig.row()
-        assert (row.state, row.intervals, row.last) == ("ACTIVE", 0, "bot/interrupted")
+        # a configuration refusal pauses the session; a 429 is transient and does not
+        expected = ("ACTIVE", 0) if status == 429 else ("OUTAGE", 1)
+        assert (row.state, row.intervals, row.last) == (*expected, "bot/interrupted")
     lines = [json.loads(ln) for ln in canary_log_capture.lines()]
     (line,) = [ln for ln in lines if ln.get("event") == "assess_turn_provider_failure"]
     assert line["reason_code"] == "provider_refused"
@@ -358,16 +369,97 @@ async def test_real_litellm_refusals_never_set_outage(
 
 
 async def test_repeated_config_refusals_queue_one_alert(pg, worker) -> None:  # type: ignore[no-untyped-def]
+    """No mail storm: the paused session takes no turn, the refused probes alert nobody, and a
+    second refusal after a recovery falls in the same alert window."""
     async with rigged(pg, worker) as rig:
         rig.llm.mode = "litellm:AuthenticationError:500"
+        await rig.say()
         for _ in range(3):
-            await rig.say()
+            await rig.tick()  # the probe is refused too: still paused
+        assert (await rig.row()).state == "OUTAGE"
+        rig.llm.mode = "ok"
+        await rig.tick()
+        assert (await rig.row()).state == "ACTIVE"
+        rig.llm.mode = "litellm:AuthenticationError:500"
+        await rig.say("di nuovo")
+        assert (await rig.row()).state == "OUTAGE"
     alerts = await pg.run(
         "super",
         "SELECT args->>'reason' FROM assess_jobs WHERE kind = 'operator_notify' "
         "AND args->>'kind' = 'provider_config_refused'",
     )
     assert [a[0] for a in alerts] == ["auth_error"]
+
+
+async def test_a_config_refusal_pauses_the_time_and_is_credited_on_recovery(
+    pg, worker
+) -> None:  # type: ignore[no-untyped-def]
+    """The student's time does not run while the configuration is refused: the interval is
+    credited like an outage once the probe gets an answer, and the refused turn stays answered
+    by its marker (it is not replayed)."""
+    from vektra_assess.api.events import broker_of
+
+    class _Req:
+        def __init__(self, app: Any) -> None:
+            self.app = app
+
+    async with rigged(pg, worker) as rig:
+        rig.llm.mode = "litellm:NotFoundError:404"  # a wrong model name
+        # an open stream has seen the session ACTIVE (the broker publishes on a change)
+        broker_of(_Req(rig.w.app)).observe(rig.sid, "ACTIVE", {})  # type: ignore[arg-type]
+        await rig.say()
+        row = await rig.row()
+        assert (row.state, row.last) == ("OUTAGE", "bot/interrupted")
+        (code,) = await rig.pg.run(
+            "super",
+            "SELECT reason_code FROM assess_outage_incidents WHERE session_id = :s",
+            {"s": rig.sid},
+        )
+        assert code[0] == "service_misconfigured"
+        events = broker_of(_Req(rig.w.app)).after(rig.sid, 0)  # type: ignore[arg-type]
+        interrupted = [e for e in events if e.type == "reply_interrupted"]
+        started = [e for e in events if e.type == "outage_start"]
+        assert [e.data["reason"] for e in interrupted] == ["service_misconfigured"]
+        assert [e.data["reason"] for e in started] == ["service_misconfigured"]
+        assert events.index(interrupted[0]) < events.index(started[0])
+
+        # the session snapshot says why, for a reload during the pause
+        r = await rig.w.client.get(
+            f"/api/v1/assess/sessions/{rig.sid}", headers=bearer(rig.token)
+        )
+        assert r.status_code == 200, r.text
+        assert r.json()["state"] == "OUTAGE"
+        assert r.json()["outage_reason"] == "service_misconfigured"
+
+        await rig.outage_lasted(180)
+        await rig.tick()  # still refused: nothing moves
+        assert (await rig.row()).state == "OUTAGE"
+        calls = rig.llm.n_calls
+        rig.llm.mode = "ok"  # the operator fixed the model
+        await rig.tick()
+        row = await rig.row()
+        assert row.state == "ACTIVE" and 175 <= row.credited_outage_s <= 185
+        assert row.deadline_at == deadline(
+            row.committed_at, row.duration_s, row.credited_outage_s
+        )
+        # only the probe called the model: the refused turn was not answered again
+        assert row.last == "bot/interrupted" and rig.llm.n_calls == calls + 1
+
+
+async def test_a_provider_outage_snapshot_keeps_its_reason(pg, worker) -> None:  # type: ignore[no-untyped-def]
+    async with rigged(pg, worker) as rig:
+        rig.llm.mode = "down"
+        await rig.say()
+        r = await rig.w.client.get(
+            f"/api/v1/assess/sessions/{rig.sid}", headers=bearer(rig.token)
+        )
+        assert r.json()["outage_reason"] == "provider_unavailable"
+        rig.llm.mode = "ok"
+        await rig.tick()
+        r = await rig.w.client.get(
+            f"/api/v1/assess/sessions/{rig.sid}", headers=bearer(rig.token)
+        )
+        assert r.json()["state"] == "ACTIVE" and "outage_reason" not in r.json()
 
 
 @pytest.mark.parametrize(

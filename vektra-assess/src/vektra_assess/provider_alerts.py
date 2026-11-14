@@ -1,11 +1,23 @@
 """The operator alert of a model provider refusing the configuration (``provider_config_refused``).
 
-An ``auth_error`` or a non-429 ``http_4xx`` (``llm.types.is_config_refusal``) is a refusal, not
-an outage: a turn ends with the interrupted marker and a Start rolls back
-``provider_unavailable``, with no OUTAGE (REQ-086). That alone is silent for the operator, who is
-the only one who can fix a missing key, a wrong model or a rejected parameter. So the first such
-refusal queues one ``operator_notify`` job, ``{site_id, kind: provider_config_refused, reason:
-<cause>, window: <bucket>}``: ids and closed codes only.
+An ``auth_error`` or a non-429 ``http_4xx`` (``llm.types.is_config_refusal``) is the provider
+refusing the deployment's configuration, which only the operator can fix (a missing key, a wrong
+model, a rejected parameter). What the student gets (live E2E follow-up, 2026-11-13):
+
+- a discussion turn ends with the interrupted marker, its ``reply_interrupted`` event carries
+  ``reason: service_misconfigured``, and the session then enters OUTAGE with that same reason
+  (the open interval's ``reason_code``): the timer is frozen, the outage probe keeps checking the
+  provider (a refused probe never ends the outage), and once the configuration is fixed the
+  probe ends it and the interval is credited exactly like a provider outage (G, C and the
+  3-consecutive-failures rule included). The pending turn is NOT kept for a replay: it is
+  already answered by the marker, so a request-specific refusal (a 400 on that one request)
+  is never re-sent;
+- a Start rolls back ``service_misconfigured`` (a system rollback, like ``provider_unavailable``
+  before it).
+
+That alone is silent for the operator. So the first such refusal queues one ``operator_notify``
+job, ``{site_id, kind: provider_config_refused, reason: <cause>, window: <bucket>}``: ids and
+closed codes only. A session in OUTAGE takes no turn, so it produces no further refusal.
 
 Producers: the API's reply task (a discussion turn) and the worker's Start rollback
 (``worker.preflight.rollback_start``), each in its own transaction. Dedupe: one alert per site and
@@ -24,6 +36,25 @@ from uuid import UUID
 from vektra_assess.jobs import JobKind, enqueue_job
 
 KIND = "provider_config_refused"
+
+#: the closed reason a configuration refusal shows the student: the ``reply_interrupted`` event,
+#: the outage interval's ``reason_code`` (so ``outage_start`` and the session snapshot carry it)
+#: and the Start rollback reason
+SERVICE_MISCONFIGURED = "service_misconfigured"
+#: the reason of every other outage (the provider unreachable, timing out, failing)
+PROVIDER_UNAVAILABLE = "provider_unavailable"
+
+
+def outage_reason(reason_code: object) -> str:
+    """The student-facing reason of an open outage interval, from its ``reason_code``: a
+    closed pair, never the stored value itself (older intervals carry the call outcome)."""
+    return (
+        SERVICE_MISCONFIGURED
+        if reason_code == SERVICE_MISCONFIGURED
+        else PROVIDER_UNAVAILABLE
+    )
+
+
 #: one alert per site and cause per hour, however many turns and Starts are refused in it
 WINDOW_S = 3600
 

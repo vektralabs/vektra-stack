@@ -63,7 +63,9 @@ async def test_an_outage_moves_active_to_outage_and_keeps_the_pending_turn(
         s = await seed_session(w, worker, "ACTIVE")
         sid = s.session_id
         broker = broker_of(_Req(w.app))  # type: ignore[arg-type]
-        broker.observe(sid, "ACTIVE", {})  # a connected stream saw ACTIVE
+        broker.observe(
+            sid, "ACTIVE", {}, outage_count=0
+        )  # a connected stream saw ACTIVE
         # committed a minute ago (the interval is clamped to the commit)
         await pg.run(
             "super",

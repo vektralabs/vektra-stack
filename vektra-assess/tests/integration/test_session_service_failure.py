@@ -88,7 +88,7 @@ async def test_three_consecutive_failed_calls_close_service_failure(pg, worker) 
         s = await seed_session(w, worker, "ACTIVE")
         sid = s.session_id
         broker = broker_of(_Req(w.app))  # type: ignore[arg-type]
-        broker.observe(sid, "ACTIVE", {})
+        broker.observe(sid, "ACTIVE", {}, outage_count=0)
         r = await w.client.post(
             f"/api/v1/assess/sessions/{sid}/turns",
             json={"text": "ciao"},

@@ -119,7 +119,7 @@ async def _retry(w: Any, worker: Any, sid: Any) -> None:  # noqa: F811
 
 async def _fail_twice(w: Any, worker: Any, stub: LlmStub, s: Any) -> None:  # noqa: F811
     sid = s.session_id
-    broker_of(_Req(w.app)).observe(sid, "ACTIVE", {})  # type: ignore[arg-type]
+    broker_of(_Req(w.app)).observe(sid, "ACTIVE", {}, outage_count=0)  # type: ignore[arg-type]
     before = await _counts(w.pg, sid)
     assert before == ("ACTIVE", 1, 1, 0, 0, 0, 0, False), before
     r = await w.client.post(
@@ -222,7 +222,7 @@ async def test_a_stalled_provider_enters_outage_at_the_timeout_then_answers_once
         async with world(pg, settings, assess_runner=_runner(settings)) as w:
             s = await seed_session(w, worker, "ACTIVE")
             sid = s.session_id
-            broker_of(_Req(w.app)).observe(sid, "ACTIVE", {})  # type: ignore[arg-type]
+            broker_of(_Req(w.app)).observe(sid, "ACTIVE", {}, outage_count=0)  # type: ignore[arg-type]
             t0 = time.monotonic()
             r = await w.client.post(
                 f"/api/v1/assess/sessions/{sid}/turns",

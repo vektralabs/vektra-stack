@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, expect, it, vi } from "vitest";
-import { App, DOWNLOAD_TIMEOUT_MS, transcriptFileName } from "../src/app";
+import { App, DOWNLOAD_TIMEOUT_MS, dbMicros, transcriptFileName } from "../src/app";
 import { Bridge } from "../src/bridge";
 import { readConfig } from "../src/main";
 
@@ -1069,5 +1069,271 @@ describe("transcript download (plan 10)", () => {
     for (const bad of [null, "", 'attachment; filename="../x.html"', 'attachment; filename="x.exe"']) {
       expect(transcriptFileName(bad)).toBe("trascrizione.html");
     }
+  });
+});
+
+describe("a reload replays the ring; what the snapshot shows is not applied again (live 2026-11-14)", () => {
+  const MISCONFIGURED =
+    "Il servizio non è disponibile per un problema tecnico. Il personale è stato avvisato: riprova più tardi. Questo tempo non ti viene conteggiato.";
+  const inMinutes = (m: number) => new Date(Date.now() + m * 60_000).toISOString();
+  // the snapshot's server_now and event times on the database clock (microseconds)
+  const NOW = "2026-11-14T18:47:00.500000+00:00";
+  const BEFORE = (s: number) => `2026-11-14T18:46:${String(60 - s).padStart(2, "0")}.000000+00:00`;
+  const AFTER = "2026-11-14T18:47:00.500001+00:00";
+  const LATER = "2026-11-14T18:47:30.000000+00:00";
+  const snapshot = (extra: object) => ({
+    session_id: "S",
+    state: "ACTIVE",
+    close_reason: null,
+    deadline_at: inMinutes(30),
+    server_now: NOW,
+    reply_pending: false,
+    turns: [{ turn_no: 1, role: "bot", kind: "opening", text: "Benvenuto" }],
+    ...extra,
+  });
+
+  /** A page reloaded into a session: GET /sessions/S answers ``view``; the stream stays open. */
+  async function reloaded(view: object) {
+    const streams: Record<string, string>[] = [];
+    const reads = { n: 0 };
+    const fetchImpl = (async (url: string, init: RequestInit) => {
+      if (url.endsWith("/events")) {
+        streams.push(init.headers as Record<string, string>);
+        return new Promise<Response>(() => {});
+      }
+      reads.n += 1;
+      return Response.json(view);
+    }) as unknown as typeof fetch;
+    const root = document.createElement("main");
+    document.body.replaceChildren(root);
+    const a = new App(
+      { site: "s", parentOrigin: "https://m.example", apiBase: "/api" },
+      new Bridge({ parent: { postMessage: () => {} }, addEventListener: () => {} }, "https://m.example"),
+      root,
+      fetchImpl,
+    );
+    const priv = a as unknown as {
+      state: { name: string };
+      onMessage: (m: unknown) => Promise<void>;
+      onEvent: (e: unknown) => Promise<void>;
+      apply: (v: unknown) => void;
+      tick: () => void;
+      clockOffset: number;
+    };
+    await priv.onMessage.call(a, { v: 1, type: "vektra-assess-token", token: "T", mode: "resume", sid: "S" });
+    await new Promise((r) => setTimeout(r, 0));
+    priv.clockOffset = 0; // the fixed server_now above is not "now"; the timer uses local time
+    const ev = (event: string, data: object) =>
+      priv.onEvent.call(a, { event, data: JSON.stringify(data) });
+    return { a, root, priv, streams, ev, reads };
+  }
+  const count = (haystack: string, needle: string) => haystack.split(needle).length - 1;
+
+  it("the stream opens without a cursor", async () => {
+    const { streams } = await reloaded(snapshot({}));
+    expect(streams.length).toBe(1);
+    expect(streams[0]["Last-Event-ID"]).toBeUndefined();
+  });
+
+  it("an outage that already ended is not applied to an ACTIVE snapshot", async () => {
+    const deadline = inMinutes(30);
+    const { a, priv, ev } = await reloaded(snapshot({ deadline_at: deadline }));
+    await ev("outage_start", { state: "OUTAGE", reason: "service_misconfigured", at: BEFORE(10) });
+    await ev("outage_end", { state: "ACTIVE", deadline_at: inMinutes(20), at: BEFORE(6) });
+    expect(priv.state.name).toBe("active");
+    expect(a.banner.hidden).toBe(true);
+    expect(a.banner.textContent).not.toContain(MISCONFIGURED);
+    expect(a.live.announcements).toBe(0);
+    priv.tick.call(a);
+    expect(a.controls.timer.textContent).toBe("Mancano 30 minuti");
+  });
+
+  it("a reload during a later outage keeps the frozen time and shows its text once", async () => {
+    const { a, root, priv, ev } = await reloaded(
+      snapshot({
+        state: "OUTAGE",
+        outage_reason: "service_misconfigured",
+        remaining_s: 24 * 60,
+        deadline_at: inMinutes(22), // the stored deadline; the time left is frozen at 24
+      }),
+    );
+    expect(a.controls.timer.textContent).toBe("Mancano 24 minuti");
+    await ev("outage_start", { state: "OUTAGE", reason: "service_misconfigured", at: BEFORE(50) });
+    await ev("outage_end", { state: "ACTIVE", deadline_at: inMinutes(22), at: BEFORE(46) });
+    await ev("outage_start", { state: "OUTAGE", reason: "service_misconfigured", at: BEFORE(5) });
+    priv.tick.call(a);
+    expect(priv.state.name).toBe("outage");
+    expect(a.controls.timer.textContent).toBe("Mancano 24 minuti");
+    expect(a.banner.querySelectorAll("p").length).toBe(1);
+    expect(count(root.textContent ?? "", MISCONFIGURED)).toBe(1);
+    expect(a.live.announcements).toBe(0);
+    // the open outage's own end comes later than the snapshot: applied, the deadline moves
+    await ev("outage_end", { state: "ACTIVE", deadline_at: inMinutes(25.5), at: AFTER });
+    expect(priv.state.name).toBe("active");
+    expect(a.controls.timer.textContent).toBe("Mancano 26 minuti");
+  });
+
+  it("a reload mid-reply keeps the whole reply in progress", async () => {
+    const { a, ev } = await reloaded(
+      snapshot({
+        reply_pending: true,
+        turns: [
+          { turn_no: 1, role: "bot", kind: "opening", text: "Benvenuto" },
+          { turn_no: 2, role: "student", kind: "normal", text: "domanda" },
+          { turn_no: 3, role: "bot", kind: "normal", text: "prima risposta" },
+          { turn_no: 4, role: "student", kind: "normal", text: "seconda domanda" },
+        ],
+      }),
+    );
+    // the ring: the earlier reply (in the snapshot), then the owed one from its start
+    await ev("turn_accepted", { turn_no: 2 });
+    await ev("reply_delta", { text: "prima " });
+    await ev("reply_delta", { text: "risposta" });
+    await ev("reply_done", { turn_no: 3 });
+    await ev("turn_accepted", { turn_no: 4 });
+    await ev("reply_delta", { text: "Inizio " });
+    await ev("reply_delta", { text: "della seconda" });
+    expect(a.chat.list.querySelector(".streaming")?.textContent).toContain("Inizio della seconda");
+    expect(a.chat.list.querySelector(".streaming")?.textContent).not.toContain("prima");
+  });
+
+  it("a past warning is not announced again; a new one is, whatever its time", async () => {
+    // 4.5 minutes left on screen ("Mancano 5 minuti"): the 10-minute warning is past
+    const { a, priv, ev } = await reloaded(snapshot({ deadline_at: inMinutes(4.5) }));
+    priv.tick.call(a);
+    expect(a.controls.timer.textContent).toBe("Mancano 5 minuti");
+    await ev("warning", { minutes: 10, deadline_at: "x" });
+    expect(a.live.announcements).toBe(0);
+    // the 5-minute one is due now; an `at` older than the snapshot does not hide it
+    await ev("warning", { minutes: 5, deadline_at: "x", at: BEFORE(1) });
+    expect(a.live.announcements).toBe(1);
+    expect(a.live.el.textContent).toBe("Attenzione: mancano 5 minuti alla fine");
+  });
+
+  it("a warning during an outage is judged by the frozen time left", async () => {
+    const { a, ev } = await reloaded(
+      snapshot({ state: "OUTAGE", remaining_s: 3 * 60, deadline_at: inMinutes(1) }),
+    );
+    expect(a.controls.timer.textContent).toBe("Mancano 3 minuti");
+    await ev("warning", { minutes: 10, deadline_at: "x" });
+    await ev("warning", { minutes: 5, deadline_at: "x" });
+    expect(a.live.announcements).toBe(0);
+  });
+
+  it("a live outage after the snapshot is applied; one without at (an older server) too", async () => {
+    const { a, priv, ev } = await reloaded(snapshot({}));
+    await ev("outage_start", { state: "OUTAGE", reason: "service_misconfigured", at: AFTER });
+    expect(priv.state.name).toBe("outage");
+    expect(a.banner.textContent).toBe(MISCONFIGURED);
+    await ev("outage_end", { state: "ACTIVE" });
+    expect(priv.state.name).toBe("active");
+  });
+
+  it("a snapshot from OUTAGE back to ACTIVE shows and announces the recovery (3)", async () => {
+    const { a, priv, ev } = await reloaded(
+      snapshot({ state: "OUTAGE", outage_reason: "service_misconfigured", remaining_s: 600 }),
+    );
+    expect(a.banner.textContent).toBe(MISCONFIGURED);
+    await ev("state", { state: "ACTIVE", deadline_at: inMinutes(20), server_now: LATER });
+    expect(priv.state.name).toBe("active");
+    expect(a.banner.hidden).toBe(false);
+    expect(a.banner.textContent).toContain("ti è stato restituito");
+    expect(a.live.el.textContent).toContain("ti è stato restituito");
+    expect(a.live.announcements).toBe(1);
+  });
+
+  it("turning ACTIVE clears an outage text left on screen; the recovery text stays", async () => {
+    const { a, priv, ev } = await reloaded(snapshot({ state: "STARTING", turns: [] }));
+    a.banner.replaceChildren(document.createTextNode(MISCONFIGURED)); // left from before
+    a.banner.hidden = false;
+    priv.apply.call(a, snapshot({}));
+    expect(priv.state.name).toBe("active");
+    expect(a.banner.hidden).toBe(true);
+    expect(a.banner.textContent).toBe("");
+    await ev("outage_start", {});
+    await ev("outage_end", {});
+    expect(a.banner.hidden).toBe(false);
+    expect(a.banner.textContent).toContain("ti è stato restituito");
+  });
+
+  it("an outage is announced once: a second outage_start only updates text and time (6)", async () => {
+    const { a, ev } = await reloaded(snapshot({}));
+    await ev("outage_start", { reason: "provider_unavailable", remaining_s: 600, at: AFTER });
+    expect(a.live.announcements).toBe(1);
+    await ev("outage_start", { reason: "service_misconfigured", remaining_s: 540, at: LATER });
+    expect(a.live.announcements).toBe(1);
+    expect(a.banner.textContent).toBe(MISCONFIGURED);
+    expect(a.controls.timer.textContent).toBe("Mancano 9 minuti");
+  });
+
+  it("the opening state of a reconnect is the session now; an older one is not", async () => {
+    // e.g. after an API restart: the outage began while the stream was down
+    const { a, priv, ev } = await reloaded(snapshot({}));
+    await ev("state", { state: "OUTAGE", deadline_at: inMinutes(30), server_now: NOW, reason: "x" });
+    expect(priv.state.name).toBe("active"); // not newer than the snapshot on screen
+    await ev("state", {
+      state: "OUTAGE",
+      deadline_at: inMinutes(30),
+      server_now: LATER,
+      remaining_s: 600,
+      reason: "service_misconfigured",
+    });
+    expect(priv.state.name).toBe("outage");
+    expect(a.banner.textContent).toBe(MISCONFIGURED);
+    expect(a.controls.timer.textContent).toBe("Mancano 10 minuti");
+    expect(a.live.el.textContent).toBe(MISCONFIGURED); // announced once (6)
+    expect(a.live.announcements).toBe(1);
+    // the replay of what that state already shows is not applied again
+    await ev("outage_end", { state: "ACTIVE", deadline_at: inMinutes(20), at: AFTER });
+    expect(priv.state.name).toBe("outage");
+  });
+
+  it("a GET snapshot that finds the session in OUTAGE announces it", async () => {
+    const { a, priv } = await reloaded(snapshot({}));
+    priv.apply.call(a, snapshot({ state: "OUTAGE", server_now: LATER, remaining_s: 300 }));
+    expect(priv.state.name).toBe("outage");
+    expect(a.live.announcements).toBe(1);
+    expect(a.live.el.textContent).toContain("Puoi usare Riprova");
+  });
+
+  it("an outage that began again at once freezes the server's time left (3)", async () => {
+    const { a, priv, ev } = await reloaded(snapshot({}));
+    await ev("outage_end", { state: "OUTAGE", deadline_at: inMinutes(30), at: AFTER });
+    await ev("outage_start", { state: "OUTAGE", deadline_at: inMinutes(30), remaining_s: 1200, at: AFTER });
+    expect(priv.state.name).toBe("outage");
+    expect(a.controls.timer.textContent).toBe("Mancano 20 minuti");
+  });
+
+  it("a replayed reply end without a turn is dropped by its time (4)", async () => {
+    const { a, ev, reads } = await reloaded(
+      snapshot({
+        reply_pending: true,
+        turns: [
+          { turn_no: 1, role: "bot", kind: "opening", text: "Benvenuto" },
+          { turn_no: 2, role: "student", kind: "normal", text: "domanda" },
+        ],
+      }),
+    );
+    const before = reads.n;
+    await ev("reply_interrupted", { reason: "persist_failed", at: BEFORE(3) });
+    expect(reads.n).toBe(before + 1); // read again: whether a reply is owed is the server's word
+    expect(a.live.announcements).toBe(0); // but nothing announced
+    await ev("reply_interrupted", { reason: "persist_failed", at: AFTER });
+    expect(a.live.announcements).toBe(1); // a live one is reported
+  });
+
+  it("a replayed committed loads nothing (5)", async () => {
+    const { ev, reads } = await reloaded(snapshot({}));
+    const before = reads.n;
+    await ev("committed", { state: "ACTIVE", at: BEFORE(40) });
+    await ev("committed", { state: "ACTIVE" });
+    expect(reads.n).toBe(before);
+  });
+
+  it("database times compare to the microsecond", () => {
+    expect(dbMicros("2026-11-14T18:47:00.500001+00:00")! - dbMicros(NOW)!).toBe(1);
+    expect(dbMicros("2026-11-14T18:47:00+00:00")).toBe(Date.parse("2026-11-14T18:47:00Z") * 1000);
+    expect(dbMicros("2026-11-14T19:47:00.5+01:00")).toBe(dbMicros(NOW));
+    for (const bad of [undefined, 3, "", "ieri"]) expect(dbMicros(bad)).toBeNull();
   });
 });

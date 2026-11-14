@@ -31,7 +31,7 @@ from fastapi import Request
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection
 
-from vektra_assess.api.common import engine_of, fail, is_fresh
+from vektra_assess.api.common import engine_of, fail
 from vektra_assess.api.deps import settings_of
 from vektra_assess.api.material import MaterialUnavailable
 from vektra_assess.api.site_binding import bind_site
@@ -238,10 +238,15 @@ async def gate(
     #    enrolment fails closed: refused, state unchanged, audited.
     if enrolment_fresh_s is not None and row.state in LIVE:
         check = (await conn.execute(_ENROLMENT, {"sid": sid})).first()
+        # unlike the upserted caches (``api.common.is_fresh``), any negative age is fresh here:
+        # enrolment checks are INSERTED and read newest first, so a row dated ahead by a
+        # backward clock step can never be replaced; refusing it would refuse every turn until
+        # the clock caught up. The age is still read against clock_timestamp()
         if (
             check is None
             or check.result != "enrolled"
-            or not is_fresh(check.age_s, enrolment_fresh_s)
+            or check.age_s is None
+            or float(check.age_s) > enrolment_fresh_s
         ):
             raise GateRejected(assess_unavailable("enrolment_freshness"), "enrolment")
     return row

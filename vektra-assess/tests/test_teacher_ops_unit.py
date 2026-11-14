@@ -256,6 +256,8 @@ def test_a_reset_grants_one_session_with_the_reason_encrypted_to_its_row(
     assert kw["data"]["reset_id"] == view["reset_id"]
     assert "reason" not in json.dumps(kw["data"], default=str)
     assert len(w.renders) == 1  # results page refreshed without waiting for the tick
+    # a check already running may have read before the grant: its follow-up too (7th review)
+    assert w.render_kw == [{"follow_up": True}]
 
 
 def test_the_continuity_default_follows_the_locked_session_not_the_first_read(

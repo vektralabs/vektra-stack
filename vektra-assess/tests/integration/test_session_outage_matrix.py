@@ -738,15 +738,12 @@ async def test_a_probe_that_cannot_be_built_never_loses_the_marker(
         assert len(built) == (1 if mode.endswith(":404") else 0)
 
 
-async def test_an_enrolment_check_dated_far_in_the_future_is_not_fresh(
-    pg, worker
-) -> None:  # type: ignore[no-untyped-def]
-    """Sixth review, B: the enrolment freshness uses the one rule (``is_fresh``): a re-check
-    dated beyond the clock-skew tolerance (a backward clock step) is not trusted."""
+async def test_an_enrolment_check_dated_in_the_future_stays_fresh(pg, worker) -> None:  # type: ignore[no-untyped-def]
+    """Seventh review, 1: enrolment checks are INSERTED, never upserted, and read newest first,
+    so a row dated ahead by a backward clock step could never be replaced; refusing it would
+    refuse every turn until the clock caught up. Any negative age is fresh for this reader."""
     async with rigged(pg, worker) as rig:
         url = f"/api/v1/assess/sessions/{rig.sid}"
-        r = await rig.w.client.get(url, headers=bearer(rig.token))
-        assert r.status_code == 200, r.text
         await rig.pg.run(
             "super",
             "UPDATE assess_enrolment_checks SET checked_at = now() + interval '1 hour' "
@@ -754,4 +751,4 @@ async def test_an_enrolment_check_dated_far_in_the_future_is_not_fresh(
             {"s": rig.sid},
         )
         r = await rig.w.client.get(url, headers=bearer(rig.token))
-        assert r.status_code == 503, r.text
+        assert r.status_code == 200, r.text

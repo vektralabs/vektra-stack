@@ -383,7 +383,8 @@ async def reset_session(
         # the results page should show state (10) without waiting for the next refresh tick
         from vektra_assess.api.state import queue_render_check
 
-        await queue_render_check(conn, site, student, c, body.courseid)
+        # follow_up: a check already running may have read before this grant
+        await queue_render_check(conn, site, student, c, body.courseid, follow_up=True)
         await write_event(
             conn,
             AssessAuditEvent.TEACHER_RESET,

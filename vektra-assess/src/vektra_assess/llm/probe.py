@@ -18,7 +18,11 @@ import asyncio
 from collections.abc import Awaitable, Callable
 from typing import Any
 
+import structlog
+
 from vektra_assess.llm.types import ProviderOutageError, is_config_refusal
+
+log = structlog.get_logger(__name__)
 
 Probe = Callable[[], Awaitable[bool]]
 
@@ -69,26 +73,55 @@ def make_llm_probe(
     return probe
 
 
+#: the longest the confirming probe may run, whatever the caller's budget: it delays the student's
+#: marked turn (or the Start's rollback) by at most this much
+PROBE_MAX_S = 10.0
+
+
+def probe_budget_s(cut_at: float | None, now: float) -> float:
+    """The time the confirming probe may take in a reply: what is left until the reply's cut
+    (deadline + grace minus the persist margin, on the loop clock), never above PROBE_MAX_S;
+    with no cut, PROBE_MAX_S. Zero or less: no probe at all."""
+    if cut_at is None:
+        return PROBE_MAX_S
+    return min(PROBE_MAX_S, cut_at - now)
+
+
 async def refusal_is_configuration(
-    exc: ProviderOutageError, probe: Probe | None
+    exc: ProviderOutageError,
+    make_probe: Callable[[], Probe] | None,
+    *,
+    budget_s: float,
 ) -> bool:
     """Whether a refused call is the deployment's configuration (pause the session, say
     ``service_misconfigured``) rather than that one request (the plain refusal).
 
     Not a configuration refusal at all (a 429, ``budget_exceeded``, ``max_tokens_exhausted``,
-    an outage): False, the probe is not called. ``auth_error``: True, no probe needed. A
-    non-429 4xx: True only when the probe is refused for the configuration as well; without a
-    probe it cannot be confirmed, so False (fail towards the old behaviour, never a pause)."""
+    an outage): False. ``auth_error``: True. Neither builds nor calls the probe. A non-429 4xx:
+    True only when the probe, built now by ``make_probe``, is refused for the configuration as
+    well within ``budget_s`` (capped by the probe's own first-token deadline). No factory, no
+    budget left, a factory or probe failing in any other way, or the budget running out: False,
+    the old plain refusal (never a pause the probe did not confirm, never an exception)."""
     if not exc.is_config_refusal:
         return False
     if exc.cause == "auth_error":
         return True
-    if probe is None:
+    if make_probe is None or budget_s <= 0:
+        return False
+    try:
+        probe = make_probe()
+    except Exception as build_exc:
+        log.warning(
+            "assess_config_probe_unavailable", error_type=type(build_exc).__name__
+        )
         return False
     from vektra_assess.llm.runner import outage_cause
 
     try:
-        await probe()
+        async with asyncio.timeout(budget_s):
+            await probe()
+    except TimeoutError:
+        return False  # the budget, or the probe's own deadline: not confirmed
     except Exception as probe_exc:  # an answer about the provider, never a crash
         cause, status = outage_cause(probe_exc)
         return is_config_refusal(cause, status)

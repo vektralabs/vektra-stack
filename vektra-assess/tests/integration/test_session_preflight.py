@@ -901,3 +901,83 @@ async def test_a_part_b_400_is_the_configuration_only_if_the_probe_is_refused_to
         await handler(job_context(worker_engine, sid))
         await _rolled_back(pg, sid, reason)
         assert calls == [1]
+
+
+async def test_the_confirming_probe_runs_within_the_start_budget(  # type: ignore[no-untyped-def]
+    pg, worker_engine, monkeypatch
+) -> None:
+    """Second review of #221, finding D: a probe that would be refused only after the budget
+    left to the Start (capped by PROBE_MAX_S) does not confirm, so the Start rolls back
+    provider_unavailable without waiting for it."""
+    import time
+    from datetime import UTC, datetime, timedelta
+
+    from vektra_assess.llm.types import ProviderCallRecord, ProviderOutageError
+    from vektra_assess.worker import preflight as mod
+
+    monkeypatch.setattr(mod, "PROBE_MAX_S", 0.2)
+
+    class _Resp:
+        status_code = 404
+
+    async def slow_refused_probe() -> bool:
+        await asyncio.sleep(3.0)
+        exc = type("NotFoundError", (Exception,), {})("refused")
+        exc.response = _Resp()  # type: ignore[attr-defined]
+        raise exc
+
+    await _reset(pg)
+    await activate(pg)
+    settings = default_settings()
+    async with world(pg, settings) as w:
+        await configure_activity(pg, w.site, CMID)
+        start = datetime.now(UTC)
+        outage = ProviderOutageError(
+            ProviderCallRecord(
+                start, None, start + timedelta(seconds=1), "error", "NotFoundError",
+                "http_4xx", 404,
+            )
+        )  # fmt: skip
+        part_b = FakePartB(fail=outage)
+        part_b.config_probe = lambda: slow_refused_probe  # type: ignore[attr-defined]
+        sid = await _start(w)
+        handler = make_preflight_handler(
+            deps(settings, w.handoff_public, start_source(worker_engine), part_b)
+        )
+        t0 = time.monotonic()
+        await handler(job_context(worker_engine, sid))
+        assert time.monotonic() - t0 < 2.5
+        await _rolled_back(pg, sid, "provider_unavailable")
+
+
+async def test_a_probe_that_cannot_be_built_rolls_back_provider_unavailable(  # type: ignore[no-untyped-def]
+    pg, worker_engine
+) -> None:
+    """Finding E at the Start: an unbuildable probe is "not confirmed", never internal_error."""
+    from datetime import UTC, datetime, timedelta
+
+    from vektra_assess.llm.types import ProviderCallRecord, ProviderOutageError
+
+    def broken() -> Any:
+        raise RuntimeError("no provider")
+
+    await _reset(pg)
+    await activate(pg)
+    settings = default_settings()
+    async with world(pg, settings) as w:
+        await configure_activity(pg, w.site, CMID)
+        start = datetime.now(UTC)
+        outage = ProviderOutageError(
+            ProviderCallRecord(
+                start, None, start + timedelta(seconds=1), "error", "NotFoundError",
+                "http_4xx", 404,
+            )
+        )  # fmt: skip
+        part_b = FakePartB(fail=outage)
+        part_b.config_probe = broken  # type: ignore[attr-defined]
+        sid = await _start(w)
+        handler = make_preflight_handler(
+            deps(settings, w.handoff_public, start_source(worker_engine), part_b)
+        )
+        await handler(job_context(worker_engine, sid))
+        await _rolled_back(pg, sid, "provider_unavailable")

@@ -73,7 +73,7 @@ from vektra_assess.errors import (
     state_conflict,
 )
 from vektra_assess.keys import AssessKeyring
-from vektra_assess.llm.probe import refusal_is_configuration
+from vektra_assess.llm.probe import probe_budget_s, refusal_is_configuration
 from vektra_assess.llm.types import (
     ContestEntry,
     PriorTurn,
@@ -436,6 +436,9 @@ class TurnDriver:
         #: a configuration refusal: the marked turn first, then OUTAGE with this reason
         misconfigured: ProviderCallRecord | None = None
         stop = asyncio.Event()
+        loop = asyncio.get_running_loop()
+        # the reply's cut on the loop clock: the confirming probe never runs past it
+        cut_at = loop.time() + cut_after_s if cut_after_s is not None else None
         cut = (
             asyncio.get_running_loop().call_later(max(cut_after_s, 0.0), stop.set)
             if cut_after_s is not None
@@ -454,7 +457,9 @@ class TurnDriver:
                 failure = "provider_refused"
                 if exc.is_config_refusal:
                     await self._alert_config_refusal(sid, exc.cause)
-                if await refusal_is_configuration(exc, self._config_probe()):
+                if await self._is_configuration(
+                    exc, probe_budget_s(cut_at, loop.time())
+                ):
                     failure = SERVICE_MISCONFIGURED
                     misconfigured = exc.record
             else:
@@ -509,11 +514,23 @@ class TurnDriver:
         except Exception as exc:
             log.warning("assess_provider_alert_failed", error_type=type(exc).__name__)
 
-    def _config_probe(self) -> Any:
-        """The runner's turn-shaped probe (None for a runner without one: a refusal is then
-        never confirmed as the configuration, the plain refusal path stands)."""
+    async def _is_configuration(
+        self, exc: ProviderOutageError, budget_s: float
+    ) -> bool:
+        """Whether this refusal is the deployment's configuration (``llm.probe``), with the
+        runner's turn-shaped probe built only when needed and run within ``budget_s`` (the
+        time left to the reply's cut, at most PROBE_MAX_S). Any failure is "not confirmed":
+        the marked turn is written either way."""
         make = getattr(self.runner, "config_probe", None)
-        return make() if callable(make) else None
+        try:
+            return await refusal_is_configuration(
+                exc, make if callable(make) else None, budget_s=budget_s
+            )
+        except Exception as probe_exc:
+            log.warning(
+                "assess_config_probe_failed", error_type=type(probe_exc).__name__
+            )
+            return False
 
     @staticmethod
     async def _enter_outage(

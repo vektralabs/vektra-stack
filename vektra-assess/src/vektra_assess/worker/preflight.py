@@ -65,7 +65,7 @@ from vektra_assess.crypto.seal import seal
 from vektra_assess.gates import Code, GateInputs, evaluate_start_gates
 from vektra_assess.keys import AssessKeyring
 from vektra_assess.llm.activation import is_activated
-from vektra_assess.llm.probe import refusal_is_configuration
+from vektra_assess.llm.probe import PROBE_MAX_S, refusal_is_configuration
 from vektra_assess.llm.types import (
     PartBRejectedError,
     ProviderOutageError,
@@ -814,10 +814,21 @@ async def _run(deps: PreflightDeps, acquire: AcquireDb, sid: UUID) -> None:
         # the turn-shaped probe is refused too, llm.probe) rolls back with its own reason, which
         # the discussion UI reads from start_rolled_back; every config refusal alerts the
         # operator (provider_alerts)
+        # the probe runs inside what is left of the Start's budget (at most PROBE_MAX_S): out
+        # of budget, or any failure of it, is "not confirmed" (provider_unavailable)
+        left = (remaining or 0.0) - (spent or 0.0)
         make_probe = getattr(deps.runner, "config_probe", None)
-        configuration = await refusal_is_configuration(
-            exc, make_probe() if callable(make_probe) else None
-        )
+        try:
+            configuration = await refusal_is_configuration(
+                exc,
+                make_probe if callable(make_probe) else None,
+                budget_s=min(PROBE_MAX_S, left),
+            )
+        except Exception as probe_exc:
+            log.warning(
+                "assess_config_probe_failed", error_type=type(probe_exc).__name__
+            )
+            configuration = False
         raise _Rollback(
             Reason.SERVICE_MISCONFIGURED
             if configuration

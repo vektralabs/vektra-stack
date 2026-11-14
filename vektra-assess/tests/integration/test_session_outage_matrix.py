@@ -700,3 +700,39 @@ async def test_no_pause_when_the_marker_is_refused(pg, worker) -> None:  # type:
         row = await rig.row()
         assert (row.state, row.intervals) == ("ACTIVE", 0)
         assert row.last == "student/normal"  # the marker was refused
+
+
+# --- second review of #221 -----------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("mode", "state"),
+    [
+        (
+            "litellm:NotFoundError:404",
+            "ACTIVE",
+        ),  # needs the probe: unbuildable, not confirmed
+        ("litellm:AuthenticationError:401", "OUTAGE"),  # never builds it
+        ("litellm:RateLimitError:429", "ACTIVE"),  # never builds it
+    ],
+)
+async def test_a_probe_that_cannot_be_built_never_loses_the_marker(
+    pg, worker, mode, state
+) -> None:  # type: ignore[no-untyped-def]
+    """Finding E: building or running the confirming probe can fail; the turn still gets its
+    marker (never a crashed reply task with the turn left pending), and the probe is built only
+    for a non-auth, non-429 4xx."""
+    async with rigged(pg, worker) as rig:
+        built: list[int] = []
+
+        def broken() -> Any:
+            built.append(1)
+            raise RuntimeError("no provider")
+
+        runner = rig.w.app.state.assess_runner
+        runner.config_probe = broken
+        rig.llm.mode = mode
+        await rig.say()
+        row = await rig.row()
+        assert (row.state, row.last) == (state, "bot/interrupted")
+        assert len(built) == (1 if mode.endswith(":404") else 0)

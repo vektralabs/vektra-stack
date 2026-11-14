@@ -309,38 +309,25 @@ the worker resolves the cmid inside that course only. Missing or stale facts: `4
 **Retry hint (`retry_after_s`).** A refusal that a refresh of the LMS facts may lift says when to
 retry in ONE place: `error.details.retry_after_s` (integer seconds, at least 1, never above 5;
 today 3), mirrored in the `Retry-After` header. It is NOT the envelope's top-level
-`error.retry_after` (that one stays for rate limits). The refresh job wakes the worker at once
-(`NOTIFY`), so the facts are normally re-read before the retry, and the retry then gets a final
-answer. It is carried by exactly these refusals, and only when the refusal itself queued a
-refresh that reads AFTER it:
+`error.retry_after` (that one stays for rate limits). Each such refusal queues the refresh (the
+job wakes the worker at once, `NOTIFY`) and ALWAYS carries the hint:
 
 | Status / code | `details` | When |
 |---------------|-----------|------|
-| `403 ERR-ASSESS-021` | `reason: editor_check_stale` or `grader_check_stale` | the activity's facts are absent, older than `VEKTRA_ASSESS_TEACHER_GATE_MAX_AGE_S`, or unreadable; a refresh was queued now |
-| `400 ERR-ASSESS-022` (PUT config) | `fields` | EVERY field error is an LMS fact (`assignment_without_cutoff`, `quiz_without_close_date`, `team_submission`, `marking_guide`, `lms_rubric_missing`, `lms_facts_unreadable`, and `opening_unknown` on `available_until` when the cached facts have no close date) and those facts are not the answer to a refusal (below); a refresh was queued now |
+| `403 ERR-ASSESS-021` | `reason: editor_check_stale` or `grader_check_stale` | the activity's facts are absent, older than `VEKTRA_ASSESS_TEACHER_GATE_MAX_AGE_S`, or unreadable |
+| `400 ERR-ASSESS-022` (PUT config) | `fields` | EVERY field error is an LMS fact: `assignment_without_cutoff`, `quiz_without_close_date`, `team_submission`, `marking_guide`, `lms_rubric_missing`, `lms_facts_unreadable`; on `available_until`, `opening_unknown` when the cached facts have no close date, and `not_after_opening` when the opening it was checked against comes from the cached close date (not from the teacher's attested opening) |
 | `409 ERR-ASSESS-024` (reset) | `reason: gate_inputs_stale` | the student's LMS gate half was not fresh; a render check was queued |
 
-**When a refusal is final.** The age of the facts says nothing about a change the teacher made
-in the LMS a moment ago (a row read a second ago for a page open can predate the cut-off set
-since). What does is why they were read: a refresh queued BY A REFUSAL records that, with its
-enqueue time, and reads after it. Facts read that way, for a refusal queued in the last 20 s, are
-the answer to that refusal: a refusal on them is final, without `retry_after_s`, and queues
-nothing (the teacher's change came before the first refusal, the refresh read after it). Any
-other facts (read for a page open, for an older refusal, or of unknown origin) make the refusal
-queue its own refresh and hint. `not_an_editor` / `not_a_grader` on facts within the freshness
-bound are final as before. `not_after_opening` (an end date before a known opening) is the
-teacher's input and never hints. A PUT refused for an LMS fact AND another error (no recipient,
-no cap, ...) still queues the refresh but carries no hint: the teacher must fix the other field
-first. Fail closed is unchanged: a stale fact never accepts anything.
-
-**The hint is bounded.** Vektra's API may only add jobs, not read them, so it cannot see
-whether a pending refresh is waiting (it will read after the refusal) or already running (it may
-have read before the teacher's change). A refusal therefore queues the activity's refresh, or
-beside a pending one a single follow-up (one redundant read when the pending one was waiting),
-and promises a retry only when one of the two was queued NOW. While both are pending (a worker that is down or
-slow) nothing more is queued and the refusal comes WITHOUT `retry_after_s`: at most two hints in a
-row without a fresh read, then the refusal is final. A plugin that retries server-side therefore
-stops on its own; a cap of one or two retries is still advisable.
+**The hint repeats: clients must retry at most once.** Vektra cannot know when the teacher changed
+the LMS, so it never declares these refusals final: the same refusal on a retry carries the hint
+again. The plugin retries the same request once, after `retry_after_s`, and if it is refused again
+shows that refusal to the teacher. A refusal with no hint is final: `not_an_editor` /
+`not_a_grader` on facts within the freshness bound, an end date before the teacher's own attested
+opening, and a PUT refused for an LMS fact AND another error (no recipient, no cap, ...), which
+still queues the refresh but needs the teacher first. The LMS load stays bounded by the job
+dedupe: per activity, the refresh and, beside a pending one (it may already be running and have
+read before the change; the API may only add jobs, not read them), a single follow-up; nothing more
+while both are pending. Fail closed is unchanged: a stale fact never accepts anything.
 
 | Method | Path | Credential | Success | Errors |
 |--------|------|------------|---------|--------|
@@ -622,7 +609,7 @@ fixed word) is refused too. A 4xx the probe does not get belongs to that request
 or content-policy 400): the turn ends `provider_refused` and the session stays ACTIVE, as before
 (REQ-086); a 429, a spent `max_tokens` and the library's spend limit never reach the probe. The
 probe runs within at most 10 s, never past the reply's deadline + grace (a Start: its remaining
-budget); out of time, or failing in any other way, it confirms nothing. When
+budget and the pre-flight job's hard budget); out of time, or failing in any other way, it confirms nothing. When
 the database refuses the marked turn (no reply owed any more), nothing is paused. The worker's probe keeps
 checking the provider; a refused probe never ends the outage, so it ends once the operator fixes
 the configuration (or C closes the session `service_failure`). The refused turn is not

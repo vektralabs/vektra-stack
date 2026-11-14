@@ -311,25 +311,33 @@ retry in ONE place: `error.details.retry_after_s` (integer seconds, at least 1, 
 today 3), mirrored in the `Retry-After` header. It is NOT the envelope's top-level
 `error.retry_after` (that one stays for rate limits). The refresh job wakes the worker at once
 (`NOTIFY`), so the facts are normally re-read before the retry, and the retry then gets a final
-answer (facts read in the last 5 s). It is carried by exactly these refusals, and only when the
-refusal itself queued a refresh that reads AFTER it:
+answer. It is carried by exactly these refusals, and only when the refusal itself queued a
+refresh that reads AFTER it:
 
 | Status / code | `details` | When |
 |---------------|-----------|------|
 | `403 ERR-ASSESS-021` | `reason: editor_check_stale` or `grader_check_stale` | the activity's facts are absent, older than `VEKTRA_ASSESS_TEACHER_GATE_MAX_AGE_S`, or unreadable; a refresh was queued now |
-| `400 ERR-ASSESS-022` (PUT config) | `fields` | EVERY field error is an LMS fact (`assignment_without_cutoff`, `quiz_without_close_date`, `team_submission`, `marking_guide`, `lms_rubric_missing`, `lms_facts_unreadable`, and on `available_until` `opening_unknown` / `not_after_opening`, whose floor is the cached close date) and those facts were read more than 5 s ago; a refresh was queued now |
+| `400 ERR-ASSESS-022` (PUT config) | `fields` | EVERY field error is an LMS fact (`assignment_without_cutoff`, `quiz_without_close_date`, `team_submission`, `marking_guide`, `lms_rubric_missing`, `lms_facts_unreadable`, and `opening_unknown` on `available_until` when the cached facts have no close date) and those facts are not the answer to a refusal (below); a refresh was queued now |
 | `409 ERR-ASSESS-024` (reset) | `reason: gate_inputs_stale` | the student's LMS gate half was not fresh; a render check was queued |
 
-A refusal decided on facts read in the last 5 s is an answer and carries no `retry_after_s`
-(`not_an_editor`, `not_a_grader`, an enable refused on a fact just read). A PUT refused for an LMS
-fact AND another error (no recipient, no cap, ...) still queues the refresh but carries no hint:
-the teacher must fix the other field first. Fail closed is unchanged: a stale fact never accepts
-anything.
+**When a refusal is final.** The age of the facts says nothing about a change the teacher made
+in the LMS a moment ago (a row read a second ago for a page open can predate the cut-off set
+since). What does is why they were read: a refresh queued BY A REFUSAL records that, with its
+enqueue time, and reads after it. Facts read that way, for a refusal queued in the last 20 s, are
+the answer to that refusal: a refusal on them is final, without `retry_after_s`, and queues
+nothing (the teacher's change came before the first refusal, the refresh read after it). Any
+other facts (read for a page open, for an older refusal, or of unknown origin) make the refusal
+queue its own refresh and hint. `not_an_editor` / `not_a_grader` on facts within the freshness
+bound are final as before. `not_after_opening` (an end date before a known opening) is the
+teacher's input and never hints. A PUT refused for an LMS fact AND another error (no recipient,
+no cap, ...) still queues the refresh but carries no hint: the teacher must fix the other field
+first. Fail closed is unchanged: a stale fact never accepts anything.
 
-**The hint is bounded.** Vektra cannot see whether a pending refresh is waiting (it will read
-after the refusal) or already running (it may have read before the teacher's change), so a
-refusal queues the activity's refresh, or beside a pending one a single follow-up, and promises a
-retry only when one of the two was queued NOW. While both are pending (a worker that is down or
+**The hint is bounded.** Vektra's API may only add jobs, not read them, so it cannot see
+whether a pending refresh is waiting (it will read after the refusal) or already running (it may
+have read before the teacher's change). A refusal therefore queues the activity's refresh, or
+beside a pending one a single follow-up (one redundant read when the pending one was waiting),
+and promises a retry only when one of the two was queued NOW. While both are pending (a worker that is down or
 slow) nothing more is queued and the refusal comes WITHOUT `retry_after_s`: at most two hints in a
 row without a fresh read, then the refusal is final. A plugin that retries server-side therefore
 stops on its own; a cap of one or two retries is still advisable.
@@ -338,14 +346,15 @@ stops on its own; a cap of one or two retries is still advisable.
 |--------|------|------------|---------|--------|
 | GET | `/api/v1/assess/activities/{cmid}/config` | `assess:teacher` key; headers `X-Assess-Actor` (Moodle user id), `X-Assess-Course`, `X-Assess-Activity-Type` (`quiz`/`assign`) | `200` the view below, `Cache-Control: no-store` | `400 ERR-ASSESS-014` (`cmid`, `x_assess_actor`; `teacher_gate_hint`: the activity's facts are absent or stale and the course / type headers are missing or invalid, so no check could be queued), `403 ERR-ASSESS-007`, `403 ERR-ASSESS-021` (`not_an_editor`, `editor_check_stale`; audited `assess_teacher_unverified`) |
 | PUT | `/api/v1/assess/activities/{cmid}/config` | `assess:teacher` key; body below (at most about 593 KiB: two 20,000-code-point texts fully `\u`-escaped plus the recipients) | `200` the view below (new `version`) | `400 ERR-ASSESS-014` (malformed body, unknown field, wrong type), `400 ERR-ASSESS-022` (field errors, all at once, nothing saved; `details.retry_after_s` when every error is an LMS fact being re-read, above), `403 ERR-ASSESS-007`, `403 ERR-ASSESS-021`, `409 ERR-ASSESS-023` (`expected_version` is not `details.current_version`: reload, nothing saved), `503 ERR-ASSESS-001` (`teacher_config_key`) |
-| POST | `/api/v1/assess/activities/{cmid}/gate-refresh` | `assess:teacher` key; body `{"actor_userid", "courseid", "activity_type"}` (all required, the strict teacher-operation shape below; `actor_userid` is checked for shape only and verifies nobody) | `202 {"cmid", "queued", "refreshed_at"}`, `Cache-Control: no-store`: `queued` whether a refresh was queued now (`false`: one is already pending, or the activity's facts were read less than 10 s ago); `refreshed_at` when the stored facts were read (ISO 8601) or `null` | `400 ERR-ASSESS-014` (`cmid`, the body schema), `403 ERR-AUTH-003` (not a teacher key), `403 ERR-ASSESS-007` |
+| POST | `/api/v1/assess/activities/{cmid}/gate-refresh` | `assess:teacher` key; body `{"actor_userid", "courseid", "activity_type"}` (all required, the strict teacher-operation shape below; `actor_userid` is checked for shape only and verifies nobody) | `202 {"cmid", "queued", "refreshed_at"}`, `Cache-Control: no-store`: `queued` whether a refresh was queued now (`false`: a refresh and its one follow-up are already pending, or the activity's facts were read less than 10 s ago); `refreshed_at` when the stored facts were read (ISO 8601) or `null` | `400 ERR-ASSESS-014` (`cmid`, the body schema), `403 ERR-AUTH-003` (not a teacher key), `403 ERR-ASSESS-007` |
 
 `gate-refresh` (live E2E follow-up, 2026-11-13): the plugin calls it, fire and forget, when a
 teacher page of the activity opens (the Discussioni list, the activity settings form, the
 grader's page), so the teacher's first action finds the facts fresh instead of a
 `*_check_stale` refusal. The refresh is per activity: every teacher of it benefits. It returns
-no fact, grants nothing and is idempotent, coalesced per cmid (one pending refresh; none when the
-activity's facts were read less than 10 s ago). The body's `courseid` / `activity_type` are used
+no fact, grants nothing and is idempotent, coalesced per cmid (one pending refresh, plus one
+follow-up beside it since the pending one may already be running; none when the activity's facts
+were read less than 10 s ago). The body's `courseid` / `activity_type` are used
 only while the activity has no resolved facts: once resolved, Vektra refreshes with the course
 and type it resolved itself, so a wrong `courseid` can neither queue a misleading read nor turn
 the activity's facts into `activity_not_in_course` (the worker also never lets an unresolved
@@ -587,7 +596,7 @@ rollbacks), `capacity_refused`, `turn_accepted`, `reply_delta`, `reply_done`, `r
 (`reason`: `provider_refused`, `service_misconfigured`, `internal_error`, `append_refused`,
 `persist_failed`), `warning` (`minutes`: 10 / 5 / 1 against the current deadline),
 `budget_warning` (`percent: 80`), `outage_start` (optional `reason`: `provider_unavailable` or
-`service_misconfigured`; the `state` snapshot of a session in OUTAGE carries it too), `outage_end`
+`service_misconfigured`; a reconnect learns it from `GET /sessions/{sid}` `outage_reason`), `outage_end`
 (with the moved `deadline_at`), `closed` (`close_reason`,
 `message_code`: `closed_finished`, `closed_timed_out`, `closed_service_failure`,
 `closed_budget_exhausted`, `closed_terminated_by_teacher`, `closed_access_revoked`; the plugin
@@ -611,7 +620,9 @@ configuration is: an `auth_error` (a missing or refused key), always; any other 
 wrong model, a rejected parameter) only when a turn-shaped probe call (the outage probe's, one
 fixed word) is refused too. A 4xx the probe does not get belongs to that request (a context-length
 or content-policy 400): the turn ends `provider_refused` and the session stays ACTIVE, as before
-(REQ-086); a 429, a spent `max_tokens` and the library's spend limit never reach the probe. When
+(REQ-086); a 429, a spent `max_tokens` and the library's spend limit never reach the probe. The
+probe runs within at most 10 s, never past the reply's deadline + grace (a Start: its remaining
+budget); out of time, or failing in any other way, it confirms nothing. When
 the database refuses the marked turn (no reply owed any more), nothing is paused. The worker's probe keeps
 checking the provider; a refused probe never ends the outage, so it ends once the operator fixes
 the configuration (or C closes the session `service_failure`). The refused turn is not

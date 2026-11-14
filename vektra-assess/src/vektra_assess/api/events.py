@@ -244,10 +244,10 @@ MAX_STREAM_S = 3600.0  # the client reconnects with Last-Event-ID
 
 _STATUS = text(
     "SELECT state, close_reason, epoch, deadline_at, duration_s, now() AS server_now, "
-    # the open outage interval's reason (meaningful in OUTAGE only): what the student is told
-    "(SELECT i.reason_code FROM assess_outage_incidents i "
+    # the open outage interval's reason, read in OUTAGE only: what the student is told
+    "CASE WHEN state = 'OUTAGE' THEN (SELECT i.reason_code FROM assess_outage_incidents i "
     "WHERE i.session_id = assess_sessions.id AND i.ended_at IS NULL "
-    "ORDER BY i.started_at DESC LIMIT 1) AS outage_code "
+    "ORDER BY i.started_at DESC LIMIT 1) END AS outage_code "
     "FROM assess_sessions WHERE id = :s"
 )
 _ROLLBACK_REASON = text(
@@ -340,10 +340,8 @@ async def session_events(
             "deadline_at": _iso(row.deadline_at),
             "server_now": _iso(row.server_now),
         }
-        if row.state == "OUTAGE":
-            # the poll's own statement (one SQL text for the reason)
-            status = (await _conn.execute(_STATUS, {"s": sid})).first()
-            snapshot["reason"] = outage_reason(status.outage_code if status else None)
+        # no outage reason here: the gate's row has none, and a second read only for it is not
+        # worth it (the reason comes with outage_start and GET /sessions/{sid}.outage_reason)
     broker = broker_of(request)
     # seed the channel with the state this connection saw, so the next poll reports a change
     # (STARTING -> ACTIVE is ``committed``) even when no other connection observed it first

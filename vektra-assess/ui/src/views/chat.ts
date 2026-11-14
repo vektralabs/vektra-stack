@@ -81,17 +81,27 @@ export class ChatView {
       // the limit is enforced in code points on send, like the server (len() of the text);
       // maxlength counts UTF-16 units, so it is only a wide upper bound: 2 units per code point
       maxlength: String(2 * maxChars),
-      "aria-describedby": "composer-help",
+      // the status line (composer-help) and the fixed shortcut hint, both read with the field
+      "aria-describedby": "composer-help composer-shortcut",
+      "aria-keyshortcuts": "Control+Enter Meta+Enter",
     });
     // type="button", never a form submission: the plugin's iframe sandbox has no allow-forms,
     // and the browser blocks a submission before any submit handler runs
     this.send = h("button", { type: "button", class: "primary", text: M.send });
+    // Ctrl+Enter (Cmd+Enter on macOS) sends; a plain Enter stays a new line. It is the Invia
+    // button's own click, so it is inert exactly when Invia is (composer closed, reply owed)
+    this.composer.addEventListener("keydown", (e) => {
+      if (e.key !== "Enter" || !(e.ctrlKey || e.metaKey) || e.isComposing) return;
+      e.preventDefault();
+      if (!this.composer.disabled && !this.send.disabled) this.send.click();
+    });
     const form = h(
       "form",
       { class: "composer", "aria-label": M.composerLabel },
       h("label", { for: "composer", text: M.composerLabel }),
       this.composer,
       h("p", { id: "composer-help", class: "help", text: "" }),
+      h("p", { id: "composer-shortcut", class: "help shortcut", text: M.sendShortcut }),
       this.send,
     );
     this.root = h("section", { class: "chat", "aria-label": M.conversation }, this.list, form);

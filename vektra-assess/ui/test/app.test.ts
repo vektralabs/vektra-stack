@@ -494,6 +494,80 @@ describe("outage and unavailable (4501067236, 4501070051)", () => {
     );
   });
 
+  const MISCONFIGURED =
+    "Il servizio non è disponibile per un problema tecnico. Il personale è stato avvisato: riprova più tardi. Questo tempo non ti viene conteggiato.";
+
+  it("a configuration refusal shows and announces its own text, then recovers like an outage", async () => {
+    const { a, priv } = harness();
+    await priv.onEvent({
+      event: "outage_start",
+      data: '{"state":"OUTAGE","reason":"service_misconfigured"}',
+    });
+    expect(priv.state.name).toBe("outage");
+    expect(a.banner.hidden).toBe(false);
+    expect(a.banner.textContent).toBe(MISCONFIGURED);
+    expect(a.live.el.textContent).toBe(MISCONFIGURED);
+    expect(a.chat.composer.disabled).toBe(true);
+    await priv.onEvent({ event: "outage_end", data: '{"state":"ACTIVE"}' });
+    expect(priv.state.name).toBe("active");
+    expect(a.banner.textContent).toContain("ti è stato restituito");
+  });
+
+  it("a reload during a configuration refusal shows its text from the snapshot", async () => {
+    const { a, priv, pending, flush } = harness();
+    (priv as unknown as { replyPending: boolean }).replyPending = true;
+    const done = priv.onEvent({
+      event: "reply_interrupted",
+      data: '{"turn_no":3,"reason":"service_misconfigured"}',
+    });
+    await flush();
+    pending[0].resolve(
+      view(
+        [
+          { turn_no: 1, role: "bot", text: "a" },
+          { turn_no: 2, role: "student", text: "b" },
+          { turn_no: 3, role: "bot", text: "[risposta interrotta]" },
+        ],
+        { state: "OUTAGE", outage_reason: "service_misconfigured", remaining_s: 300 },
+      ),
+    );
+    await done;
+    expect(priv.state.name).toBe("outage");
+    expect(a.banner.textContent).toBe(MISCONFIGURED);
+  });
+
+  it("an outage snapshot without a reason (an older server) keeps the outage text", async () => {
+    const { a, priv, pending, flush } = harness();
+    (priv as unknown as { replyPending: boolean }).replyPending = true;
+    const done = priv.onEvent({ event: "reply_done", data: "{}" });
+    await flush();
+    pending[0].resolve(view([{ turn_no: 1, role: "bot", text: "a" }], { state: "OUTAGE" }));
+    await done;
+    expect(a.banner.textContent).toBe(
+      "Assistente temporaneamente non disponibile: questo tempo non ti viene conteggiato.",
+    );
+  });
+
+  it("a Start rolled back for the configuration says so; other reasons keep their text", () => {
+    for (const [reason, text] of [
+      ["service_misconfigured", MISCONFIGURED],
+      [
+        "technical_problem_persistent",
+        "Problema tecnico persistente: non hai perso la tua sessione. Il docente è stato avvisato.",
+      ],
+      [
+        "provider_unavailable",
+        "Non è stato possibile avviare la discussione; non hai perso la tua sessione. Riprova più tardi.",
+      ],
+    ]) {
+      const { a, priv } = harness();
+      priv.state = { name: "preparing", announced: true } as never;
+      void priv.onEvent({ event: "start_rolled_back", data: JSON.stringify({ reason }) });
+      expect(priv.state.name).toBe("start_rolled_back");
+      expect(a.status.textContent).toBe(text);
+    }
+  });
+
   it("unavailable is announced and disables every session action", () => {
     dialogPolyfill();
     const { a, priv } = harness();

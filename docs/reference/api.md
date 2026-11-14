@@ -316,7 +316,7 @@ job wakes the worker at once, `NOTIFY`) and ALWAYS carries the hint:
 |---------------|-----------|------|
 | `403 ERR-ASSESS-021` | `reason: editor_check_stale` or `grader_check_stale` | the activity's facts are absent, older than `VEKTRA_ASSESS_TEACHER_GATE_MAX_AGE_S`, or unreadable |
 | `400 ERR-ASSESS-022` (PUT config) | `fields` | EVERY field error is an LMS fact: `assignment_without_cutoff`, `quiz_without_close_date`, `team_submission`, `marking_guide`, `lms_rubric_missing`, `lms_facts_unreadable`; on `available_until`, `opening_unknown` when the cached facts have no close date, and `not_after_opening` when the opening it was checked against comes from the cached close date (not from the teacher's attested opening) |
-| `400 ERR-ASSESS-022` (PUT opening-fallback) | `fields` | EVERY field error is decided on the cached gate facts: `fallback_not_needed`, `close_unreadable`, `no_close_date`, `before_close` |
+| `400 ERR-ASSESS-022` (PUT opening-fallback) | `fields` | EVERY field error is decided on the cached gate facts: `close_unreadable`, `no_close_date`, `before_close` (not `fallback_not_needed`: it follows from the capability matrix) |
 | `409 ERR-ASSESS-024` (reset) | `reason: gate_inputs_stale`, or `reason: gate` with a `gate` code from the student's cached render evaluation | the student's LMS gate half was not fresh, or refused on cached LMS facts; a render check was queued |
 
 **The hint repeats: clients must retry at most once.** Vektra cannot know when the teacher changed
@@ -328,8 +328,9 @@ opening, and a PUT refused for an LMS fact AND another error (no recipient, no c
 still queues the refresh but needs the teacher first. The LMS load stays bounded by the job
 dedupe: per activity, the refresh and, beside a pending one (it may already be running and have
 read before the change; the API may only add jobs, not read them), a single follow-up; nothing more
-while both are pending. Facts dated past the database clock (after a backward clock step) count
-as stale. Fail closed is unchanged: a stale fact never accepts anything.
+while both are pending (for a reset, the same for the student's render check). Every cached
+row's age is read against the database's current clock: up to 5 s below zero (a row written a
+moment ago, a little skew) is fresh, further below is a backward clock step and counts as stale. Fail closed is unchanged: a stale fact never accepts anything.
 
 | Method | Path | Credential | Success | Errors |
 |--------|------|------------|---------|--------|

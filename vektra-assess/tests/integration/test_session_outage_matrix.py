@@ -429,7 +429,7 @@ async def test_a_config_refusal_pauses_the_time_and_is_credited_on_recovery(
     async with rigged(pg, worker) as rig:
         rig.llm.mode = "litellm:NotFoundError:404"  # a wrong model name
         # an open stream has seen the session ACTIVE (the broker publishes on a change)
-        broker_of(_Req(rig.w.app)).observe(rig.sid, "ACTIVE", {})  # type: ignore[arg-type]
+        broker_of(_Req(rig.w.app)).observe(rig.sid, "ACTIVE", {}, outage_count=0)  # type: ignore[arg-type]
         await rig.say()
         row = await rig.row()
         assert (row.state, row.last) == ("OUTAGE", "bot/interrupted")

@@ -21,7 +21,7 @@ export function transcriptFileName(disposition: string | null): string {
 export const SERVICE_MISCONFIGURED = "service_misconfigured";
 
 /** The events that report a state the snapshot may already show (filtered by their ``at``). */
-const STATE_EVENTS: ReadonlySet<string> = new Set(["outage_start", "outage_end", "warning"]);
+const STATE_EVENTS: ReadonlySet<string> = new Set(["outage_start", "outage_end"]);
 
 /** A database timestamp (ISO 8601, up to microseconds, with an offset) in microseconds since the
  *  epoch, compared exactly (``Date.parse`` keeps milliseconds only); null if it is not one. */
@@ -83,6 +83,7 @@ export class App {
   // the newest applied snapshot's server_now (database clock, microseconds): the stream replays
   // its ring when it opens, and a state event read before it is already on screen
   private snapshotAt: number | null = null;
+  private shownMinutes: number | null = null; // the time left on screen (showTime)
   /** Waits between the attempts to read the session once it is committed (tests shorten it). */
   snapshotRetryMs = [1000, 3000];
   /** How long a close without its reason waits for the stream's closed event (tests shorten it). */
@@ -297,18 +298,43 @@ export class App {
   /** The state part of a snapshot (``GET /sessions/{sid}``, or the stream's opening ``state``
    *  on every connect): the state, the deadline, in OUTAGE its text and the frozen time left,
    *  and the snapshot's time (``server_now``), before which the replayed state events are
-   *  already on screen. A snapshot that takes the screen from active into OUTAGE says so. */
+   *  already on screen. A snapshot that takes the screen from active into OUTAGE says so, and
+   *  one that takes it from OUTAGE back to active shows and announces the recovery. */
   private applyState(v: SnapshotState): void {
-    const before = this.state.name;
+    const before: string = this.state.name;
     this.deadline = v.deadline_at ? Date.parse(v.deadline_at) : null;
     const at = dbMicros(v.server_now);
     if (at !== null) this.snapshotAt = Math.max(this.snapshotAt ?? at, at);
     this.dispatch({ type: "session_state", state: v.state, closeReason: v.close_reason });
-    if (v.state !== "OUTAGE" || this.state.name !== "outage") return;
-    this.showOutage(v.outage_reason);
-    if (typeof v.remaining_s === "number") this.controls.setTime(minutesLeft(v.remaining_s * 1000, 0));
-    if (before === "active")
-      this.live.say(v.outage_reason === SERVICE_MISCONFIGURED ? M.serviceMisconfigured : M.outageLive);
+    const after: string = this.state.name;
+    if (v.state === "OUTAGE" && after === "outage")
+      this.enterOutageView(v.outage_reason, v.remaining_s, before === "active");
+    else if (before === "outage" && after === "active") this.showRecovery();
+  }
+
+  /** The screen in OUTAGE (an outage_start, or a snapshot): its text, the time left frozen by
+   *  the server when it says it, and, only when the screen was active before, the announcement
+   *  (why, and Riprova; a misconfiguration is not lifted by a retry: its own text). */
+  private enterOutageView(reason: unknown, remaining: unknown, announce: boolean): void {
+    this.showOutage(reason);
+    if (typeof remaining === "number") this.showTime(minutesLeft(remaining * 1000, 0));
+    if (announce) this.live.say(reason === SERVICE_MISCONFIGURED ? M.serviceMisconfigured : M.outageLive);
+  }
+
+  /** The recovery text (outage_end, or a snapshot back to ACTIVE): shown, announced, hidden
+   *  after 8 s. */
+  private showRecovery(): void {
+    this.banner.replaceChildren(h("p", { text: M.outageEnd }));
+    this.banner.hidden = false;
+    this.live.say(M.outageEnd);
+    clearTimeout(this.bannerTimer);
+    this.bannerTimer = setTimeout(() => (this.banner.hidden = true), 8000);
+  }
+
+  /** The time left on screen, remembered (a warning is judged against it). */
+  private showTime(minutes: number | null): void {
+    this.shownMinutes = minutes;
+    this.controls.setTime(minutes);
   }
 
   /** The paused-time banner. A configuration refusal says so (and that the staff know); any
@@ -408,13 +434,17 @@ export class App {
         if (!this.replyPending) return;
         // the end of a reply the snapshot already shows (the stream replays its ring when it
         // opens without a cursor): its replayed text goes, no read, no announcement; the
-        // owed reply's events follow it in the ring. Without a turn (nothing was appended) its
-        // time tells it: not after the snapshot on screen
-        if (
-          (typeof data.turn_no === "number" && data.turn_no <= this.lastTurnNo) ||
-          (typeof data.turn_no !== "number" && this.reflected(data.at))
-        ) {
+        // owed reply's events follow it in the ring
+        if (typeof data.turn_no === "number" && data.turn_no <= this.lastTurnNo) {
           this.chat.discardStreaming();
+          return;
+        }
+        // without a turn (nothing was appended) its time tells it: not after the snapshot on
+        // screen. Its text goes and nothing is announced, but the session is read again, so
+        // whether a reply is still owed comes from the server
+        if (typeof data.turn_no !== "number" && this.reflected(data.at)) {
+          this.chat.discardStreaming();
+          await this.refresh();
           return;
         }
         // the persisted turn replaces the streamed text: the DOM shows exactly what was stored
@@ -423,29 +453,33 @@ export class App {
         return;
       }
       case "warning":
-        if (typeof data.minutes === "number") this.live.say(M.warning(data.minutes));
+        // judged by the time left, not by when it was sent: a replayed past warning (after a
+        // reload) is already more than a minute below what the screen shows; a new one is not
+        if (typeof data.minutes !== "number") return;
+        this.tick();
+        if (this.shownMinutes !== null && this.shownMinutes < data.minutes - 1) return;
+        this.live.say(M.warning(data.minutes));
         return;
       case "budget_warning":
         return;
-      case "outage_start":
+      case "outage_start": {
         this.stateEvents++;
-        this.showOutage(data.reason);
+        const was = this.state.name;
         this.dispatch({ type: "outage_start" });
-        if (this.state.name !== "outage") return;
-        // the time left, frozen by the server at this outage's start (after an outage_end of
-        // a previous one the deadline alone would count the new outage as time spent)
-        if (typeof data.remaining_s === "number")
-          this.controls.setTime(minutesLeft(data.remaining_s * 1000, 0));
-        // why, and Riprova (a misconfiguration is not lifted by a retry: its own text)
-        this.live.say(data.reason === SERVICE_MISCONFIGURED ? M.serviceMisconfigured : M.outageLive);
+        // the time left is frozen by the server at this outage's start (after an outage_end of
+        // a previous one the deadline alone would count the new outage as time spent); a
+        // screen already in OUTAGE gets the text and time, no second announcement
+        if (this.state.name === "outage")
+          this.enterOutageView(data.reason, data.remaining_s, was === "active");
         return;
+      }
       case "outage_end":
         this.stateEvents++;
+        // the recovery text first, so the render of ACTIVE keeps it
         this.banner.replaceChildren(h("p", { text: M.outageEnd }));
         if (typeof data.deadline_at === "string") this.deadline = Date.parse(data.deadline_at);
         this.dispatch({ type: "outage_end" });
-        clearTimeout(this.bannerTimer);
-        this.bannerTimer = setTimeout(() => (this.banner.hidden = true), 8000);
+        this.showRecovery();
         return;
       case "closed":
         this.closedAt = new Date(Date.now() + this.clockOffset);
@@ -458,8 +492,8 @@ export class App {
   private tick(): void {
     // the time left counts down while ACTIVE only; in OUTAGE the last value stays (frozen)
     if (this.state.name === "active" && this.deadline !== null)
-      this.controls.setTime(minutesLeft(this.deadline, Date.now() + this.clockOffset));
-    else if (this.state.name !== "outage") this.controls.setTime(null);
+      this.showTime(minutesLeft(this.deadline, Date.now() + this.clockOffset));
+    else if (this.state.name !== "outage") this.showTime(null);
   }
 
   private async sendTurn(): Promise<void> {

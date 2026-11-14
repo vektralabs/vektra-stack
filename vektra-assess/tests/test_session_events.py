@@ -33,12 +33,14 @@ def test_observe_publishes_once_per_change() -> None:
     sid = uuid.uuid4()
     assert b.observe(sid, "STARTING", {}) is None  # first sight: no event
     assert b.observe(sid, "STARTING", {}) is None
-    e = b.observe(sid, "ACTIVE", {"state": "ACTIVE"})
+    e = b.observe(sid, "ACTIVE", {"state": "ACTIVE"}, outage_count=0)
     assert e is not None and e.type == "committed"
-    assert b.observe(sid, "ACTIVE", {}) is None  # a second poller sees no change
-    assert b.observe(sid, "OUTAGE", {}).type == "outage_start"  # type: ignore[union-attr]
-    assert b.observe(sid, "ACTIVE", {}).type == "outage_end"  # type: ignore[union-attr]
-    assert b.observe(sid, "OUTAGE", {}).type == "outage_start"  # type: ignore[union-attr]
+    assert (
+        b.observe(sid, "ACTIVE", {}, outage_count=0) is None
+    )  # a second poller: no change
+    assert b.observe(sid, "OUTAGE", {}, outage_count=1).type == "outage_start"  # type: ignore[union-attr]
+    assert b.observe(sid, "ACTIVE", {}, outage_count=1).type == "outage_end"  # type: ignore[union-attr]
+    assert b.observe(sid, "OUTAGE", {}, outage_count=2).type == "outage_start"  # type: ignore[union-attr]
     assert b.observe(sid, "CLOSED", {"close_reason": "finished"}).type == "closed"  # type: ignore[union-attr]
     other = uuid.uuid4()
     b.observe(other, "STARTING", {})
@@ -61,13 +63,9 @@ def test_an_outage_ended_and_reopened_between_two_polls_is_published() -> None:
     # a whole outage between two polls: its end, with the moved deadline
     b.observe(sid, "ACTIVE", {}, outage_count=2)
     n = len(b.after(sid, 0))
-    assert (
-        b.observe(sid, "ACTIVE", {"deadline_at": "x"}, outage_count=3).type
-        == "outage_end"
-    )  # type: ignore[union-attr]
+    ended = b.observe(sid, "ACTIVE", {"deadline_at": "x"}, outage_count=3)
+    assert ended is not None and ended.type == "outage_end"
     assert len(b.after(sid, 0)) == n + 1
-    # an unknown count (an observation without one) never invents a change
-    assert b.observe(sid, "ACTIVE", {}) is None
 
 
 def test_an_older_read_than_the_last_observation_is_ignored() -> None:
@@ -99,9 +97,23 @@ def test_reads_are_ordered_by_one_key_and_a_repeat_publishes_nothing() -> None:
     assert [e.type for e in b.after(sid, 0)] == ["outage_end", "outage_start"]
 
 
-def test_outage_events_carry_the_read_time_as_at() -> None:
-    """Review of 8f9385b0, B: ``at`` is the database time the state was read at; a client
-    drops the state events its snapshot (server_now) is not older than."""
+def test_a_live_read_without_its_count_is_never_published() -> None:
+    """Regression review of d1c79bf2, 1: a live read that lacks the outage count cannot be
+    ordered; it is skipped (the state is not taken either), and the next poll publishes."""
+    b = EventBroker()
+    sid = uuid.uuid4()
+    b.observe(sid, "STARTING", {})
+    assert b.observe(sid, "ACTIVE", {}) is None  # not even committed
+    assert b.observe(sid, "ACTIVE", {}, outage_count=0).type == "committed"  # type: ignore[union-attr]
+    assert b.observe(sid, "OUTAGE", {"reason": "x"}) is None
+    assert b.observe(sid, "OUTAGE", {}, outage_count=1).type == "outage_start"  # type: ignore[union-attr]
+    assert [e.type for e in b.after(sid, 0)] == ["committed", "outage_start"]
+
+
+def test_outage_events_carry_the_read_time_as_at_and_warnings_none() -> None:
+    """``at`` is the database time the state was read at; a client drops the outage events
+    its snapshot (server_now) is not older than. A warning has no ``at`` (the client judges it
+    by the time left it shows)."""
     b = EventBroker()
     sid = uuid.uuid4()
     read = datetime(2026, 11, 14, 18, 42, 23, 123456, tzinfo=UTC)
@@ -109,8 +121,8 @@ def test_outage_events_carry_the_read_time_as_at() -> None:
     b.observe(sid, "OUTAGE", {"state": "OUTAGE"}, outage_count=1, at=read)
     assert b.after(sid, 0)[-1].data["at"] == "2026-11-14T18:42:23.123456+00:00"
     d = read + timedelta(minutes=30)
-    warned = b.warn(sid, d, d - timedelta(minutes=5), 1800, at=read)
-    assert [e.data["at"] for e in warned] == [read.isoformat()]
+    (warned,) = b.warn(sid, d, d - timedelta(minutes=5), 1800)
+    assert "at" not in warned.data
 
 
 def test_nothing_is_published_after_closed() -> None:
@@ -134,45 +146,60 @@ class _NoDatabase:
         raise ConnectionError("database gone")
 
 
-async def test_a_failed_read_after_the_outage_commit_never_escapes() -> None:
-    """Review of f5087bf2, 2: the outage is committed; reading its status (and the clock)
-    afterwards fails. Nothing is raised: outage_start goes out with its reason, no at."""
+class _SlowDatabase:
+    """An engine whose connections never come (a database that hangs)."""
+
+    def connect(self) -> Any:
+        class _Hang:
+            async def __aenter__(self) -> Any:
+                await asyncio.sleep(3600)
+
+            async def __aexit__(self, *exc: object) -> None:
+                return None
+
+        return _Hang()
+
+
+def _driver(engine: Any, broker: EventBroker) -> Any:
     from vektra_assess.api.turns import TurnDriver
 
-    broker = EventBroker()
-    driver = TurnDriver(
-        engine=_NoDatabase(),  # type: ignore[arg-type]
+    return TurnDriver(
+        engine=engine,
         broker=broker,
         runner=None,
         handoff_private=None,  # type: ignore[arg-type]
         cache=None,  # type: ignore[arg-type]
     )
+
+
+async def test_a_failed_read_after_the_outage_commit_never_escapes() -> None:
+    """Review of f5087bf2, 2, with d1c79bf2's 1: the outage is committed; reading its status
+    afterwards fails. Nothing is raised and nothing is published here: the stream's next poll
+    publishes the outage with its count."""
+    broker = EventBroker()
+    driver = _driver(_NoDatabase(), broker)
     sid = uuid.uuid4()
     broker.observe(sid, "ACTIVE", {}, outage_count=0)
-    await driver._observe_outage(sid, "outage", "provider_unavailable")
-    (event,) = broker.after(sid, 0)
-    assert event.type == "outage_start"
-    assert event.data == {"state": "OUTAGE", "reason": "provider_unavailable"}
+    await driver._observe_outage(sid, "outage")
+    assert broker.after(sid, 0) == []
     assert await driver._db_now() is None
 
 
-def test_one_ordering_rule_for_every_live_read() -> None:
-    """Review of f5087bf2, 9+10: a live read without its count (the driver's fallback) takes
-    the next place in the order, so the poll that follows does not publish it twice."""
-    b = EventBroker()
+async def test_a_hanging_clock_read_never_holds_an_event_back(monkeypatch: Any) -> None:
+    """Regression review of d1c79bf2, 5: the reads for an event's ``at`` (and the outage's
+    status) give up after EVENT_READ_TIMEOUT_S; the event goes out without ``at``."""
+    import vektra_assess.api.turns as turns
+
+    monkeypatch.setattr(turns, "EVENT_READ_TIMEOUT_S", 0.05)
+    broker = EventBroker()
+    driver = _driver(_SlowDatabase(), broker)
     sid = uuid.uuid4()
-    b.observe(sid, "STARTING", {})
-    assert b.observe(sid, "ACTIVE", {}, outage_count=0).type == "committed"  # type: ignore[union-attr]
-    assert b.observe(sid, "OUTAGE", {"reason": "x"}).type == "outage_start"  # type: ignore[union-attr]
-    assert (
-        b.observe(sid, "OUTAGE", {}, outage_count=1) is None
-    )  # the same place: nothing
-    assert b.observe(sid, "ACTIVE", {}, outage_count=1).type == "outage_end"  # type: ignore[union-attr]
-    assert [e.type for e in b.after(sid, 0)] == [
-        "committed",
-        "outage_start",
-        "outage_end",
-    ]
+    broker.observe(sid, "ACTIVE", {}, outage_count=0)
+    loop = asyncio.get_running_loop()
+    t0 = loop.time()
+    assert await driver._db_now() is None
+    await driver._observe_outage(sid, "outage")
+    assert loop.time() - t0 < 1.0
 
 
 def test_ids_carry_the_broker_nonce_and_the_channel_generation() -> None:

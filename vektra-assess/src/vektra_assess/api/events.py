@@ -15,9 +15,10 @@ The event catalogue is owned by this plan (plan 9 consumes it and adds none): ``
 An event id is ``<nonce>.<gen>:<n>``: ``nonce`` is this broker instance's, ``gen`` the channel's
 generation, so an id from before an API restart or a channel sweep is foreign and replays the
 whole ring instead of being ahead of every new id. A connection without a usable
-``Last-Event-ID`` (a reload) replays the whole ring; the state-type events (``outage_start``,
-``outage_end``, ``warning``) carry ``at``, the database time at which the state they report was
-read, so a client drops those its snapshot (``server_now``, the same clock) already reflects.
+``Last-Event-ID`` (a reload) replays the whole ring; ``outage_start``, ``outage_end``,
+``committed`` (and a ``reply_interrupted`` without a turn) carry ``at``, the database time at
+which what they report was read, so a client drops those its snapshot (``server_now``, the same
+clock) already reflects. A ``warning`` has none: the client judges it by the time left it shows.
 
 State changes that happen elsewhere (the worker's commit or rollback, a close) are observed by
 polling the session row (1 s): the broker remembers the last state per session and publishes one
@@ -209,36 +210,30 @@ class EventBroker:
         prev, prev_key = ch.last_state, ch.last_key
         if state in LIVE:
             key = outage_key(state, outage_count)
-            if key is None and prev_key is not None:
-                # a live read without its count (the driver's fallback): the next state in the
-                # order, or the same one
-                key = prev_key + (0 if state == prev else 1)
-            if key is not None and prev_key is not None:
+            if key is None:
+                # a live read without its count cannot be ordered: skipped, never published (the
+                # next poll, within a second, reads it with its count)
+                return None
+            if prev_key is not None:
                 # REQ-086 (M4.1, M4.2): one ordering rule between live reads
                 if key <= prev_key:
                     return None
                 ch.last_state, ch.last_key = state, key
                 out = None
-                if (
-                    key // 2 > prev_key // 2
-                ):  # an interval ended since (the moved deadline)
+                # an interval ended since (``data`` carries the moved deadline) ...
+                if key // 2 > prev_key // 2:
                     out = self.publish(sid, "outage_end", timed)
-                if key % 2:  # and one is open now
+                if key % 2:  # ... and one is open now
                     out = self.publish(sid, "outage_start", timed)
                 return out
-            # no order yet: the first live read (after STARTING, or the channel's first)
+            # no order yet: the first live read (after STARTING, or the channel's first, which
+            # every connection already got as its opening snapshot)
             ch.last_state, ch.last_key = state, key
             if prev == "STARTING":
                 return self.publish(
                     sid, "committed" if state == "ACTIVE" else "state", timed
                 )
-            if prev in LIVE and prev != state:  # counts unknown on both sides
-                return self.publish(
-                    sid, "outage_start" if state == "OUTAGE" else "outage_end", timed
-                )
-            return (
-                None  # the first observation: every connection already got a snapshot
-            )
+            return None
         ch.last_state = state
         if prev == state:
             return None
@@ -258,25 +253,23 @@ class EventBroker:
         deadline_at: datetime,
         now: datetime,
         duration_s: int,
-        at: datetime | None = None,
     ) -> list[Event]:
         """Publish the 10 / 5 / 1 minute warnings due now, once per (session, threshold,
         deadline) however many connections poll (REQ-069). The deadline is the polled one, so
-        an outage credit moves the warnings with it. ``at``: the read's database time (the
-        client drops a warning its snapshot is not older than). None after a terminal event."""
+        an outage credit moves the warnings with it. None after a terminal event."""
         ch = self._channel(sid)
         if ch.ended_at is not None or ch.last_state == "CLOSED":
             return []
         out = []
         for minutes in due_warnings(deadline_at, now, duration_s, ch.warned):
             ch.warned.add((minutes, deadline_at.isoformat()))
-            data: dict[str, Any] = {
-                "minutes": minutes,
-                "deadline_at": deadline_at.isoformat(),
-            }
-            if at is not None:
-                data["at"] = at.isoformat()
-            out.append(self.publish(sid, "warning", data))
+            out.append(
+                self.publish(
+                    sid,
+                    "warning",
+                    {"minutes": minutes, "deadline_at": deadline_at.isoformat()},
+                )
+            )
         return out
 
     def last_event_id(self, sid: UUID, raw: str | None) -> int:
@@ -350,11 +343,6 @@ MAX_STREAM_S = 3600.0  # the client reconnects with Last-Event-ID
 #: the database clock: the ``at`` of an event no status read decides (``reply_interrupted``
 #: without a turn); a snapshot whose ``server_now`` is not below it was taken after it
 DB_NOW = text("SELECT clock_timestamp()")
-#: the open outage interval of the session row in scope (the latest one not ended)
-_OPEN_OUTAGE = (
-    "FROM assess_outage_incidents i WHERE i.session_id = assess_sessions.id "
-    "AND i.ended_at IS NULL ORDER BY i.started_at DESC LIMIT 1"
-)
 #: the one status read (the stream's poll, its opening snapshot, and the turn driver after it
 #: opened an outage): state, the open outage's reason and start, and the session's outage
 #: intervals counted (never sent to a client: ``observe`` orders reads by it; intervals are only
@@ -363,14 +351,17 @@ _OPEN_OUTAGE = (
 #: the statement, so not before the data it reads) is the ``at`` of the events published from it
 _STATUS = text(
     "SELECT state, close_reason, epoch, deadline_at, duration_s, now() AS server_now, "
-    "clock_timestamp() AS read_at, "
-    # read in OUTAGE only: what the student is told, and where the time left froze
-    f"CASE WHEN state = 'OUTAGE' THEN (SELECT i.reason_code {_OPEN_OUTAGE}) END AS outage_code, "
-    f"CASE WHEN state = 'OUTAGE' THEN (SELECT i.started_at {_OPEN_OUTAGE}) END AS paused_at, "
+    "clock_timestamp() AS read_at, o.reason_code AS outage_code, o.started_at AS paused_at, "
     "CASE WHEN state IN ('ACTIVE', 'OUTAGE') THEN (SELECT count(*) "
     "FROM assess_outage_incidents i WHERE i.session_id = assess_sessions.id) END "
     "AS outage_count "
-    "FROM assess_sessions WHERE id = :s"
+    "FROM assess_sessions "
+    # the open outage interval, read in OUTAGE only: what the student is told (its reason) and
+    # where the time left froze (its start)
+    "LEFT JOIN LATERAL (SELECT i.reason_code, i.started_at FROM assess_outage_incidents i "
+    "WHERE i.session_id = assess_sessions.id AND i.ended_at IS NULL "
+    "AND assess_sessions.state = 'OUTAGE' ORDER BY i.started_at DESC LIMIT 1) o ON true "
+    "WHERE assess_sessions.id = :s"
 )
 _ROLLBACK_REASON = text(
     "WITH rb AS (SELECT site_id, cmid, student_userid, reason_code FROM assess_start_attempts "
@@ -439,7 +430,7 @@ async def _poll(request: Request, sid: UUID) -> Polled:
             return Polled(None, None, {"reason": reason})
     if row.state == "ACTIVE" and row.deadline_at is not None and row.duration_s:
         broker_of(request).warn(
-            sid, row.deadline_at, row.server_now, int(row.duration_s), at=row.read_at
+            sid, row.deadline_at, row.server_now, int(row.duration_s)
         )
     return Polled(
         str(row.state),

@@ -191,6 +191,8 @@ _ADD_TOKENS = text(
 )
 _CLOSE_BUDGET = text("SELECT assess_close_session(:sid, :epoch, 'budget_exhausted')")
 _ENTER_OUTAGE = text("SELECT assess_enter_outage(:sid, :epoch, :started, :reason)")
+#: the most a database read for an event's ``at`` (or its status) may hold the event back
+EVENT_READ_TIMEOUT_S = 1.0
 _AUDIT = text(
     "INSERT INTO assess_audit_events (event, reason_code, actor_kind, data) "
     "VALUES (:event, :reason, 'api', CAST(:data AS jsonb))"
@@ -566,35 +568,35 @@ class TurnDriver:
         return str(got) if got is not None else None
 
     async def _db_now(self) -> datetime | None:
-        """The database clock now, or None (logged) if it cannot be read: never raises."""
+        """The database clock now, or None (logged) if it cannot be read within
+        ``EVENT_READ_TIMEOUT_S``: never raises, never holds an event back longer."""
         try:
-            async with self.engine.connect() as conn:
-                value = (await conn.execute(DB_NOW)).scalar_one()
+            async with asyncio.timeout(EVENT_READ_TIMEOUT_S):
+                async with self.engine.connect() as conn:
+                    value = (await conn.execute(DB_NOW)).scalar_one()
             return value if isinstance(value, datetime) else None
         except Exception as exc:
             log.warning("assess_event_clock_read_failed", error_type=type(exc).__name__)
             return None
 
-    async def _observe_outage(self, sid: UUID, got: str | None, reason: str) -> None:
+    async def _observe_outage(self, sid: UUID, got: str | None) -> None:
         """Tell the stream what ``assess_enter_outage`` did (called after its commit):
         ``outage_start`` or, at the third consecutive failure, ``closed``. The outage is
         observed through the stream's own status read, taken after the commit (state, reason,
         deadline, frozen time left, outage count, and ``at``), exactly as a poll would. That
-        read never escapes: if it fails, it is logged and ``outage_start`` goes out with the
-        closed reason only (no ``at``, no deadline)."""
+        read never escapes and never waits past ``EVENT_READ_TIMEOUT_S``: if it fails it is
+        logged and nothing is published here; the stream's next poll, within a second, does."""
         if got == "outage":
             try:
-                async with self.engine.connect() as conn:
-                    row = await read_status(conn, sid)
+                async with asyncio.timeout(EVENT_READ_TIMEOUT_S):
+                    async with self.engine.connect() as conn:
+                        row = await read_status(conn, sid)
             except Exception as exc:
                 log.warning(
                     "assess_outage_status_read_failed", error_type=type(exc).__name__
                 )
-                row = None
+                return
             if row is None:
-                self.broker.observe(
-                    sid, "OUTAGE", {"state": "OUTAGE", "reason": reason}
-                )
                 return
             self.broker.observe(
                 sid,
@@ -622,7 +624,7 @@ class TurnDriver:
         async with self.engine.begin() as conn:
             got = await self._enter_outage(conn, sid, epoch, record, record.outcome)
         if got in ("outage", "closed"):
-            await self._observe_outage(sid, got, PROVIDER_UNAVAILABLE)
+            await self._observe_outage(sid, got)
         else:
             # not ACTIVE at this epoch any more (closed, revoked): nothing is moved; the marked
             # turn is attempted and refused by the database when the session is gone
@@ -736,7 +738,7 @@ class TurnDriver:
                 data["at"] = at.isoformat()
         self.broker.publish(sid, "reply_interrupted", data)
         if entered:
-            await self._observe_outage(sid, entered[0], SERVICE_MISCONFIGURED)
+            await self._observe_outage(sid, entered[0])
         return turn_no is not None
 
     async def _persist(self, sid: UUID, epoch: int, result: TurnResult) -> None:

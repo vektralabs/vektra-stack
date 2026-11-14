@@ -104,7 +104,7 @@ async def test_budget_warning_at_80_and_budget_exhausted_at_100(pg, worker) -> N
         s = await seed_session(w, worker, "ACTIVE")
         sid = s.session_id
         broker = broker_of(_Req(w.app))  # type: ignore[arg-type]
-        broker.observe(sid, "ACTIVE", {})
+        broker.observe(sid, "ACTIVE", {}, outage_count=0)
         url = f"/api/v1/assess/sessions/{sid}/turns"
 
         async def turn(start_at: int) -> None:

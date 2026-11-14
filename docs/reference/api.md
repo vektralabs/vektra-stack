@@ -199,7 +199,7 @@ silence. The server ends a stream after one hour; the client reconnects with `La
 the last id it read and gets the events the in-memory ring still holds after it. Any other
 `Last-Event-ID` (another broker, a re-created channel, a bare `<n>`, unparseable, ahead of the
 ids) counts as none: the whole ring is replayed, and a client discards what its snapshot already
-shows (replies by `turn_no`, state events by `at`, see **Events**). Persisted turns are read from `GET /sessions/{sid}`, never from the stream. The event
+shows (replies by `turn_no`, outage events by `at`, warnings by the time left, see **Events**). Persisted turns are read from `GET /sessions/{sid}`, never from the stream. The event
 types and their payloads are listed under **Events** below. The broker is in the API process, so
 the stream is correct with one API process only (see the deployment guide).
 
@@ -588,13 +588,14 @@ ERR-ASSESS-006` on every route.
 
 **Events** (`text/event-stream`, `Last-Event-ID` replays the in-memory ring). Payloads are
 content-free except `reply_delta`, which carries post-checked text only and is delivered only while
-the row is live at the token's epoch. The state events `outage_start`, `outage_end`, `warning`
-and `committed`, and a `reply_interrupted` without `turn_no`, carry optional `at`: the database
-time at which the state they report was read (a poll's `clock_timestamp()`, the same status read
-taken after the commit that decided an outage, or the clock when a reply ended with no turn). A
-client that applied a snapshot drops those whose `at` is not after that snapshot's `server_now`
-(the same clock): the snapshot already shows them. Events without `at` (an older server) count as
-before. `state` (on every connect, the session's state now: `state`, `close_reason`,
+the row is live at the token's epoch. `outage_start`, `outage_end`, `committed`, and a
+`reply_interrupted` without `turn_no`, carry optional `at`: the database time at which what they
+report was read (a poll's `clock_timestamp()`, the same status read taken after the commit that
+decided an outage, or the clock, read within 1 s, when a reply ended with no turn). A client that
+applied a snapshot drops those whose `at` is not after that snapshot's `server_now` (the same
+clock): the snapshot already shows them. Events without `at` (an older server, or a clock read
+that timed out) count as before. A `warning` has no `at`: a client drops one whose `minutes` is
+more than one above the time left it shows (a past warning, replayed). `state` (on every connect, the session's state now: `state`, `close_reason`,
 `message_code`, `deadline_at`, `server_now`, and in OUTAGE `reason` and `remaining_s`, the time
 left frozen at the open outage's start; a client applies it as a snapshot when its `server_now`
 is newer than the one on screen), `committed`,

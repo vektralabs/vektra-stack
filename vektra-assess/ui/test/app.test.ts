@@ -1197,13 +1197,27 @@ describe("a reload replays the ring; what the snapshot shows is not applied agai
     expect(a.chat.list.querySelector(".streaming")?.textContent).not.toContain("prima");
   });
 
-  it("past warnings are not announced again; a later one is", async () => {
-    const { a, ev } = await reloaded(snapshot({}));
-    await ev("warning", { minutes: 10, deadline_at: "x", at: BEFORE(30) });
+  it("a past warning is not announced again; a new one is, whatever its time", async () => {
+    // 4.5 minutes left on screen ("Mancano 5 minuti"): the 10-minute warning is past
+    const { a, priv, ev } = await reloaded(snapshot({ deadline_at: inMinutes(4.5) }));
+    priv.tick.call(a);
+    expect(a.controls.timer.textContent).toBe("Mancano 5 minuti");
+    await ev("warning", { minutes: 10, deadline_at: "x" });
     expect(a.live.announcements).toBe(0);
-    await ev("warning", { minutes: 5, deadline_at: "x", at: AFTER });
+    // the 5-minute one is due now; an `at` older than the snapshot does not hide it
+    await ev("warning", { minutes: 5, deadline_at: "x", at: BEFORE(1) });
     expect(a.live.announcements).toBe(1);
     expect(a.live.el.textContent).toBe("Attenzione: mancano 5 minuti alla fine");
+  });
+
+  it("a warning during an outage is judged by the frozen time left", async () => {
+    const { a, ev } = await reloaded(
+      snapshot({ state: "OUTAGE", remaining_s: 3 * 60, deadline_at: inMinutes(1) }),
+    );
+    expect(a.controls.timer.textContent).toBe("Mancano 3 minuti");
+    await ev("warning", { minutes: 10, deadline_at: "x" });
+    await ev("warning", { minutes: 5, deadline_at: "x" });
+    expect(a.live.announcements).toBe(0);
   });
 
   it("a live outage after the snapshot is applied; one without at (an older server) too", async () => {
@@ -1215,11 +1229,23 @@ describe("a reload replays the ring; what the snapshot shows is not applied agai
     expect(priv.state.name).toBe("active");
   });
 
-  it("turning ACTIVE clears an outage text left on screen; the recovery text stays", async () => {
+  it("a snapshot from OUTAGE back to ACTIVE shows and announces the recovery (3)", async () => {
     const { a, priv, ev } = await reloaded(
       snapshot({ state: "OUTAGE", outage_reason: "service_misconfigured", remaining_s: 600 }),
     );
     expect(a.banner.textContent).toBe(MISCONFIGURED);
+    await ev("state", { state: "ACTIVE", deadline_at: inMinutes(20), server_now: LATER });
+    expect(priv.state.name).toBe("active");
+    expect(a.banner.hidden).toBe(false);
+    expect(a.banner.textContent).toContain("ti è stato restituito");
+    expect(a.live.el.textContent).toContain("ti è stato restituito");
+    expect(a.live.announcements).toBe(1);
+  });
+
+  it("turning ACTIVE clears an outage text left on screen; the recovery text stays", async () => {
+    const { a, priv, ev } = await reloaded(snapshot({ state: "STARTING", turns: [] }));
+    a.banner.replaceChildren(document.createTextNode(MISCONFIGURED)); // left from before
+    a.banner.hidden = false;
     priv.apply.call(a, snapshot({}));
     expect(priv.state.name).toBe("active");
     expect(a.banner.hidden).toBe(true);
@@ -1228,6 +1254,16 @@ describe("a reload replays the ring; what the snapshot shows is not applied agai
     await ev("outage_end", {});
     expect(a.banner.hidden).toBe(false);
     expect(a.banner.textContent).toContain("ti è stato restituito");
+  });
+
+  it("an outage is announced once: a second outage_start only updates text and time (6)", async () => {
+    const { a, ev } = await reloaded(snapshot({}));
+    await ev("outage_start", { reason: "provider_unavailable", remaining_s: 600, at: AFTER });
+    expect(a.live.announcements).toBe(1);
+    await ev("outage_start", { reason: "service_misconfigured", remaining_s: 540, at: LATER });
+    expect(a.live.announcements).toBe(1);
+    expect(a.banner.textContent).toBe(MISCONFIGURED);
+    expect(a.controls.timer.textContent).toBe("Mancano 9 minuti");
   });
 
   it("the opening state of a reconnect is the session now; an older one is not", async () => {
@@ -1280,8 +1316,8 @@ describe("a reload replays the ring; what the snapshot shows is not applied agai
     );
     const before = reads.n;
     await ev("reply_interrupted", { reason: "persist_failed", at: BEFORE(3) });
-    expect(reads.n).toBe(before); // no read
-    expect(a.live.announcements).toBe(0);
+    expect(reads.n).toBe(before + 1); // read again: whether a reply is owed is the server's word
+    expect(a.live.announcements).toBe(0); // but nothing announced
     await ev("reply_interrupted", { reason: "persist_failed", at: AFTER });
     expect(a.live.announcements).toBe(1); // a live one is reported
   });

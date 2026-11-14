@@ -374,8 +374,10 @@ info level.
 
 **A configuration refusal alerts the operator.** On a turn or a Start, an `auth_error` or a
 non-429 `http_4xx` queues one `operator_notify` email, `provider_config_refused`, to
-`VEKTRA_ASSESS_OPERATOR_EMAIL`. It is sent at most once per site, cause and hour. A discussion
-turn ends with the interrupted turn (`reply_interrupted` `reason: service_misconfigured`) and
+`VEKTRA_ASSESS_OPERATOR_EMAIL`. It is sent at most once per site, cause and hour. When the
+refusal is the configuration (an `auth_error`; another 4xx only when the outage probe's call is
+refused too, otherwise it was that request's, e.g. a content-policy 400, and the turn simply ends
+`provider_refused`), a discussion turn ends with the interrupted turn (`reply_interrupted` `reason: service_misconfigured`) and
 the session then pauses in OUTAGE with that reason: the student's time is not counted, the probe
 above keeps checking, and the fix of the configuration ends the outage with the usual credit (C
 still closes the session `service_failure` if it stays broken). A Start rolls back

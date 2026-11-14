@@ -192,8 +192,10 @@ raise with reasoning still on, it usually means the reasoning outlasted the firs
 synthetic status 500, so `http_status` is `null`): check `VEKTRA_LLM_API_KEY` in the process
 that logged it. `http_4xx` is the provider refusing the request (a wrong model, a rate limit, a
 rejected parameter or content). Both are refusals. A 429 ends the turn `provider_refused` and
-the session stays ACTIVE. An `auth_error`, or an `http_4xx` that is not a 429, is the
-configuration: the turn ends interrupted (`service_misconfigured`), the session pauses in
+the session stays ACTIVE. An `auth_error` is the configuration; an `http_4xx` that is not a 429 is
+the configuration only when a probe call shaped like a turn is refused too (otherwise it was that
+request's, e.g. a content-policy 400: `provider_refused`, the session stays ACTIVE). For the
+configuration the turn ends interrupted (`service_misconfigured`), the session pauses in
 OUTAGE so the student's time is not counted until you fix it, a Start rolls back
 `service_misconfigured`, and the operator gets an email (`provider_config_refused`, at most
 once per site, cause and hour). The

@@ -32,7 +32,7 @@ interface SessionView {
   reply_pending: boolean;
   remaining_s?: number; // frozen at the outage start while in OUTAGE
   outage_reason?: string; // OUTAGE only: provider_unavailable | service_misconfigured
-  outage_no?: number; // the session's outage ordinal (the latest incident's number); optional
+  event_cursor?: number; // the stream's last event id when the snapshot was read (optional)
   turns: Turn[];
   token?: string;
 }
@@ -63,10 +63,6 @@ export class App {
   private readsIssued = 0; // GET /sessions/{sid} reads started, in order
   private readApplied = 0; // the newest read applied to the screen
   private lastTurnNo = 0; // the highest turn number on screen from a snapshot
-  // the newest outage (by its outage_no) whose start / end the screen shows: the stream replays
-  // its ring when it opens without a cursor, and a past incident's events must not count again
-  private outageStarted = 0;
-  private outageEnded = 0;
   /** Waits between the attempts to read the session once it is committed (tests shorten it). */
   snapshotRetryMs = [1000, 3000];
   /** How long a close without its reason waits for the stream's closed event (tests shorten it). */
@@ -228,7 +224,9 @@ export class App {
     if (!view) return this.dispatch({ type: "unavailable" });
     if (view.token) this.token = view.token; // resume re-mints the session token
     this.apply(view);
-    if (this.state.name !== "closed") this.openStream();
+    // the stream starts after the events this snapshot already reflects: a reload never
+    // replays a past outage, warning or reply as if it were live
+    if (this.state.name !== "closed") this.openStream(view.event_cursor);
   }
 
   private async fetchSession(): Promise<SessionView | null> {
@@ -273,18 +271,7 @@ export class App {
     this.lastTurnNo = Math.max(0, ...view.turns.map((t) => t.turn_no));
     if (!stateIsOlder) {
       this.deadline = view.deadline_at ? Date.parse(view.deadline_at) : null;
-      if (typeof view.outage_no === "number") {
-        // the snapshot already shows every incident up to its number: in OUTAGE the latest one
-        // is open (its end is still to come), otherwise it has ended
-        this.outageStarted = view.outage_no;
-        this.outageEnded = view.state === "OUTAGE" ? view.outage_no - 1 : view.outage_no;
-      }
       this.dispatch({ type: "session_state", state: view.state, closeReason: view.close_reason });
-      if (view.state === "ACTIVE" && this.banner.textContent !== M.outageEnd) {
-        // no outage now and no recovery text to show: nothing of a past outage stays on screen
-        this.banner.replaceChildren();
-        this.banner.hidden = true;
-      }
     }
     if (view.state !== "STARTING") this.chat.render(view.turns, view.reply_pending);
     this.replyPending = view.reply_pending;
@@ -316,9 +303,11 @@ export class App {
     );
   }
 
-  private openStream(): void {
+  private openStream(cursor?: number): void {
     void consume({
       url: `${this.cfg.apiBase}/sessions/${this.sid}/events`,
+      lastEventId:
+        typeof cursor === "number" && Number.isInteger(cursor) && cursor > 0 ? String(cursor) : undefined,
       token: () => this.token,
       onEvent: (ev) => void this.onEvent(ev),
       onTerminal: (status) =>
@@ -381,14 +370,7 @@ export class App {
         return;
       case "budget_warning":
         return;
-      // outage events, like reply events, may be replays of what the applied snapshot already
-      // shows (a past incident, or the open one the snapshot reported): only a newer incident
-      // counts. An event without outage_no (an older server) counts as before
       case "outage_start":
-        if (typeof data.outage_no === "number") {
-          if (data.outage_no <= this.outageStarted) return;
-          this.outageStarted = data.outage_no;
-        }
         this.stateEvents++;
         this.showOutage(data.reason);
         this.dispatch({ type: "outage_start" });
@@ -397,10 +379,6 @@ export class App {
           this.live.say(data.reason === SERVICE_MISCONFIGURED ? M.serviceMisconfigured : M.outageLive);
         return;
       case "outage_end":
-        if (typeof data.outage_no === "number") {
-          if (data.outage_no <= this.outageEnded) return;
-          this.outageEnded = data.outage_no;
-        }
         this.stateEvents++;
         this.banner.replaceChildren(h("p", { text: M.outageEnd }));
         if (typeof data.deadline_at === "string") this.deadline = Date.parse(data.deadline_at);
@@ -606,7 +584,11 @@ export class App {
           this.main.replaceChildren(...(keep as Node[]), this.controls.root, this.chat.root);
         this.controls.setOutage(s.name === "outage");
         this.syncComposer(); // never opens over a reply the server still owes (review #5)
-        if (s.name === "active") this.banner.hidden = this.banner.textContent !== M.outageEnd;
+        if (s.name === "active" && this.banner.textContent !== M.outageEnd) {
+          // ACTIVE with no recovery text to show: nothing of an outage stays on screen
+          this.banner.replaceChildren();
+          this.banner.hidden = true;
+        } else if (s.name === "active") this.banner.hidden = false;
         this.tick();
         return;
       case "closed": {

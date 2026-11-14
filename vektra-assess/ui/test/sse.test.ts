@@ -86,6 +86,27 @@ describe("consume", () => {
     expect(calls[1].headers["Last-Event-ID"]).toBe("7");
   });
 
+  it("starts from the cursor it is given, then follows the events it reads", async () => {
+    const calls: Record<string, string>[] = [];
+    const responses = [
+      new Response(body("id: 13\nevent: warning\ndata: {}\n\n"), { status: 200 }),
+      new Response(body("id: 14\nevent: closed\ndata: {}\n\n"), { status: 200 }),
+    ];
+    await consume({
+      url: "/e",
+      token: () => "TKN",
+      lastEventId: "12",
+      onEvent: () => {},
+      onTerminal: () => {},
+      fetchImpl: (async (_url: string, init: RequestInit) => {
+        calls.push(init.headers as Record<string, string>);
+        return responses.shift()!;
+      }) as unknown as typeof fetch,
+      sleep: async () => {},
+    });
+    expect(calls.map((h) => h["Last-Event-ID"])).toEqual(["12", "13"]);
+  });
+
   it("stops on a terminal status without reconnecting", async () => {
     for (const status of [401, 403, 409]) {
       let n = 0;

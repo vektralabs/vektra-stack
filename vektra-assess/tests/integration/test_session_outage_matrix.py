@@ -444,8 +444,6 @@ async def test_a_config_refusal_pauses_the_time_and_is_credited_on_recovery(
         started = [e for e in events if e.type == "outage_start"]
         assert [e.data["reason"] for e in interrupted] == ["service_misconfigured"]
         assert [e.data["reason"] for e in started] == ["service_misconfigured"]
-        # the incident's number, read in the transaction that opened it (replay filtering)
-        assert [e.data["outage_no"] for e in started] == [1]
         assert events.index(interrupted[0]) < events.index(started[0])
 
         # the session snapshot says why, for a reload during the pause

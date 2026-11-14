@@ -1072,7 +1072,7 @@ describe("transcript download (plan 10)", () => {
   });
 });
 
-describe("outage events replayed after a reload (2026-11-14)", () => {
+describe("a reload starts the stream after its snapshot (live 2026-11-14)", () => {
   const MISCONFIGURED =
     "Il servizio non è disponibile per un problema tecnico. Il personale è stato avvisato: riprova più tardi. Questo tempo non ti viene conteggiato.";
   const inMinutes = (m: number) => new Date(Date.now() + m * 60_000).toISOString();
@@ -1086,92 +1086,93 @@ describe("outage events replayed after a reload (2026-11-14)", () => {
     turns: [{ turn_no: 1, role: "bot", kind: "opening", text: "Benvenuto" }],
     ...extra,
   });
-  function reloaded(view: object) {
-    const h = harness();
-    const priv = h.priv as unknown as {
+
+  /** A page reloaded into a session: GET /sessions/S answers ``view``; the stream request is
+   *  recorded and left open. */
+  async function reloaded(view: object) {
+    const streams: Record<string, string>[] = [];
+    const fetchImpl = (async (url: string, init: RequestInit) => {
+      if (url.endsWith("/events")) {
+        streams.push(init.headers as Record<string, string>);
+        return new Promise<Response>(() => {});
+      }
+      return Response.json(view);
+    }) as unknown as typeof fetch;
+    const root = document.createElement("main");
+    document.body.replaceChildren(root);
+    const a = new App(
+      { site: "s", parentOrigin: "https://m.example", apiBase: "/api" },
+      new Bridge({ parent: { postMessage: () => {} }, addEventListener: () => {} }, "https://m.example"),
+      root,
+      fetchImpl,
+    );
+    const priv = a as unknown as {
       state: { name: string };
-      deadline: number | null;
-      apply: (v: unknown) => void;
-      tick: () => void;
+      onMessage: (m: unknown) => Promise<void>;
       onEvent: (e: unknown) => Promise<void>;
+      apply: (v: unknown) => void;
     };
-    priv.state = { name: "resuming" };
-    priv.apply.call(h.a, view);
+    await priv.onMessage.call(a, { v: 1, type: "vektra-assess-token", token: "T", mode: "resume", sid: "S" });
+    await new Promise((r) => setTimeout(r, 0));
     const ev = (event: string, data: object) =>
-      priv.onEvent.call(h.a, { event, data: JSON.stringify(data) });
-    return { ...h, priv, ev };
+      priv.onEvent.call(a, { event, data: JSON.stringify(data) });
+    return { a, root, priv, streams, ev };
   }
-  const count = (haystack: string, needle: string) => haystack.split(needle).length - 1;
 
-  it("an ACTIVE snapshot ignores the replayed start and end of a past outage", async () => {
-    const deadline = inMinutes(30);
-    const { a, priv, ev } = reloaded(snapshot({ deadline_at: deadline, outage_no: 1 }));
+  it("opens the stream from the snapshot's event_cursor, so nothing it shows is replayed", async () => {
+    const { streams } = await reloaded(snapshot({ event_cursor: 41 }));
+    expect(streams.length).toBe(1);
+    expect(streams[0]["Last-Event-ID"]).toBe("41");
+  });
+
+  it("without a cursor (an older server, or no event yet) the stream opens as before", async () => {
+    for (const extra of [{}, { event_cursor: 0 }]) {
+      const { streams } = await reloaded(snapshot(extra));
+      expect(streams[0]["Last-Event-ID"]).toBeUndefined();
+    }
+  });
+
+  it("a live outage after the snapshot is applied, its text shown once", async () => {
+    const { a, root, priv, ev } = await reloaded(snapshot({ event_cursor: 9 }));
     expect(priv.state.name).toBe("active");
-    await ev("outage_start", { state: "OUTAGE", reason: "service_misconfigured", outage_no: 1 });
-    await ev("outage_end", { state: "ACTIVE", deadline_at: inMinutes(20), outage_no: 1 });
-    expect(priv.state.name).toBe("active");
-    expect(a.banner.hidden).toBe(true);
-    expect(a.banner.textContent).not.toContain(MISCONFIGURED);
-    expect(a.live.announcements).toBe(0);
-    expect(priv.deadline).toBe(Date.parse(deadline)); // the snapshot's deadline stands
-    expect(a.controls.timer.textContent).toBe("Mancano 30 minuti");
-    // a new outage after the snapshot still counts
-    await ev("outage_start", { state: "OUTAGE", reason: "service_misconfigured", outage_no: 2 });
+    await ev("outage_start", { state: "OUTAGE", reason: "service_misconfigured" });
     expect(priv.state.name).toBe("outage");
-    expect(a.banner.textContent).toBe(MISCONFIGURED);
-  });
-
-  it("an ACTIVE snapshot hides a stale outage text already on screen", () => {
-    const { a, priv } = reloaded(snapshot({ state: "OUTAGE", outage_no: 1, remaining_s: 600 }));
     expect(a.banner.hidden).toBe(false);
-    priv.apply.call(a, snapshot({ outage_no: 1 }));
-    expect(priv.state.name).toBe("active");
-    expect(a.banner.hidden).toBe(true);
-    expect(a.banner.textContent).toBe("");
+    expect(a.banner.querySelectorAll("p").length).toBe(1);
+    expect(a.banner.textContent).toBe(MISCONFIGURED);
+    expect(root.querySelectorAll(".banner").length).toBe(1);
   });
 
-  it("a replayed old end during a new OUTAGE keeps the frozen time; the live end moves it", async () => {
-    const { a, priv, ev } = reloaded(
+  it("a reload during an outage keeps the frozen time; the live end moves the deadline", async () => {
+    const { a, priv, ev } = await reloaded(
       snapshot({
         state: "OUTAGE",
         outage_reason: "service_misconfigured",
-        outage_no: 2,
         remaining_s: 24 * 60,
-        deadline_at: inMinutes(22), // the stored deadline: the time left is frozen at 24
+        deadline_at: inMinutes(22), // the stored deadline; the time left is frozen at 24
+        event_cursor: 17,
       }),
     );
     expect(priv.state.name).toBe("outage");
     expect(a.controls.timer.textContent).toBe("Mancano 24 minuti");
-    await ev("outage_start", { state: "OUTAGE", reason: "service_misconfigured", outage_no: 1 });
-    await ev("outage_end", { state: "ACTIVE", deadline_at: inMinutes(22), outage_no: 1 });
-    await ev("outage_start", { state: "OUTAGE", reason: "service_misconfigured", outage_no: 2 });
-    priv.tick.call(a);
-    expect(priv.state.name).toBe("outage");
-    expect(a.controls.timer.textContent).toBe("Mancano 24 minuti");
-    // the open incident's own end is live: the session resumes with the moved deadline
-    await ev("outage_end", { state: "ACTIVE", deadline_at: inMinutes(26), outage_no: 2 });
+    expect(a.banner.textContent).toBe(MISCONFIGURED);
+    await ev("outage_end", { state: "ACTIVE", deadline_at: inMinutes(25.5) });
     expect(priv.state.name).toBe("active");
     expect(a.controls.timer.textContent).toBe("Mancano 26 minuti");
   });
 
-  it("a reload during an outage shows its text once, never twice", async () => {
-    const { a, root, ev } = reloaded(
-      snapshot({ state: "OUTAGE", outage_reason: "service_misconfigured", outage_no: 2, remaining_s: 1440 }),
+  it("turning ACTIVE clears an outage text left on screen; the recovery text stays", async () => {
+    const { a, priv, ev } = await reloaded(
+      snapshot({ state: "OUTAGE", outage_reason: "service_misconfigured", remaining_s: 600 }),
     );
-    await ev("outage_start", { state: "OUTAGE", reason: "service_misconfigured", outage_no: 1 });
-    await ev("outage_end", { state: "ACTIVE", outage_no: 1 });
-    await ev("outage_start", { state: "OUTAGE", reason: "service_misconfigured", outage_no: 2 });
-    expect(a.banner.querySelectorAll("p").length).toBe(1);
     expect(a.banner.textContent).toBe(MISCONFIGURED);
-    expect(count(root.textContent ?? "", MISCONFIGURED)).toBe(1); // the banner only
-    expect(a.live.announcements).toBe(0);
-  });
-
-  it("outage events without outage_no (an older server) still count", async () => {
-    const { priv, ev } = reloaded(snapshot({}));
-    await ev("outage_start", { state: "OUTAGE" });
-    expect(priv.state.name).toBe("outage");
-    await ev("outage_end", { state: "ACTIVE" });
+    priv.apply.call(a, snapshot({}));
     expect(priv.state.name).toBe("active");
+    expect(a.banner.hidden).toBe(true);
+    expect(a.banner.textContent).toBe("");
+    await ev("outage_start", {});
+    await ev("outage_end", {});
+    expect(a.banner.hidden).toBe(false);
+    expect(a.banner.textContent).toContain("ti è stato restituito");
   });
 });

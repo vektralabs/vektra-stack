@@ -234,63 +234,105 @@ async def test_the_one_minute_warning_reaches_both_tabs_once(pg, worker) -> None
         assert len(ids) == 1, ids  # the same event in both tabs, published once
 
 
-async def test_outage_events_and_the_snapshot_carry_the_outage_number(
-    pg, worker
-) -> None:  # type: ignore[no-untyped-def]
-    """Live 2026-11-14: a reloaded page replays the ring; ``outage_no`` on the outage events and
-    on ``GET /sessions/{sid}`` lets it tell a past incident from a live one."""
+def _outage_helpers(pg, worker, sid):  # type: ignore[no-untyped-def]
+    async def enter() -> None:
+        got = await pg.run(
+            "api", "SELECT assess_enter_outage(:s, 1, now(), 'error')", {"s": sid}
+        )
+        assert got[0][0] == "outage", got
+
+    async def end() -> None:
+        async with worker.begin() as conn:
+            await conn.execute(text("SELECT assess_end_outage(:s, 0)"), {"s": sid})
+
+    return enter, end
+
+
+async def test_a_reload_streams_from_the_snapshot_cursor(pg, worker) -> None:  # type: ignore[no-untyped-def]
+    """Live 2026-11-14: a reloaded page opened the stream without a cursor and the ring's past
+    outage, warning and reply events were applied as live. ``GET /sessions/{sid}`` returns
+    ``event_cursor``; a stream from it replays none of them, and still gets what comes next."""
+    from vektra_assess.api.events import broker_of
+
     async with world(pg, assess_sse_timing=TIMING) as w:
         s = await seed_session(w, worker, "ACTIVE")
         sid, auth = s.session_id, {"Authorization": f"Bearer {s.session_token}"}
+        enter, end = _outage_helpers(pg, worker, sid)
 
-        async def enter() -> None:
-            got = await pg.run(
-                "api", "SELECT assess_enter_outage(:s, 1, now(), 'error')", {"s": sid}
-            )
-            assert got[0][0] == "outage", got
+        class R:
+            app = w.app
 
-        async def end() -> None:
-            async with worker.begin() as conn:
-                await conn.execute(text("SELECT assess_end_outage(:s, 0)"), {"s": sid})
-
-        r = await w.client.get(f"/api/v1/assess/sessions/{sid}", headers=auth)
-        assert r.json()["state"] == "ACTIVE" and r.json()["outage_no"] == 0
+        broker = broker_of(R())  # type: ignore[arg-type]
+        # the first page: a reply, a warning, and an outage that started and ended
         tab = asyncio.create_task(_stream(w, sid, s.session_token))
         await asyncio.sleep(0.3)
+        broker.publish(sid, "reply_delta", {"text": "pezzo"}, epoch=1)
+        broker.publish(sid, "reply_done", {"turn_no": 3})
+        broker.publish(sid, "warning", {"minutes": 10, "deadline_at": "x"})
         await enter()
         await asyncio.sleep(0.3)
         await end()
         await asyncio.sleep(0.3)
+        # the reload: the snapshot (ACTIVE) and its cursor
         r = await w.client.get(f"/api/v1/assess/sessions/{sid}", headers=auth)
-        assert r.json()["state"] == "ACTIVE" and r.json()["outage_no"] == 1
-        assert "outage_reason" not in r.json()
-        await enter()
+        assert r.status_code == 200, r.text
+        assert r.json()["state"] == "ACTIVE"
+        cursor = r.json()["event_cursor"]
+        assert cursor == broker.cursor(sid) and cursor >= 5
+        reload = asyncio.create_task(_stream(w, sid, s.session_token, last=cursor))
         await asyncio.sleep(0.3)
-        r = await w.client.get(f"/api/v1/assess/sessions/{sid}", headers=auth)
-        assert r.json()["state"] == "OUTAGE" and r.json()["outage_no"] == 2
-        # a reader that took the state ACTIVE before this outage opened counts the ended ones
-        # only: the open interval's outage_start is still a live event for it
-        from vektra_assess.api.events import OUTAGE_NO
-
-        async with worker.connect() as conn:
-            for open_too, expected in ((True, 2), (False, 1)):
-                got = await conn.execute(OUTAGE_NO, {"s": sid, "open_too": open_too})
-                assert got.scalar_one() == expected
-        # a page reloaded now: the stream's opening snapshot says which incident is open
-        reload = asyncio.create_task(_stream(w, sid, s.session_token))
+        await enter()  # live, after the snapshot: delivered
         await asyncio.sleep(0.3)
         async with worker.begin() as conn:
             await conn.execute(
                 text("SELECT assess_close_session(:s, 1, 'finished')"), {"s": sid}
             )
-        events = parse(await asyncio.wait_for(tab, 15))
-        outages = [
-            (e["event"], e["data"].get("outage_no"))
-            for e in events
-            if e["event"] in ("outage_start", "outage_end")
+        first = [e["event"] for e in parse(await asyncio.wait_for(tab, 15))]
+        assert first[:1] == ["state"] and "outage_end" in first and "warning" in first
+        events = parse(await asyncio.wait_for(reload, 15))
+        assert [e["event"] for e in events] == ["state", "outage_start", "closed"]
+        assert all(int(e["id"]) > cursor for e in events[1:])
+        assert events[1]["data"]["reason"] == "provider_unavailable"
+
+
+async def test_an_outage_ended_and_reopened_between_polls_is_published(
+    pg, worker
+) -> None:  # type: ignore[no-untyped-def]
+    """Review of #222, finding 1: OUTAGE observed, then the outage ends and another begins before
+    any poll: the next observation (here the seed of a new connection, from the same status
+    read as a poll) sees OUTAGE again, and the outage count tells the change."""
+    from vektra_assess.api.events import broker_of
+
+    async with world(pg, assess_sse_timing=TIMING) as w:
+        s = await seed_session(w, worker, "ACTIVE")
+        sid = s.session_id
+        enter, end = _outage_helpers(pg, worker, sid)
+
+        class R:
+            app = w.app
+
+        broker = broker_of(R())  # type: ignore[arg-type]
+        tab = asyncio.create_task(_stream(w, sid, s.session_token))
+        await asyncio.sleep(0.3)
+        await enter()
+        await asyncio.sleep(0.3)  # observed: OUTAGE, one interval
+        tab.cancel()  # no connection polls while the next two changes happen
+        await asyncio.sleep(0.1)
+        seen = broker.cursor(sid)
+        await end()
+        await enter()
+        reload = asyncio.create_task(_stream(w, sid, s.session_token, last=seen))
+        await asyncio.sleep(0.3)
+        async with worker.begin() as conn:
+            await conn.execute(
+                text("SELECT assess_close_session(:s, 1, 'finished')"), {"s": sid}
+            )
+        events = parse(await asyncio.wait_for(reload, 15))
+        assert [e["event"] for e in events] == [
+            "state",
+            "outage_end",
+            "outage_start",
+            "closed",
         ]
-        assert outages == [("outage_start", 1), ("outage_end", 1), ("outage_start", 2)]
-        first = parse(await asyncio.wait_for(reload, 15))[0]
-        assert first["event"] == "state" and first["data"]["state"] == "OUTAGE"
-        assert first["data"]["outage_no"] == 2
-        assert first["data"]["reason"] == "provider_unavailable"
+        assert events[0]["data"]["state"] == "OUTAGE"
+        assert events[0]["data"]["reason"] == "provider_unavailable"

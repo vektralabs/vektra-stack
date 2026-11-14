@@ -43,6 +43,54 @@ def test_observe_publishes_once_per_change() -> None:
     assert b.observe(other, None, {"reason": "capacity"}).type == "start_rolled_back"  # type: ignore[union-attr]
 
 
+def test_an_outage_ended_and_reopened_between_two_polls_is_published() -> None:
+    """Review of #222, finding 1: the state string alone (OUTAGE, then OUTAGE) hid the change;
+    the outage count read with it shows it, as the end of one and the start of the next."""
+    b = EventBroker()
+    sid = uuid.uuid4()
+    b.observe(sid, "ACTIVE", {}, outage_count=0)
+    assert b.observe(sid, "OUTAGE", {}, outage_count=1).type == "outage_start"  # type: ignore[union-attr]
+    assert b.observe(sid, "OUTAGE", {}, outage_count=1) is None  # nothing new
+    moved = {"state": "OUTAGE", "deadline_at": "2026-11-14T19:00:00+00:00"}
+    b.observe(sid, "OUTAGE", moved, outage_count=2)
+    tail = b.after(sid, 1)
+    assert [e.type for e in tail] == ["outage_end", "outage_start"]
+    assert tail[0].data["deadline_at"] == moved["deadline_at"]  # the first one's credit
+    # a whole outage between two polls: its end, with the moved deadline
+    b.observe(sid, "ACTIVE", {}, outage_count=2)
+    n = len(b.after(sid, 0))
+    assert (
+        b.observe(sid, "ACTIVE", {"deadline_at": "x"}, outage_count=3).type
+        == "outage_end"
+    )  # type: ignore[union-attr]
+    assert len(b.after(sid, 0)) == n + 1
+    # an unknown count (an observation without one) never invents a change
+    assert b.observe(sid, "ACTIVE", {}) is None
+
+
+def test_an_older_read_than_the_last_observation_is_ignored() -> None:
+    """The turn path observes OUTAGE (count 1) as it commits; a poll read just before it (ACTIVE,
+    count 0) arriving later is older, so it publishes no spurious outage_end."""
+    b = EventBroker()
+    sid = uuid.uuid4()
+    b.observe(sid, "ACTIVE", {}, outage_count=0)
+    assert b.observe(sid, "OUTAGE", {}, outage_count=1) is not None
+    assert b.observe(sid, "ACTIVE", {}, outage_count=0) is None
+    assert [e.type for e in b.after(sid, 0)] == ["outage_start"]
+    # the real end still comes: same count, state ACTIVE
+    assert b.observe(sid, "ACTIVE", {}, outage_count=1).type == "outage_end"  # type: ignore[union-attr]
+
+
+def test_the_cursor_is_the_last_event_id_and_creates_no_channel() -> None:
+    b = EventBroker()
+    sid = uuid.uuid4()
+    assert b.cursor(sid) == 0 and sid not in b
+    b.publish(sid, "turn_accepted")
+    b.publish(sid, "warning", {"minutes": 5})
+    assert b.cursor(sid) == 2
+    assert b.after(sid, b.cursor(sid)) == []  # a stream from the cursor replays nothing
+
+
 async def test_wait_wakes_on_publish_and_times_out_otherwise() -> None:
     b = EventBroker()
     sid = uuid.uuid4()

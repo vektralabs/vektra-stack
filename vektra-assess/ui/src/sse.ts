@@ -78,6 +78,9 @@ export interface StreamOptions {
   sleep?: (ms: number) => Promise<void>;
   random?: () => number;
   signal?: AbortSignal;
+  /** Where the first request starts (Last-Event-ID): the cursor a snapshot came with, so the
+   *  events that snapshot already reflects are not replayed. */
+  lastEventId?: string;
 }
 
 /** Backoff before reconnect attempt n (0-based): 1, 2, 4, 8 s cap, with +-20% jitter. */
@@ -90,7 +93,7 @@ export function backoffMs(attempt: number, random: () => number = Math.random): 
 export async function consume(opts: StreamOptions): Promise<void> {
   const fetchImpl = opts.fetchImpl ?? fetch;
   const sleep = opts.sleep ?? ((ms: number) => new Promise((r) => setTimeout(r, ms)));
-  let lastId: string | undefined;
+  let lastId: string | undefined = opts.lastEventId;
   let attempt = 0;
   while (!opts.signal?.aborted) {
     const token = opts.token();

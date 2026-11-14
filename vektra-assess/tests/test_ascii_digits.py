@@ -26,11 +26,13 @@ _SID = uuid.UUID(int=1)
 
 
 def _last_event_id(request: Request) -> int:
-    """The stream's reading of the header, against a broker whose channel has 50 events."""
+    """The stream's reading of the header's ``<n>`` (after this broker's own prefix), against a
+    channel with 50 events."""
     broker = EventBroker()
     for _ in range(50):
         broker.publish(_SID, "turn_accepted")
-    return broker.last_event_id(_SID, request.headers.get("last-event-id"))[0]
+    n = request.headers.get("last-event-id", "")
+    return broker.last_event_id(_SID, f"{broker.id_prefix(_SID)}:{n}")
 
 
 NOT_ASCII = ["²", "١٢", "\uff11\uff12", "12²"]

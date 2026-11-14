@@ -20,6 +20,19 @@ export function transcriptFileName(disposition: string | null): string {
 /** The closed reason a configuration refusal carries (outage, Start rollback). */
 export const SERVICE_MISCONFIGURED = "service_misconfigured";
 
+/** The events that report a state the snapshot may already show (filtered by their ``at``). */
+const STATE_EVENTS: ReadonlySet<string> = new Set(["outage_start", "outage_end", "warning"]);
+
+/** A database timestamp (ISO 8601, up to microseconds, with an offset) in microseconds since the
+ *  epoch, compared exactly (``Date.parse`` keeps milliseconds only); null if it is not one. */
+export function dbMicros(iso: unknown): number | null {
+  if (typeof iso !== "string") return null;
+  const m = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.(\d{1,6}))?(Z|[+-]\d{2}:\d{2})$/.exec(iso);
+  if (!m) return null;
+  const s = Date.parse(m[1] + m[3]);
+  return Number.isNaN(s) ? null : s * 1000 + Number((m[2] ?? "").padEnd(6, "0"));
+}
+
 /** How long the closing screen waits for the parent's download token. */
 export const DOWNLOAD_TIMEOUT_MS = 10_000;
 
@@ -32,7 +45,6 @@ interface SessionView {
   reply_pending: boolean;
   remaining_s?: number; // frozen at the outage start while in OUTAGE
   outage_reason?: string; // OUTAGE only: provider_unavailable | service_misconfigured
-  event_cursor?: string; // opaque: the Last-Event-ID the stream starts from (optional)
   turns: Turn[];
   token?: string;
 }
@@ -63,6 +75,9 @@ export class App {
   private readsIssued = 0; // GET /sessions/{sid} reads started, in order
   private readApplied = 0; // the newest read applied to the screen
   private lastTurnNo = 0; // the highest turn number on screen from a snapshot
+  // the newest applied snapshot's server_now (database clock, microseconds): the stream replays
+  // its ring when it opens, and a state event read before it is already on screen
+  private snapshotAt: number | null = null;
   /** Waits between the attempts to read the session once it is committed (tests shorten it). */
   snapshotRetryMs = [1000, 3000];
   /** How long a close without its reason waits for the stream's closed event (tests shorten it). */
@@ -224,9 +239,7 @@ export class App {
     if (!view) return this.dispatch({ type: "unavailable" });
     if (view.token) this.token = view.token; // resume re-mints the session token
     this.apply(view);
-    // the stream starts after the events this snapshot already reflects: a reload never
-    // replays a past outage, warning or reply as if it were live
-    if (this.state.name !== "closed") this.openStream(view.event_cursor);
+    if (this.state.name !== "closed") this.openStream();
   }
 
   private async fetchSession(): Promise<SessionView | null> {
@@ -271,6 +284,8 @@ export class App {
     this.lastTurnNo = Math.max(0, ...view.turns.map((t) => t.turn_no));
     if (!stateIsOlder) {
       this.deadline = view.deadline_at ? Date.parse(view.deadline_at) : null;
+      const at = dbMicros(view.server_now);
+      if (at !== null) this.snapshotAt = Math.max(this.snapshotAt ?? at, at);
       this.dispatch({ type: "session_state", state: view.state, closeReason: view.close_reason });
     }
     if (view.state !== "STARTING") this.chat.render(view.turns, view.reply_pending);
@@ -303,11 +318,9 @@ export class App {
     );
   }
 
-  private openStream(cursor?: unknown): void {
+  private openStream(): void {
     void consume({
       url: `${this.cfg.apiBase}/sessions/${this.sid}/events`,
-      // opaque to the page; the server decides what it means (and ignores a stale one)
-      lastEventId: typeof cursor === "string" && /^[\x21-\x7e]{1,64}$/.test(cursor) ? cursor : undefined,
       token: () => this.token,
       onEvent: (ev) => void this.onEvent(ev),
       onTerminal: (status) =>
@@ -317,6 +330,13 @@ export class App {
     });
   }
 
+  /** A state event read (``at``) no later than the snapshot on screen: that snapshot already
+   *  shows it (a replay after a reload). Without ``at`` (an older server) it counts. */
+  private reflected(at: unknown): boolean {
+    const t = dbMicros(at);
+    return t !== null && this.snapshotAt !== null && t <= this.snapshotAt;
+  }
+
   private async onEvent(ev: SseEvent): Promise<void> {
     let data: Record<string, unknown> = {};
     try {
@@ -324,6 +344,7 @@ export class App {
     } catch {
       return;
     }
+    if (STATE_EVENTS.has(ev.event) && this.reflected(data.at)) return;
     switch (ev.event) {
       case "committed":
         return this.loadCommitted();

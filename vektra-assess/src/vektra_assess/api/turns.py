@@ -50,7 +50,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from vektra_assess.api.common import engine_of, fail, parse_body
 from vektra_assess.api.deps import dek_cache_of, handoff_private_of, settings_of
-from vektra_assess.api.events import OUTAGE_COUNT, EventBroker, broker_of
+from vektra_assess.api.events import DB_NOW, OUTAGE_FACTS, EventBroker, broker_of
 from vektra_assess.api.gate import verify_assess_token_session
 from vektra_assess.api.material import DekCache, Material, load_material
 from vektra_assess.api.models import TurnRequest
@@ -535,11 +535,11 @@ class TurnDriver:
     @staticmethod
     async def _enter_outage(
         conn: Any, sid: UUID, epoch: int, record: ProviderCallRecord, reason: str
-    ) -> tuple[str | None, int | None]:
+    ) -> tuple[str | None, Any]:
         """``assess_enter_outage`` in the caller's transaction: 'outage', 'closed' or 'noop',
-        with, for 'outage', the session's outage count read in the same transaction (the broker
-        compares it with its polls'). ``reason`` is the interval's ``reason_code``: the call
-        outcome for a provider outage, ``service_misconfigured`` for a configuration refusal
+        with, for 'outage', the session's deadline and outage count read in the same transaction
+        (``OUTAGE_FACTS``, for ``observe``). ``reason`` is the interval's ``reason_code``: the
+        call outcome for a provider outage, ``service_misconfigured`` for a configuration refusal
         (read back by the snapshot and the stream's poll)."""
         got = (
             await conn.execute(
@@ -554,18 +554,26 @@ class TurnDriver:
         ).scalar()
         if got != "outage":
             return (str(got) if got is not None else None), None
-        count = await conn.execute(OUTAGE_COUNT, {"s": sid})
-        return "outage", int(count.scalar_one())
+        return "outage", (await conn.execute(OUTAGE_FACTS, {"s": sid})).one()
 
-    def _observe_outage(
-        self, sid: UUID, got: str | None, reason: str, count: int | None = None
+    async def _observe_outage(
+        self, sid: UUID, got: str | None, reason: str, facts: Any = None
     ) -> None:
-        """Tell the stream what ``assess_enter_outage`` did: ``outage_start`` (with the closed
-        student-facing reason) or, at the third consecutive failure, ``closed``."""
+        """Tell the stream what ``assess_enter_outage`` did (called after its commit):
+        ``outage_start`` (with the closed student-facing reason, the deadline, and as ``at`` the
+        database clock read now, after the commit) or, at the third consecutive failure,
+        ``closed``."""
         if got == "outage":
-            self.broker.observe(
-                sid, "OUTAGE", {"state": "OUTAGE", "reason": reason}, outage_count=count
-            )
+            data: dict[str, Any] = {"state": "OUTAGE", "reason": reason}
+            count = None
+            if facts is not None:
+                data["deadline_at"] = (
+                    facts.deadline_at.isoformat() if facts.deadline_at else None
+                )
+                count = int(facts.outage_count)
+            async with self.engine.connect() as conn:
+                at = (await conn.execute(DB_NOW)).scalar_one()
+            self.broker.observe(sid, "OUTAGE", data, outage_count=count, at=at)
         elif got == "closed":
             # the third consecutive failed call: closed service_failure (M4.5)
             self.cache.evict(sid)
@@ -583,11 +591,11 @@ class TurnDriver:
         """ACTIVE -> OUTAGE (M4.1): the pending turn is kept for the ``PendingTurnDriver``. The
         stream learns it from ``observe`` here (``outage_start``) or from its own poll."""
         async with self.engine.begin() as conn:
-            got, count = await self._enter_outage(
+            got, facts = await self._enter_outage(
                 conn, sid, epoch, record, record.outcome
             )
         if got in ("outage", "closed"):
-            self._observe_outage(sid, got, PROVIDER_UNAVAILABLE, count)
+            await self._observe_outage(sid, got, PROVIDER_UNAVAILABLE, facts)
         else:
             # not ACTIVE at this epoch any more (closed, revoked): nothing is moved; the marked
             # turn is attempted and refused by the database when the session is gone
@@ -676,7 +684,7 @@ class TurnDriver:
         ``pause``: the refused call of a configuration refusal. The session enters OUTAGE
         ``service_misconfigured`` in the marker's own transaction (so the student is never
         free to write between the two), and only when the marker was appended."""
-        entered: list[tuple[str | None, int | None]] = []
+        entered: list[tuple[str | None, Any]] = []
 
         async def enter(conn: Any) -> None:
             assert pause is not None
@@ -696,7 +704,7 @@ class TurnDriver:
             data["turn_no"] = turn_no
         self.broker.publish(sid, "reply_interrupted", data)
         if entered:
-            self._observe_outage(
+            await self._observe_outage(
                 sid, entered[0][0], SERVICE_MISCONFIGURED, entered[0][1]
             )
         return turn_no is not None

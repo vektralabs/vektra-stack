@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, expect, it, vi } from "vitest";
-import { App, DOWNLOAD_TIMEOUT_MS, transcriptFileName } from "../src/app";
+import { App, DOWNLOAD_TIMEOUT_MS, dbMicros, transcriptFileName } from "../src/app";
 import { Bridge } from "../src/bridge";
 import { readConfig } from "../src/main";
 
@@ -1072,23 +1072,26 @@ describe("transcript download (plan 10)", () => {
   });
 });
 
-describe("a reload starts the stream after its snapshot (live 2026-11-14)", () => {
+describe("a reload replays the ring; what the snapshot shows is not applied again (live 2026-11-14)", () => {
   const MISCONFIGURED =
     "Il servizio non è disponibile per un problema tecnico. Il personale è stato avvisato: riprova più tardi. Questo tempo non ti viene conteggiato.";
   const inMinutes = (m: number) => new Date(Date.now() + m * 60_000).toISOString();
+  // the snapshot's server_now and event times on the database clock (microseconds)
+  const NOW = "2026-11-14T18:47:00.500000+00:00";
+  const BEFORE = (s: number) => `2026-11-14T18:46:${String(60 - s).padStart(2, "0")}.000000+00:00`;
+  const AFTER = "2026-11-14T18:47:00.500001+00:00";
   const snapshot = (extra: object) => ({
     session_id: "S",
     state: "ACTIVE",
     close_reason: null,
     deadline_at: inMinutes(30),
-    server_now: new Date().toISOString(),
+    server_now: NOW,
     reply_pending: false,
     turns: [{ turn_no: 1, role: "bot", kind: "opening", text: "Benvenuto" }],
     ...extra,
   });
 
-  /** A page reloaded into a session: GET /sessions/S answers ``view``; the stream request is
-   *  recorded and left open. */
+  /** A page reloaded into a session: GET /sessions/S answers ``view``; the stream stays open. */
   async function reloaded(view: object) {
     const streams: Record<string, string>[] = [];
     const fetchImpl = (async (url: string, init: RequestInit) => {
@@ -1111,73 +1114,102 @@ describe("a reload starts the stream after its snapshot (live 2026-11-14)", () =
       onMessage: (m: unknown) => Promise<void>;
       onEvent: (e: unknown) => Promise<void>;
       apply: (v: unknown) => void;
+      tick: () => void;
+      clockOffset: number;
     };
     await priv.onMessage.call(a, { v: 1, type: "vektra-assess-token", token: "T", mode: "resume", sid: "S" });
     await new Promise((r) => setTimeout(r, 0));
+    priv.clockOffset = 0; // the fixed server_now above is not "now"; the timer uses local time
     const ev = (event: string, data: object) =>
       priv.onEvent.call(a, { event, data: JSON.stringify(data) });
     return { a, root, priv, streams, ev };
   }
+  const count = (haystack: string, needle: string) => haystack.split(needle).length - 1;
 
-  it("opens the stream from the snapshot's event_cursor, so nothing it shows is replayed", async () => {
-    const { streams } = await reloaded(snapshot({ event_cursor: "a1b2c3d4e5f60718:41:2" }));
+  it("the stream opens without a cursor", async () => {
+    const { streams } = await reloaded(snapshot({}));
     expect(streams.length).toBe(1);
-    expect(streams[0]["Last-Event-ID"]).toBe("a1b2c3d4e5f60718:41:2"); // opaque, sent as is
+    expect(streams[0]["Last-Event-ID"]).toBeUndefined();
   });
 
-  it("without a usable cursor (an older server) the stream opens as before", async () => {
-    for (const extra of [{}, { event_cursor: "" }, { event_cursor: 41 }, { event_cursor: "a\nb" }]) {
-      const { streams } = await reloaded(snapshot(extra));
-      expect(streams[0]["Last-Event-ID"]).toBeUndefined();
-    }
-  });
-
-  it("a reload mid-reply streams the pending reply from its first delta", async () => {
-    // the server's cursor stops before the reply's first event: its turn_accepted (already in
-    // the snapshot) is ignored, its deltas build the reply in progress
-    const { a, ev } = await reloaded(
-      snapshot({
-        reply_pending: true,
-        event_cursor: "n:4:0",
-        turns: [
-          { turn_no: 1, role: "bot", kind: "opening", text: "Benvenuto" },
-          { turn_no: 2, role: "student", kind: "normal", text: "domanda" },
-        ],
-      }),
-    );
-    await ev("turn_accepted", { turn_no: 2 });
-    await ev("reply_delta", { text: "Inizio " });
-    await ev("reply_delta", { text: "della risposta" });
-    expect(a.chat.list.querySelector(".streaming")?.textContent).toContain("Inizio della risposta");
-  });
-
-  it("a live outage after the snapshot is applied, its text shown once", async () => {
-    const { a, root, priv, ev } = await reloaded(snapshot({ event_cursor: "n:9" }));
+  it("an outage that already ended is not applied to an ACTIVE snapshot", async () => {
+    const deadline = inMinutes(30);
+    const { a, priv, ev } = await reloaded(snapshot({ deadline_at: deadline }));
+    await ev("outage_start", { state: "OUTAGE", reason: "service_misconfigured", at: BEFORE(10) });
+    await ev("outage_end", { state: "ACTIVE", deadline_at: inMinutes(20), at: BEFORE(6) });
     expect(priv.state.name).toBe("active");
-    await ev("outage_start", { state: "OUTAGE", reason: "service_misconfigured" });
-    expect(priv.state.name).toBe("outage");
-    expect(a.banner.hidden).toBe(false);
-    expect(a.banner.querySelectorAll("p").length).toBe(1);
-    expect(a.banner.textContent).toBe(MISCONFIGURED);
-    expect(root.querySelectorAll(".banner").length).toBe(1);
+    expect(a.banner.hidden).toBe(true);
+    expect(a.banner.textContent).not.toContain(MISCONFIGURED);
+    expect(a.live.announcements).toBe(0);
+    priv.tick.call(a);
+    expect(a.controls.timer.textContent).toBe("Mancano 30 minuti");
   });
 
-  it("a reload during an outage keeps the frozen time; the live end moves the deadline", async () => {
-    const { a, priv, ev } = await reloaded(
+  it("a reload during a later outage keeps the frozen time and shows its text once", async () => {
+    const { a, root, priv, ev } = await reloaded(
       snapshot({
         state: "OUTAGE",
         outage_reason: "service_misconfigured",
         remaining_s: 24 * 60,
         deadline_at: inMinutes(22), // the stored deadline; the time left is frozen at 24
-        event_cursor: "n:17:1",
       }),
     );
+    expect(a.controls.timer.textContent).toBe("Mancano 24 minuti");
+    await ev("outage_start", { state: "OUTAGE", reason: "service_misconfigured", at: BEFORE(50) });
+    await ev("outage_end", { state: "ACTIVE", deadline_at: inMinutes(22), at: BEFORE(46) });
+    await ev("outage_start", { state: "OUTAGE", reason: "service_misconfigured", at: BEFORE(5) });
+    priv.tick.call(a);
     expect(priv.state.name).toBe("outage");
     expect(a.controls.timer.textContent).toBe("Mancano 24 minuti");
-    expect(a.banner.textContent).toBe(MISCONFIGURED);
-    await ev("outage_end", { state: "ACTIVE", deadline_at: inMinutes(25.5) });
+    expect(a.banner.querySelectorAll("p").length).toBe(1);
+    expect(count(root.textContent ?? "", MISCONFIGURED)).toBe(1);
+    expect(a.live.announcements).toBe(0);
+    // the open outage's own end comes later than the snapshot: applied, the deadline moves
+    await ev("outage_end", { state: "ACTIVE", deadline_at: inMinutes(25.5), at: AFTER });
     expect(priv.state.name).toBe("active");
     expect(a.controls.timer.textContent).toBe("Mancano 26 minuti");
+  });
+
+  it("a reload mid-reply keeps the whole reply in progress", async () => {
+    const { a, ev } = await reloaded(
+      snapshot({
+        reply_pending: true,
+        turns: [
+          { turn_no: 1, role: "bot", kind: "opening", text: "Benvenuto" },
+          { turn_no: 2, role: "student", kind: "normal", text: "domanda" },
+          { turn_no: 3, role: "bot", kind: "normal", text: "prima risposta" },
+          { turn_no: 4, role: "student", kind: "normal", text: "seconda domanda" },
+        ],
+      }),
+    );
+    // the ring: the earlier reply (in the snapshot), then the owed one from its start
+    await ev("turn_accepted", { turn_no: 2 });
+    await ev("reply_delta", { text: "prima " });
+    await ev("reply_delta", { text: "risposta" });
+    await ev("reply_done", { turn_no: 3 });
+    await ev("turn_accepted", { turn_no: 4 });
+    await ev("reply_delta", { text: "Inizio " });
+    await ev("reply_delta", { text: "della seconda" });
+    expect(a.chat.list.querySelector(".streaming")?.textContent).toContain("Inizio della seconda");
+    expect(a.chat.list.querySelector(".streaming")?.textContent).not.toContain("prima");
+  });
+
+  it("past warnings are not announced again; a later one is", async () => {
+    const { a, ev } = await reloaded(snapshot({}));
+    await ev("warning", { minutes: 10, deadline_at: "x", at: BEFORE(30) });
+    expect(a.live.announcements).toBe(0);
+    await ev("warning", { minutes: 5, deadline_at: "x", at: AFTER });
+    expect(a.live.announcements).toBe(1);
+    expect(a.live.el.textContent).toBe("Attenzione: mancano 5 minuti alla fine");
+  });
+
+  it("a live outage after the snapshot is applied; one without at (an older server) too", async () => {
+    const { a, priv, ev } = await reloaded(snapshot({}));
+    await ev("outage_start", { state: "OUTAGE", reason: "service_misconfigured", at: AFTER });
+    expect(priv.state.name).toBe("outage");
+    expect(a.banner.textContent).toBe(MISCONFIGURED);
+    await ev("outage_end", { state: "ACTIVE" });
+    expect(priv.state.name).toBe("active");
   });
 
   it("turning ACTIVE clears an outage text left on screen; the recovery text stays", async () => {
@@ -1193,5 +1225,12 @@ describe("a reload starts the stream after its snapshot (live 2026-11-14)", () =
     await ev("outage_end", {});
     expect(a.banner.hidden).toBe(false);
     expect(a.banner.textContent).toContain("ti è stato restituito");
+  });
+
+  it("database times compare to the microsecond", () => {
+    expect(dbMicros("2026-11-14T18:47:00.500001+00:00")! - dbMicros(NOW)!).toBe(1);
+    expect(dbMicros("2026-11-14T18:47:00+00:00")).toBe(Date.parse("2026-11-14T18:47:00Z") * 1000);
+    expect(dbMicros("2026-11-14T19:47:00.5+01:00")).toBe(dbMicros(NOW));
+    for (const bad of [undefined, 3, "", "ieri"]) expect(dbMicros(bad)).toBeNull();
   });
 });

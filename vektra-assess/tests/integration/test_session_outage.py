@@ -133,9 +133,6 @@ async def test_an_outage_moves_active_to_outage_and_keeps_the_pending_turn(
 
         got = (await w.client.get(url, headers=bearer(s.session_token))).json()
         assert got["state"] == "OUTAGE" and got["reply_pending"] is True
-        # a reload now: the reply is still owed, so its stream starts before turn_accepted (id
-        # 1), and the outage the snapshot shows (key 1: OUTAGE in the first interval) is skipped
-        assert got["event_cursor"] == f"{broker.nonce}:0:1"
         # input locked: no turn while OUTAGE
         r = await w.client.post(
             f"{url}/turns", json={"text": "ci sei?"}, headers=bearer(s.session_token)

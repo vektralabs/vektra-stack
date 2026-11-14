@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import uuid
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -82,81 +83,78 @@ def test_an_older_read_than_the_last_observation_is_ignored() -> None:
 
 
 def test_reads_are_ordered_by_one_key_and_a_repeat_publishes_nothing() -> None:
-    """Review of 1deac5c9, 3+5: key = 2*count - (1 in OUTAGE); a read at or below the last key
-    is ignored whatever its state, a higher one publishes exactly the transitions between."""
+    """key = 2*count - (1 in OUTAGE); a read at or below the last key is ignored whatever its
+    state, a higher one publishes exactly the transitions between."""
     assert [
         outage_key(s, c) for s, c in [("ACTIVE", 0), ("OUTAGE", 1), ("ACTIVE", 1)]
-    ] == [
-        0,
-        1,
-        2,
-    ]
+    ] == [0, 1, 2]
     assert outage_key("CLOSED", 3) is None and outage_key("ACTIVE", None) is None
     b = EventBroker()
     sid = uuid.uuid4()
     b.observe(sid, "OUTAGE", {}, outage_count=1)  # first sight: nothing
     assert b.observe(sid, "ACTIVE", {}, outage_count=0) is None  # older: ignored
     assert b.observe(sid, "OUTAGE", {}, outage_count=1) is None  # same: nothing
-    b.observe(sid, "OUTAGE", {}, outage_count=3)  # two ended, one open since
-    assert [(e.type, e.key) for e in b.after(sid, 0)] == [
-        ("outage_end", 4),
-        ("outage_start", 5),
-    ]
+    b.observe(sid, "OUTAGE", {"deadline_at": "d"}, outage_count=3)  # 2 ended, 1 open
+    assert [e.type for e in b.after(sid, 0)] == ["outage_end", "outage_start"]
 
 
-def test_the_cursor_is_the_last_event_id_and_creates_no_channel() -> None:
+def test_outage_events_carry_the_read_time_as_at() -> None:
+    """Review of 8f9385b0, B: ``at`` is the database time the state was read at; a client
+    drops the state events its snapshot (server_now) is not older than."""
     b = EventBroker()
     sid = uuid.uuid4()
-    assert b.cursor(sid) == (0, None) and sid not in b
-    b.publish(sid, "warning", {"minutes": 5})
-    assert b.cursor(sid) == (1, None)
-    assert (
-        b.after(sid, b.cursor(sid)[0]) == []
-    )  # a stream from the cursor replays nothing
+    read = datetime(2026, 11, 14, 18, 42, 23, 123456, tzinfo=UTC)
+    b.observe(sid, "ACTIVE", {}, outage_count=0)
+    b.observe(sid, "OUTAGE", {"state": "OUTAGE"}, outage_count=1, at=read)
+    assert b.after(sid, 0)[-1].data["at"] == "2026-11-14T18:42:23.123456+00:00"
+    d = read + timedelta(minutes=30)
+    warned = b.warn(sid, d, d - timedelta(minutes=5), 1800, at=read)
+    assert [e.data["at"] for e in warned] == [read.isoformat()]
 
 
-def test_a_reply_under_way_keeps_the_id_before_its_first_event() -> None:
-    """Review of 1deac5c9, 2: a reload mid-reply must replay the reply from its start."""
+def test_nothing_is_published_after_closed() -> None:
+    """Review of 8f9385b0, finding 6: CLOSED is terminal; a later (older) read never reopens."""
     b = EventBroker()
     sid = uuid.uuid4()
-    b.publish(sid, "warning", {"minutes": 10})  # 1
-    b.publish(sid, "turn_accepted", {"turn_no": 2})  # 2: the reply starts here
-    b.publish(sid, "reply_delta", {"text": "a"}, epoch=1)  # 3
-    b.publish(sid, "reply_delta", {"text": "b"}, epoch=1)  # 4
-    assert b.cursor(sid) == (4, 1)
-    b.publish(sid, "reply_done", {"turn_no": 3})  # 5: over
-    assert b.cursor(sid) == (5, None)
-    b.publish(
-        sid, "reply_delta", {"text": "c"}, epoch=1
-    )  # 6: a reply without turn_accepted
-    assert b.cursor(sid) == (6, 5)
+    b.observe(sid, "ACTIVE", {}, outage_count=0)
+    assert b.observe(sid, "CLOSED", {"close_reason": "finished"}).type == "closed"  # type: ignore[union-attr]
+    n = len(b.after(sid, 0))
+    assert b.observe(sid, "OUTAGE", {}, outage_count=1) is None
+    assert b.observe(sid, "ACTIVE", {}, outage_count=2) is None
+    t0 = datetime(2026, 11, 14, 9, 0, tzinfo=UTC)
+    assert b.warn(sid, t0 + timedelta(minutes=5), t0, 1800) == []
+    assert len(b.after(sid, 0)) == n
 
 
-def test_a_cursor_from_another_broker_or_ahead_of_the_ids_is_no_cursor() -> None:
-    """Review of 1deac5c9, 1: after an API restart the old cursor is ahead of every new id;
-    it must replay the ring, not drop every event."""
-    b = EventBroker()
+def test_ids_carry_the_broker_nonce_and_the_channel_generation() -> None:
+    """Review of 8f9385b0, C: an id of another broker (an API restart), of a swept channel, or a
+    bare number is foreign: the stream replays the whole ring instead of skipping new events."""
+    t = [0.0]
+    b = EventBroker(idle_ttl_s=10, clock=lambda: t[0])
     sid = uuid.uuid4()
     for _ in range(3):
         b.publish(sid, "turn_accepted")
-    ev = b.after(sid, 0)[0]
-    assert ev.sse(b.nonce).startswith(f"id: {b.nonce}:1\n")
-    assert b.last_event_id(sid, f"{b.nonce}:2") == (2, None)
-    assert b.last_event_id(sid, f"{b.nonce}:2:5") == (2, 5)
-    assert b.last_event_id(sid, "2") == (2, None)  # a bare id (an older client)
+    prefix = b.id_prefix(sid)
+    assert prefix.startswith(f"{b.nonce}.")
+    assert b.after(sid, 0)[0].sse(prefix).startswith(f"id: {prefix}:1\n")
+    assert b.last_event_id(sid, f"{prefix}:2") == 2
+    assert b.last_event_id(sid, f"{prefix}:3") == 3
     for raw in [
-        f"{EventBroker().nonce}:2",  # another instance
-        f"{b.nonce}:3",  # ahead of the ids (3 is the last: a stream after it is fine) ...
-        f"{b.nonce}:4",  # ... 4 is not
-        "4",
-        f"{b.nonce}:x",
-        f"{b.nonce}:1:2:3",
+        f"{prefix}:4",  # ahead of the ids
+        "2",  # a bare number
+        f"{EventBroker().nonce}.1:2",  # another instance
+        f"{prefix}:x",
+        f"{prefix}:1:2",
         "",
         None,
     ]:
-        got = b.last_event_id(sid, raw)
-        assert got == (0, None) or (raw == f"{b.nonce}:3" and got == (3, None)), raw
-    assert b.last_event_id(uuid.uuid4(), f"{b.nonce}:1") == (0, None)  # no channel
+        assert b.last_event_id(sid, raw) == 0, raw
+    t[0] = 11
+    b.sweep_idle()  # the channel is dropped ...
+    b.publish(sid, "turn_accepted")  # ... and re-created
+    assert b.id_prefix(sid) != prefix
+    assert b.last_event_id(sid, f"{prefix}:1") == 0
+    assert b.last_event_id(uuid.uuid4(), f"{prefix}:1") == 0  # no channel
 
 
 async def test_wait_wakes_on_publish_and_times_out_otherwise() -> None:

@@ -159,6 +159,7 @@ Every token requires `loginas: false` (`403 ERR-ASSESS-006` otherwise).
 | GET | `/api/v1/assess/transcripts/{tid}` | download token | transcripts |
 | POST | `/api/v1/assess/transcripts/{tid}/resend` | `assess:teacher` (a grader) or `admin` | transcripts |
 | GET, PUT | `/api/v1/assess/activities/{cmid}/config` | `assess:teacher` (an editor) | teacher configuration |
+| POST | `/api/v1/assess/activities/{cmid}/gate-refresh` | `assess:teacher` (verifies nobody) | teacher configuration |
 | GET | `/api/v1/assess/activities/{cmid}/sessions` | `assess:teacher` (a grader) | teacher operations |
 | POST | `/api/v1/assess/activities/{cmid}/sessions/{sid}/reset` | `assess:teacher` (a grader) | teacher operations |
 | POST | `/api/v1/assess/activities/{cmid}/terminate` | `assess:teacher` (a grader) | teacher operations |
@@ -278,7 +279,7 @@ selected server-side at Start.
 | POST | `/api/v1/assess/tokens` | `assess:mint` API key | `201 {"token", "expires_in"}` pre-session token. Optional body field `privacy_notice_version`: the `pre_session.privacy.notice_version` the student saw, sent on the **Start** mint (harmless on the others). Only its format is checked here (1-40 characters, not blank, no control character: C0 but tab and newline, DEL, C1), after the login-as assertion; it is never compared at mint and travels in the token as the claim `notice_version`, which only Start compares (`GET /state` and a resume ignore it) | `401 ERR-AUTH-001`, `403 ERR-ASSESS-006` (login-as, audited before any other body check), `403 ERR-ASSESS-007` (key not bound to the site), `400 ERR-ASSESS-014` (an invalid `privacy_notice_version`: `details.reason` `<code>:privacy_notice_version`, codes `too_long`, `empty`, `not_a_string`, `control_character`), `403 ERR-ASSESS-016` (plugin too old) |
 | GET | `/api/v1/assess/state` | pre-session | `200 {"state", "reason", ...}` the student's render state | `401 ERR-ASSESS-005`, `429 ERR-ASSESS-012` (`state_rate`) |
 | POST | `/api/v1/assess/sessions` | pre-session | `202 {"session_id", "state": "STARTING", "token", "session_no"}` | `401 ERR-ASSESS-005` (also a jti never minted by the site's current mint key: `mint_correlation`), `409 ERR-ASSESS-015` (gate code, `session_already_open`, `already_discussed`, `activity_not_configured`), `409 ERR-ASSESS-029` (`privacy_notice_changed`: the token carries a `privacy_notice_version` that is not the site's current one; no session, token not consumed, audited `assess_start_refused` with `presented_notice_version` and `current_notice_version`), `429 ERR-ASSESS-012` (`start_rate_cap`, `retry_after`), `503 ERR-ASSESS-013` (capacity), `503 ERR-ASSESS-001` (worker not ready, `start_breaker_open`) |
-| GET | `/api/v1/assess/sessions/{sid}` | session (or pre-session: resume, re-mints) | `200 {"session_id", "state", "close_reason", "session_no", "deadline_at", "server_now", "remaining_s" (frozen at the outage start while in OUTAGE), "committed_at", "reply_pending", "turns": [{"turn_no", "role", "kind", "text", "flagged"}]}` | `401`, `404 ERR-ASSESS-008`, `409 ERR-ASSESS-009` (closed), `409 ERR-ASSESS-011`, `503 ERR-ASSESS-001` |
+| GET | `/api/v1/assess/sessions/{sid}` | session (or pre-session: resume, re-mints) | `200 {"session_id", "state", "close_reason", "session_no", "deadline_at", "server_now", "remaining_s" (frozen at the outage start while in OUTAGE), "outage_reason" (OUTAGE only: `provider_unavailable` or `service_misconfigured`), "committed_at", "reply_pending", "turns": [{"turn_no", "role", "kind", "text", "flagged"}]}` | `401`, `404 ERR-ASSESS-008`, `409 ERR-ASSESS-009` (closed), `409 ERR-ASSESS-011`, `503 ERR-ASSESS-001` |
 | GET | `/api/v1/assess/sessions/{sid}/events` | session | `200 text/event-stream` (below) | as GET; a CLOSED session answers a content-free `state` + `closed` |
 | POST | `/api/v1/assess/sessions/{sid}/turns` | session | `202 {"session_id", "turn_no"}`; the reply streams on the events | `400 ERR-ASSESS-014` (`message_empty`, `message_too_long`), `409 ERR-ASSESS-010` (reply pending), `409 ERR-ASSESS-011` (deadline passed, OUTAGE), `429 ERR-ASSESS-012` (`message_rate` "Attendi qualche secondo"), `503 ERR-ASSESS-001` (`enrolment_freshness`) |
 | POST | `/api/v1/assess/sessions/{sid}/retry` | session | `202 {"session_id", "state", "reply_pending"}`; asks the server to answer a pending turn now, never ends OUTAGE | `409`, `429 ERR-ASSESS-012` (`retry_rate`) |
@@ -303,12 +304,40 @@ the site-bound `assess:teacher` key (exact scope: an `admin` key is `403 ERR-AUT
 acting Moodle user must be an EDITOR of the activity (`moodle/course:manageactivities`) in the
 worker's fresh facts for (site, cmid). The course id and activity type the plugin sends are hints:
 the worker resolves the cmid inside that course only. Missing or stale facts: `403 ERR-ASSESS-021`
-(`editor_check_stale`) and a refresh is queued; retry after a few seconds.
+(`editor_check_stale`) and a refresh is queued; retry after `details.retry_after_s` seconds.
+
+**Retry hint (`retry_after_s`).** A refusal that a refresh of the LMS facts may lift says when to
+retry in ONE place: `error.details.retry_after_s` (integer seconds, at least 1, never above 5;
+today 3), mirrored in the `Retry-After` header. It is NOT the envelope's top-level
+`error.retry_after` (that one stays for rate limits). The refresh job wakes the worker at once
+(`NOTIFY`), so the facts are normally re-read before the retry; a retry that still finds them
+old gets the same hint again. It is carried by exactly these refusals:
+
+| Status / code | `details` | When |
+|---------------|-----------|------|
+| `403 ERR-ASSESS-021` | `reason: editor_check_stale` or `grader_check_stale` | the activity's facts are absent, older than `VEKTRA_ASSESS_TEACHER_GATE_MAX_AGE_S`, or unreadable; a refresh was queued |
+| `400 ERR-ASSESS-022` (PUT config) | `fields` | EVERY field error is an LMS fact (`assignment_without_cutoff`, `quiz_without_close_date`, `team_submission`, `marking_guide`, `lms_rubric_missing`, `lms_facts_unreadable`) and those facts were read more than 5 s ago; a refresh was queued |
+| `409 ERR-ASSESS-024` (reset) | `reason: gate_inputs_stale` | the student's LMS gate half was not fresh; a render check was queued |
+
+A refusal decided on facts read in the last 5 s is an answer and carries no `retry_after_s`
+(`not_an_editor`, `not_a_grader`, an enable refused on a fact just read). A PUT refused for an LMS
+fact AND another error (no recipient, no cap, ...) still queues the refresh but carries no hint:
+the teacher must fix the other field first. Fail closed is unchanged: a stale fact never accepts
+anything.
 
 | Method | Path | Credential | Success | Errors |
 |--------|------|------------|---------|--------|
 | GET | `/api/v1/assess/activities/{cmid}/config` | `assess:teacher` key; headers `X-Assess-Actor` (Moodle user id), `X-Assess-Course`, `X-Assess-Activity-Type` (`quiz`/`assign`) | `200` the view below, `Cache-Control: no-store` | `400 ERR-ASSESS-014` (`cmid`, `x_assess_actor`; `teacher_gate_hint`: the activity's facts are absent or stale and the course / type headers are missing or invalid, so no check could be queued), `403 ERR-ASSESS-007`, `403 ERR-ASSESS-021` (`not_an_editor`, `editor_check_stale`; audited `assess_teacher_unverified`) |
-| PUT | `/api/v1/assess/activities/{cmid}/config` | `assess:teacher` key; body below (at most about 593 KiB: two 20,000-code-point texts fully `\u`-escaped plus the recipients) | `200` the view below (new `version`) | `400 ERR-ASSESS-014` (malformed body, unknown field, wrong type), `400 ERR-ASSESS-022` (field errors, all at once, nothing saved), `403 ERR-ASSESS-007`, `403 ERR-ASSESS-021`, `409 ERR-ASSESS-023` (`expected_version` is not `details.current_version`: reload, nothing saved), `503 ERR-ASSESS-001` (`teacher_config_key`) |
+| PUT | `/api/v1/assess/activities/{cmid}/config` | `assess:teacher` key; body below (at most about 593 KiB: two 20,000-code-point texts fully `\u`-escaped plus the recipients) | `200` the view below (new `version`) | `400 ERR-ASSESS-014` (malformed body, unknown field, wrong type), `400 ERR-ASSESS-022` (field errors, all at once, nothing saved; `details.retry_after_s` when every error is an LMS fact being re-read, above), `403 ERR-ASSESS-007`, `403 ERR-ASSESS-021`, `409 ERR-ASSESS-023` (`expected_version` is not `details.current_version`: reload, nothing saved), `503 ERR-ASSESS-001` (`teacher_config_key`) |
+| POST | `/api/v1/assess/activities/{cmid}/gate-refresh` | `assess:teacher` key; body `{"actor_userid", "courseid", "activity_type"}` (all required, the strict teacher-operation shape below; `actor_userid` is checked for shape only and verifies nobody) | `202 {"cmid", "queued", "refreshed_at"}`, `Cache-Control: no-store`: `queued` whether a refresh was queued now (`false`: one for this course / type hint is already pending, or the facts for that hint were read less than 10 s ago); `refreshed_at` when the stored facts were read (ISO 8601) or `null` | `400 ERR-ASSESS-014` (`cmid`, the body schema), `403 ERR-AUTH-003` (not a teacher key), `403 ERR-ASSESS-007` |
+
+`gate-refresh` (live E2E follow-up, 2026-11-13): the plugin calls it, fire and forget, when a
+teacher page of the activity opens (the Discussioni list, the activity settings form, the
+grader's page), so the teacher's first action finds the facts fresh instead of a
+`*_check_stale` refusal. The refresh is per activity: every teacher of it benefits. It returns
+no fact, grants nothing and is idempotent (one pending refresh per site, cmid and hint). A failure
+of any kind (status, timeout) is safe to ignore: the page opens anyway, and the teacher routes
+keep their own stale refusal with `retry_after_s`.
 
 PUT body: `actor_userid`, `courseid`, `activity_type`, `expected_version` (0 for an activity never
 saved) are required. Every other field is optional; ABSENT means unchanged. `null` clears only
@@ -399,7 +428,7 @@ built: use an LMS test-student account and a reset).
 | Method | Path | Body / headers | Success | Errors |
 |--------|------|----------------|---------|--------|
 | GET | `/api/v1/assess/activities/{cmid}/sessions` | headers `X-Assess-Actor`, `X-Assess-Course`, `X-Assess-Activity-Type`, optional `X-Assess-Cursor` (the `next_cursor` of the previous page) | `200` the list below, `Cache-Control: no-store` | `400 ERR-ASSESS-014` (`cmid`, `x_assess_actor`, `cursor`, `teacher_gate_hint`), `403 ERR-ASSESS-007` / `021`, `503 ERR-ASSESS-001` (`transcript_key`) |
-| POST | `/api/v1/assess/activities/{cmid}/sessions/{sid}/reset` | required: `actor_userid`, `courseid`, `activity_type` (above), `reason` (string, 1-1000 code points after normalisation and trimming; at most 4,000 characters in the body); optional: `include_previous_turns` (bool; absent or `null` = ON only after a `service_failure` close) | `201 {"reset_id", "student_userid", "session_no_next", "include_previous_turns"}` | `400 ERR-ASSESS-014` (`cmid`, `sid` (not a UUID), the body schema above: `missing:reason`, `string_too_long:reason`, ...), `400 ERR-ASSESS-022` (`reason`: `required` (empty after normalisation), `too_long`), `404 ERR-ASSESS-008`, `409 ERR-ASSESS-024` (`details.reason`: `not_closed`, `not_latest`, `already_reset`, `purged`, `gate_inputs_stale` (a render check was queued: retry in a few seconds), or `gate` with `details.gate` the refusing START gate; `end_date_passed` adds `field: available_until`) |
+| POST | `/api/v1/assess/activities/{cmid}/sessions/{sid}/reset` | required: `actor_userid`, `courseid`, `activity_type` (above), `reason` (string, 1-1000 code points after normalisation and trimming; at most 4,000 characters in the body); optional: `include_previous_turns` (bool; absent or `null` = ON only after a `service_failure` close) | `201 {"reset_id", "student_userid", "session_no_next", "include_previous_turns"}` | `400 ERR-ASSESS-014` (`cmid`, `sid` (not a UUID), the body schema above: `missing:reason`, `string_too_long:reason`, ...), `400 ERR-ASSESS-022` (`reason`: `required` (empty after normalisation), `too_long`), `404 ERR-ASSESS-008`, `409 ERR-ASSESS-024` (`details.reason`: `not_closed`, `not_latest`, `already_reset`, `purged`, `gate_inputs_stale` (a render check was queued: retry after `details.retry_after_s`, `Retry-After`), or `gate` with `details.gate` the refusing START gate; `end_date_passed` adds `field: available_until`) |
 | POST | `/api/v1/assess/activities/{cmid}/terminate` | required: `actor_userid`, `courseid`, `activity_type` (above), `reason` (as for reset), `expected_active_count` (integer >= 0, the "N sessioni attive" the teacher confirmed); optional: `also_disable` (bool, default `false`) | `200 {"termination_id", "closed", "rolled_back", "disabled"}` | `400 ERR-ASSESS-014` (`cmid`, the body schema: `missing:expected_active_count`, `greater_than_equal:expected_active_count`, ...), `400 ERR-ASSESS-022` (`reason`: `required`, `too_long`), `409 ERR-ASSESS-025` (`details.current`: the count now; nothing changed) |
 | PUT | `/api/v1/assess/activities/{cmid}/students/{userid}/extra-time` | required: `actor_userid`, `courseid`, `activity_type` (above), and exactly one of `minutes` (integer, 0-240) / `percent` (integer, 0-200) (the other absent or `null`); optional: `confirm_over_100` (bool, default `false`; must be `true` above +100 %); no reason field exists | `200 {"student_userid", "extra_seconds", "duration_s"}` | `400 ERR-ASSESS-014` (`cmid`, `userid`, the body schema), `400 ERR-ASSESS-022` (`extra_time`: `minutes_or_percent`, `out_of_range`, `total_too_long` (cap + extra above 240 min), `confirm_over_100`, `cap_not_configured`, `session_locked` with `state`) |
 | PUT | `/api/v1/assess/activities/{cmid}/opening-fallback` | all required: `actor_userid`, `courseid`, `activity_type` (above), `opening_at` (ISO 8601 date-time with a time zone; a JSON number is read as Unix seconds UTC), `attestation` (bool, must be `true`), `attestation_text_version` (string matching `[A-Za-z0-9._-]{1,32}`, the attestation text the plugin showed; audited) | `200 {"opening_at", "previous", "version"}` | `400 ERR-ASSESS-014` (`cmid`, the body schema: `missing:courseid`, `missing:activity_type`, `missing:opening_at`, `missing:attestation`, `datetime_from_date_parsing:opening_at`, `bool_type:attestation`, `string_pattern_mismatch:attestation_text_version`, ...), `400 ERR-ASSESS-022` (`attestation`: `required` (it is `false`); `opening_at`: `fallback_not_needed`, `before_close` (with `close_at`), `only_later` (with `current_at`), `not_before_end` (with `available_until`: when an end date is set the fallback must be earlier than it), `no_close_date`, `close_unreadable`, `timezone_required`, `out_of_range`, `activity_not_configured`) |
@@ -538,11 +567,14 @@ ERR-ASSESS-006` on every route.
 **Events** (`text/event-stream`, `Last-Event-ID` replays the in-memory ring). Payloads are
 content-free except `reply_delta`, which carries post-checked text only and is delivered only while
 the row is live at the token's epoch. `state` (snapshot on connect), `committed`,
-`start_rolled_back` (`reason`, `technical_problem_persistent` after 3 consecutive system
+`start_rolled_back` (`reason`: the rollback reason, e.g. `provider_unavailable`,
+`service_misconfigured`, `capacity`; `technical_problem_persistent` after 3 consecutive system
 rollbacks), `capacity_refused`, `turn_accepted`, `reply_delta`, `reply_done`, `reply_interrupted`
-(`reason`: `provider_refused`, `internal_error`, `append_refused`, `persist_failed`), `warning`
-(`minutes`: 10 / 5 / 1 against the current deadline), `budget_warning` (`percent: 80`),
-`outage_start`, `outage_end` (with the moved `deadline_at`), `closed` (`close_reason`,
+(`reason`: `provider_refused`, `service_misconfigured`, `internal_error`, `append_refused`,
+`persist_failed`), `warning` (`minutes`: 10 / 5 / 1 against the current deadline),
+`budget_warning` (`percent: 80`), `outage_start` (optional `reason`: `provider_unavailable` or
+`service_misconfigured`; the `state` snapshot of a session in OUTAGE carries it too), `outage_end`
+(with the moved `deadline_at`), `closed` (`close_reason`,
 `message_code`: `closed_finished`, `closed_timed_out`, `closed_service_failure`,
 `closed_budget_exhausted`, `closed_terminated_by_teacher`, `closed_access_revoked`; the plugin
 renders the Italian text).
@@ -555,6 +587,24 @@ interval when at least G seconds, the cumulative credit capped at C = min(15 min
 duration); beyond C, or after 3 consecutive failed calls, the session closes `service_failure` and
 the close queues a `teacher_notify` job in the same transaction: the worker mails the activity's
 configured transcript recipients (ids and the event only, no content) within the minute. Limits and their sizing: `docs/reference/configuration.md`.
+
+**The provider refusing the configuration** (`service_misconfigured`, live E2E follow-up). A
+discussion turn the model provider refuses for the deployment's configuration (`auth_error`: a
+missing or refused key; any 4xx but 429: a wrong model, a rejected parameter) ends with the
+marked "[risposta interrotta]" turn and `reply_interrupted` `reason: service_misconfigured`, then
+the session enters OUTAGE with that same reason: the timer is frozen and the time is credited on
+recovery exactly like an outage (G, C, 3 consecutive failed calls). The worker's probe keeps
+checking the provider; a refused probe never ends the outage, so it ends once the operator fixes
+the configuration (or C closes the session `service_failure`). The refused turn is not
+replayed. The operator gets one `provider_config_refused` mail per site, cause and hour; the
+paused session sends no further turn. `GET /sessions/{sid}` adds `outage_reason`
+(`provider_unavailable` | `service_misconfigured`) while the session is in OUTAGE (absent
+otherwise). A Start the provider refuses for the same cause rolls back `service_misconfigured`
+(a system rollback: it counts towards the 3-rollback notice and the Start breaker). The
+discussion UI shows "Il servizio non è disponibile per un problema tecnico. Il personale è stato
+avvisato: riprova più tardi. Questo tempo non ti viene conteggiato." for both. The plugin never
+sees either reason: a rolled-back Start leaves no session for `GET /state`, and the iframe UI
+renders the text itself.
 
 ### Assess UI: the discussion page and the postMessage contract (plugin <-> UI)
 

@@ -191,9 +191,12 @@ raise with reasoning still on, it usually means the reasoning outlasted the firs
 `auth_error` is the API key refused (401/403) or not configured at all (litellm then reports a
 synthetic status 500, so `http_status` is `null`): check `VEKTRA_LLM_API_KEY` in the process
 that logged it. `http_4xx` is the provider refusing the request (a wrong model, a rate limit, a
-rejected parameter or content). Both are refusals: a discussion turn ends `provider_refused`
-and the session never enters OUTAGE. An `auth_error`, or an `http_4xx` that is not a 429, also
-emails the operator (`provider_config_refused`, at most once per site, cause and hour). The
+rejected parameter or content). Both are refusals. A 429 ends the turn `provider_refused` and
+the session stays ACTIVE. An `auth_error`, or an `http_4xx` that is not a 429, is the
+configuration: the turn ends interrupted (`service_misconfigured`), the session pauses in
+OUTAGE so the student's time is not counted until you fix it, a Start rolls back
+`service_misconfigured`, and the operator gets an email (`provider_config_refused`, at most
+once per site, cause and hour). The
 outage probe logs them as `assess_outage_probe_failed` with `reason_code=provider_refused` and
 leaves the outage open; a 429 is transient (`provider_unavailable`). Both the API and the worker
 refuse to start when the model's provider needs an API key and their own environment has none

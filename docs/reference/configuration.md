@@ -229,7 +229,7 @@ printed, because some settings carry connection strings.
 | `VEKTRA_ASSESS_MESSAGES_PER_MIN` | int | `4` | REQ-083: student messages per minute per session; above it 429 `ERR-ASSESS-012` ("Attendi qualche secondo"), before any model call, deadline unchanged. Sized in plan 8 M5.1 (see below). |
 | `VEKTRA_ASSESS_SESSION_TOKEN_BUDGET` | int | `500000` | REQ-083: estimated tokens (prompt + completion, from `TurnUsage`) one session may use; `budget_warning` at 80%, close `budget_exhausted` at 100% (one transcript job). Outage retries and earlier sessions do not count. Sized in plan 8 M5.1 (see below). |
 | `VEKTRA_ASSESS_START_RATE_PER_HOUR` | int | `5` | REQ-071: Start attempts per (student, activity) per hour; the next is refused 429 `start_rate_cap` with `retry_after` ("Riprova tra X minuti"), nothing consumed, audited `assess_start_rate_cap_hit`. |
-| `VEKTRA_ASSESS_ROLLBACK_NOTIFY_AFTER` | int | `3` | REQ-071: this many consecutive SYSTEM rollbacks (start_timeout, capture_failed, part_b_rejected, provider_unavailable, internal_error, commit_failed) of one (student, activity) enqueue `teacher_notify` and `operator_notify` once (audited `assess_rollback_cap_hit`); the student reads `technical_problem_persistent` ("Problema tecnico persistente") while the streak lasts. Worker and API. |
+| `VEKTRA_ASSESS_ROLLBACK_NOTIFY_AFTER` | int | `3` | REQ-071: this many consecutive SYSTEM rollbacks (start_timeout, capture_failed, part_b_rejected, provider_unavailable, service_misconfigured, internal_error, commit_failed) of one (student, activity) enqueue `teacher_notify` and `operator_notify` once (audited `assess_rollback_cap_hit`); the student reads `technical_problem_persistent` ("Problema tecnico persistente") while the streak lasts. Worker and API. |
 | `VEKTRA_ASSESS_START_BREAKER_ROLLBACKS` | int | `10` | Per-site Start breaker: this many system rollbacks of one site within the window open it (worker-written `assess_start_breaker`, audited `assess_start_breaker_open`); the API then refuses Starts 503 `start_breaker_open` without consuming anything. |
 | `VEKTRA_ASSESS_START_BREAKER_WINDOW_S` | int | `300` | The breaker's counting window. |
 | `VEKTRA_ASSESS_START_BREAKER_COOLDOWN_S` | int | `120` | Seconds the breaker stays fully open; then half-open (one Start at a time goes through). A commit closes it (`assess_start_breaker_close`); another system rollback re-opens it. |
@@ -374,8 +374,13 @@ info level.
 
 **A configuration refusal alerts the operator.** On a turn or a Start, an `auth_error` or a
 non-429 `http_4xx` queues one `operator_notify` email, `provider_config_refused`, to
-`VEKTRA_ASSESS_OPERATOR_EMAIL`. It is sent at most once per site, cause and hour. Students see
-the interrupted turn, or the Start rolled back `provider_unavailable`, as before.
+`VEKTRA_ASSESS_OPERATOR_EMAIL`. It is sent at most once per site, cause and hour. A discussion
+turn ends with the interrupted turn (`reply_interrupted` `reason: service_misconfigured`) and
+the session then pauses in OUTAGE with that reason: the student's time is not counted, the probe
+above keeps checking, and the fix of the configuration ends the outage with the usual credit (C
+still closes the session `service_failure` if it stays broken). A Start rolls back
+`service_misconfigured`. The discussion UI tells the student that staff have been notified and
+that this time is not counted.
 
 **Startup checks the key.** The API and the worker each read `VEKTRA_LLM_API_KEY` from their own
 environment, and both call the model. When the assess model's provider needs an API key and

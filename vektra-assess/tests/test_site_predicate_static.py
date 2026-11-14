@@ -68,10 +68,6 @@ ALLOWED: dict[tuple[str, str], str] = {
     ("events.py", "SELECT state, close_reason, epoch, deadline_at, duration_s, "): (
         _SESSION_OF_TOKEN
     ),
-    # OUTAGE_FACTS: read by the turn driver in the transaction that opened the session's outage
-    ("events.py", "SELECT deadline_at, (SELECT count(*) FROM assess_outage_inci"): (
-        _SESSION_OF_TOKEN
-    ),
     ("state.py", "SELECT s.session_no, s.state, s.deadline_at, s.duration_s, n"): (
         _SESSION_OF_TOKEN
     ),
@@ -261,7 +257,7 @@ def test_every_allowlisted_statement_is_backed_by_rls() -> None:
     rls = set(_rls_revision().SITE_TABLES)
     scoped = site_scoped_tables()
     statements = {(f, s[:60]): s for f, s in sql_texts()}
-    assert len(ALLOWED) == 13
+    assert len(ALLOWED) == 12
     for key in ALLOWED:
         tables = {t.lower() for t in _READ.findall(statements[key])} & scoped
         assert tables and tables <= rls, (key, tables - rls)

@@ -588,20 +588,24 @@ ERR-ASSESS-006` on every route.
 
 **Events** (`text/event-stream`, `Last-Event-ID` replays the in-memory ring). Payloads are
 content-free except `reply_delta`, which carries post-checked text only and is delivered only while
-the row is live at the token's epoch. The state events `outage_start`, `outage_end` and
-`warning` carry optional `at`: the database time at which the state they report was read (a
-poll's `clock_timestamp()`, or the clock read after the commit that decided it). A client that
-applied a snapshot drops those whose `at` is not after that snapshot's `server_now` (the same
-clock): the snapshot already shows them. Events without `at` (an older server) count as before.
-`state` (snapshot on connect: `state`, `close_reason`, `message_code`, `deadline_at`,
-`server_now`, and in OUTAGE `reason`), `committed`,
+the row is live at the token's epoch. The state events `outage_start`, `outage_end`, `warning`
+and `committed`, and a `reply_interrupted` without `turn_no`, carry optional `at`: the database
+time at which the state they report was read (a poll's `clock_timestamp()`, the same status read
+taken after the commit that decided an outage, or the clock when a reply ended with no turn). A
+client that applied a snapshot drops those whose `at` is not after that snapshot's `server_now`
+(the same clock): the snapshot already shows them. Events without `at` (an older server) count as
+before. `state` (on every connect, the session's state now: `state`, `close_reason`,
+`message_code`, `deadline_at`, `server_now`, and in OUTAGE `reason` and `remaining_s`, the time
+left frozen at the open outage's start; a client applies it as a snapshot when its `server_now`
+is newer than the one on screen), `committed`,
 `start_rolled_back` (`reason`: the rollback reason, e.g. `provider_unavailable`,
 `service_misconfigured`, `capacity`; `technical_problem_persistent` after 3 consecutive system
 rollbacks), `capacity_refused`, `turn_accepted`, `reply_delta`, `reply_done`, `reply_interrupted`
 (`reason`: `provider_refused`, `service_misconfigured`, `internal_error`, `append_refused`,
 `persist_failed`), `warning` (`minutes`: 10 / 5 / 1 against the current deadline),
 `budget_warning` (`percent: 80`), `outage_start` (optional `reason`: `provider_unavailable` or
-`service_misconfigured`; a reconnect learns it from `GET /sessions/{sid}` `outage_reason`), `outage_end`
+`service_misconfigured`; a reconnect learns it from `GET /sessions/{sid}` `outage_reason`; optional
+`remaining_s`, the time left frozen at this outage's start), `outage_end`
 (with the moved `deadline_at`; an outage that ended and another that began between two polls
 is published as `outage_end` then `outage_start`, a whole outage between two polls as
 `outage_end`), `closed` (`close_reason`; terminal: nothing is published after it,

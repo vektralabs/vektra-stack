@@ -36,15 +36,20 @@ export function dbMicros(iso: unknown): number | null {
 /** How long the closing screen waits for the parent's download token. */
 export const DOWNLOAD_TIMEOUT_MS = 10_000;
 
-interface SessionView {
-  session_id: string;
+/** What a snapshot says of the session's state: ``GET /sessions/{sid}`` or the stream's
+ *  opening ``state`` (whose ``reason`` is ``outage_reason`` here). */
+interface SnapshotState {
   state: string;
   close_reason: string | null;
   deadline_at: string | null;
   server_now: string;
-  reply_pending: boolean;
   remaining_s?: number; // frozen at the outage start while in OUTAGE
   outage_reason?: string; // OUTAGE only: provider_unavailable | service_misconfigured
+}
+
+interface SessionView extends SnapshotState {
+  session_id: string;
+  reply_pending: boolean;
   turns: Turn[];
   token?: string;
 }
@@ -282,23 +287,28 @@ export class App {
   private apply(view: SessionView, stateIsOlder = false): void {
     if (this.state.name === "closed") return; // a late snapshot never reopens the screen
     this.lastTurnNo = Math.max(0, ...view.turns.map((t) => t.turn_no));
-    if (!stateIsOlder) {
-      this.deadline = view.deadline_at ? Date.parse(view.deadline_at) : null;
-      const at = dbMicros(view.server_now);
-      if (at !== null) this.snapshotAt = Math.max(this.snapshotAt ?? at, at);
-      this.dispatch({ type: "session_state", state: view.state, closeReason: view.close_reason });
-    }
+    if (!stateIsOlder) this.applyState(view);
     if (view.state !== "STARTING") this.chat.render(view.turns, view.reply_pending);
     this.replyPending = view.reply_pending;
-    if (view.state === "OUTAGE" && !stateIsOlder) {
-      // a resume into an outage gets no outage_start replayed: the snapshot says it, and the
-      // frozen time left comes from it
-      this.showOutage(view.outage_reason);
-      if (typeof view.remaining_s === "number")
-        this.controls.setTime(minutesLeft(view.remaining_s * 1000, 0));
-    }
     this.syncComposer();
     this.tick();
+  }
+
+  /** The state part of a snapshot (``GET /sessions/{sid}``, or the stream's opening ``state``
+   *  on every connect): the state, the deadline, in OUTAGE its text and the frozen time left,
+   *  and the snapshot's time (``server_now``), before which the replayed state events are
+   *  already on screen. A snapshot that takes the screen from active into OUTAGE says so. */
+  private applyState(v: SnapshotState): void {
+    const before = this.state.name;
+    this.deadline = v.deadline_at ? Date.parse(v.deadline_at) : null;
+    const at = dbMicros(v.server_now);
+    if (at !== null) this.snapshotAt = Math.max(this.snapshotAt ?? at, at);
+    this.dispatch({ type: "session_state", state: v.state, closeReason: v.close_reason });
+    if (v.state !== "OUTAGE" || this.state.name !== "outage") return;
+    this.showOutage(v.outage_reason);
+    if (typeof v.remaining_s === "number") this.controls.setTime(minutesLeft(v.remaining_s * 1000, 0));
+    if (before === "active")
+      this.live.say(v.outage_reason === SERVICE_MISCONFIGURED ? M.serviceMisconfigured : M.outageLive);
   }
 
   /** The paused-time banner. A configuration refusal says so (and that the staff know); any
@@ -347,13 +357,35 @@ export class App {
     if (STATE_EVENTS.has(ev.event) && this.reflected(data.at)) return;
     switch (ev.event) {
       case "committed":
+        // a replayed one (the screen already shows the session, or a snapshot not older than
+        // it) loads nothing
+        if (this.state.name === "active" || this.state.name === "outage" || this.reflected(data.at))
+          return;
         return this.loadCommitted();
-      case "state":
+      case "state": {
+        const live = data.state === "ACTIVE" || data.state === "OUTAGE";
         // the stream's first event is a state snapshot: a session that committed before the
         // stream opened sends ACTIVE (or OUTAGE) and no committed event
-        if (this.state.name === "preparing" && (data.state === "ACTIVE" || data.state === "OUTAGE"))
-          return this.loadCommitted();
+        if (this.state.name === "preparing" && live) return this.loadCommitted();
+        // on every (re)connect it is the session's state now: applied unless a snapshot
+        // already on screen is not older (it also brings back a change the stream missed,
+        // across an API restart for one)
+        if ((this.state.name !== "active" && this.state.name !== "outage") || !live) return;
+        const t = dbMicros(data.server_now);
+        if (t === null || (this.snapshotAt !== null && t <= this.snapshotAt)) return;
+        this.stateEvents++;
+        this.applyState({
+          state: String(data.state),
+          close_reason: null,
+          deadline_at: typeof data.deadline_at === "string" ? data.deadline_at : null,
+          server_now: String(data.server_now),
+          remaining_s: typeof data.remaining_s === "number" ? data.remaining_s : undefined,
+          outage_reason: typeof data.reason === "string" ? data.reason : undefined,
+        });
+        this.syncComposer();
+        this.tick();
         return;
+      }
       case "start_rolled_back":
         return this.dispatch({ type: "rolled_back", reason: String(data.reason ?? "") });
       case "turn_accepted":
@@ -376,8 +408,12 @@ export class App {
         if (!this.replyPending) return;
         // the end of a reply the snapshot already shows (the stream replays its ring when it
         // opens without a cursor): its replayed text goes, no read, no announcement; the
-        // owed reply's events follow it in the ring
-        if (typeof data.turn_no === "number" && data.turn_no <= this.lastTurnNo) {
+        // owed reply's events follow it in the ring. Without a turn (nothing was appended) its
+        // time tells it: not after the snapshot on screen
+        if (
+          (typeof data.turn_no === "number" && data.turn_no <= this.lastTurnNo) ||
+          (typeof data.turn_no !== "number" && this.reflected(data.at))
+        ) {
           this.chat.discardStreaming();
           return;
         }
@@ -395,9 +431,13 @@ export class App {
         this.stateEvents++;
         this.showOutage(data.reason);
         this.dispatch({ type: "outage_start" });
+        if (this.state.name !== "outage") return;
+        // the time left, frozen by the server at this outage's start (after an outage_end of
+        // a previous one the deadline alone would count the new outage as time spent)
+        if (typeof data.remaining_s === "number")
+          this.controls.setTime(minutesLeft(data.remaining_s * 1000, 0));
         // why, and Riprova (a misconfiguration is not lifted by a retry: its own text)
-        if (this.state.name === "outage")
-          this.live.say(data.reason === SERVICE_MISCONFIGURED ? M.serviceMisconfigured : M.outageLive);
+        this.live.say(data.reason === SERVICE_MISCONFIGURED ? M.serviceMisconfigured : M.outageLive);
         return;
       case "outage_end":
         this.stateEvents++;

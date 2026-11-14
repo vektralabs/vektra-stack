@@ -1080,6 +1080,7 @@ describe("a reload replays the ring; what the snapshot shows is not applied agai
   const NOW = "2026-11-14T18:47:00.500000+00:00";
   const BEFORE = (s: number) => `2026-11-14T18:46:${String(60 - s).padStart(2, "0")}.000000+00:00`;
   const AFTER = "2026-11-14T18:47:00.500001+00:00";
+  const LATER = "2026-11-14T18:47:30.000000+00:00";
   const snapshot = (extra: object) => ({
     session_id: "S",
     state: "ACTIVE",
@@ -1094,11 +1095,13 @@ describe("a reload replays the ring; what the snapshot shows is not applied agai
   /** A page reloaded into a session: GET /sessions/S answers ``view``; the stream stays open. */
   async function reloaded(view: object) {
     const streams: Record<string, string>[] = [];
+    const reads = { n: 0 };
     const fetchImpl = (async (url: string, init: RequestInit) => {
       if (url.endsWith("/events")) {
         streams.push(init.headers as Record<string, string>);
         return new Promise<Response>(() => {});
       }
+      reads.n += 1;
       return Response.json(view);
     }) as unknown as typeof fetch;
     const root = document.createElement("main");
@@ -1122,7 +1125,7 @@ describe("a reload replays the ring; what the snapshot shows is not applied agai
     priv.clockOffset = 0; // the fixed server_now above is not "now"; the timer uses local time
     const ev = (event: string, data: object) =>
       priv.onEvent.call(a, { event, data: JSON.stringify(data) });
-    return { a, root, priv, streams, ev };
+    return { a, root, priv, streams, ev, reads };
   }
   const count = (haystack: string, needle: string) => haystack.split(needle).length - 1;
 
@@ -1225,6 +1228,70 @@ describe("a reload replays the ring; what the snapshot shows is not applied agai
     await ev("outage_end", {});
     expect(a.banner.hidden).toBe(false);
     expect(a.banner.textContent).toContain("ti è stato restituito");
+  });
+
+  it("the opening state of a reconnect is the session now; an older one is not", async () => {
+    // e.g. after an API restart: the outage began while the stream was down
+    const { a, priv, ev } = await reloaded(snapshot({}));
+    await ev("state", { state: "OUTAGE", deadline_at: inMinutes(30), server_now: NOW, reason: "x" });
+    expect(priv.state.name).toBe("active"); // not newer than the snapshot on screen
+    await ev("state", {
+      state: "OUTAGE",
+      deadline_at: inMinutes(30),
+      server_now: LATER,
+      remaining_s: 600,
+      reason: "service_misconfigured",
+    });
+    expect(priv.state.name).toBe("outage");
+    expect(a.banner.textContent).toBe(MISCONFIGURED);
+    expect(a.controls.timer.textContent).toBe("Mancano 10 minuti");
+    expect(a.live.el.textContent).toBe(MISCONFIGURED); // announced once (6)
+    expect(a.live.announcements).toBe(1);
+    // the replay of what that state already shows is not applied again
+    await ev("outage_end", { state: "ACTIVE", deadline_at: inMinutes(20), at: AFTER });
+    expect(priv.state.name).toBe("outage");
+  });
+
+  it("a GET snapshot that finds the session in OUTAGE announces it", async () => {
+    const { a, priv } = await reloaded(snapshot({}));
+    priv.apply.call(a, snapshot({ state: "OUTAGE", server_now: LATER, remaining_s: 300 }));
+    expect(priv.state.name).toBe("outage");
+    expect(a.live.announcements).toBe(1);
+    expect(a.live.el.textContent).toContain("Puoi usare Riprova");
+  });
+
+  it("an outage that began again at once freezes the server's time left (3)", async () => {
+    const { a, priv, ev } = await reloaded(snapshot({}));
+    await ev("outage_end", { state: "OUTAGE", deadline_at: inMinutes(30), at: AFTER });
+    await ev("outage_start", { state: "OUTAGE", deadline_at: inMinutes(30), remaining_s: 1200, at: AFTER });
+    expect(priv.state.name).toBe("outage");
+    expect(a.controls.timer.textContent).toBe("Mancano 20 minuti");
+  });
+
+  it("a replayed reply end without a turn is dropped by its time (4)", async () => {
+    const { a, ev, reads } = await reloaded(
+      snapshot({
+        reply_pending: true,
+        turns: [
+          { turn_no: 1, role: "bot", kind: "opening", text: "Benvenuto" },
+          { turn_no: 2, role: "student", kind: "normal", text: "domanda" },
+        ],
+      }),
+    );
+    const before = reads.n;
+    await ev("reply_interrupted", { reason: "persist_failed", at: BEFORE(3) });
+    expect(reads.n).toBe(before); // no read
+    expect(a.live.announcements).toBe(0);
+    await ev("reply_interrupted", { reason: "persist_failed", at: AFTER });
+    expect(a.live.announcements).toBe(1); // a live one is reported
+  });
+
+  it("a replayed committed loads nothing (5)", async () => {
+    const { ev, reads } = await reloaded(snapshot({}));
+    const before = reads.n;
+    await ev("committed", { state: "ACTIVE", at: BEFORE(40) });
+    await ev("committed", { state: "ACTIVE" });
+    expect(reads.n).toBe(before);
   });
 
   it("database times compare to the microsecond", () => {

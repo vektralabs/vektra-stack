@@ -82,6 +82,8 @@ async def test_starting_then_committed_then_closed(pg, worker) -> None:  # type:
         assert events[0]["data"]["state"] == "STARTING" and "id" not in events[0]
         assert [_id(e) for e in events[1:]] == [1, 2]
         assert events[2]["data"]["close_reason"] == "finished"
+        # committed carries its read time: a replayed one is told from a live one by it
+        assert datetime.fromisoformat(events[1]["data"]["at"])
         # no event payload carries opening-turn text (only reply_delta may carry text)
         body = json.dumps(events)
         assert FakePartB().text not in body and "Sessione" not in body
@@ -345,6 +347,12 @@ async def test_an_outage_ended_and_reopened_between_polls_is_published(
         await enter()
         reload = asyncio.create_task(_stream(w, sid, s.session_token, last=seen))
         await asyncio.sleep(0.3)
+        frozen = (
+            await w.client.get(
+                f"/api/v1/assess/sessions/{sid}",
+                headers={"Authorization": f"Bearer {s.session_token}"},
+            )
+        ).json()
         await _close(worker, sid)
         events = parse(await asyncio.wait_for(reload, 15))
         assert [e["event"] for e in events] == [
@@ -355,6 +363,11 @@ async def test_an_outage_ended_and_reopened_between_polls_is_published(
         ]
         assert events[0]["data"]["reason"] == "provider_unavailable"
         assert events[1]["data"]["deadline_at"]
+        # the opening state and the new outage_start carry the time left frozen at the open
+        # outage's start, the same number GET /sessions/{sid} gives
+        assert frozen["state"] == "OUTAGE"
+        assert events[0]["data"]["remaining_s"] == frozen["remaining_s"]
+        assert events[2]["data"]["remaining_s"] == frozen["remaining_s"]
 
 
 @pytest.mark.parametrize("how", ["restart", "sweep", "bare"])

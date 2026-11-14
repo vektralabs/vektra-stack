@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import uuid
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 import pytest
 
@@ -124,6 +125,54 @@ def test_nothing_is_published_after_closed() -> None:
     t0 = datetime(2026, 11, 14, 9, 0, tzinfo=UTC)
     assert b.warn(sid, t0 + timedelta(minutes=5), t0, 1800) == []
     assert len(b.after(sid, 0)) == n
+
+
+class _NoDatabase:
+    """An engine whose every connection fails (the post-commit read of the turn driver)."""
+
+    def connect(self) -> Any:
+        raise ConnectionError("database gone")
+
+
+async def test_a_failed_read_after_the_outage_commit_never_escapes() -> None:
+    """Review of f5087bf2, 2: the outage is committed; reading its status (and the clock)
+    afterwards fails. Nothing is raised: outage_start goes out with its reason, no at."""
+    from vektra_assess.api.turns import TurnDriver
+
+    broker = EventBroker()
+    driver = TurnDriver(
+        engine=_NoDatabase(),  # type: ignore[arg-type]
+        broker=broker,
+        runner=None,
+        handoff_private=None,  # type: ignore[arg-type]
+        cache=None,  # type: ignore[arg-type]
+    )
+    sid = uuid.uuid4()
+    broker.observe(sid, "ACTIVE", {}, outage_count=0)
+    await driver._observe_outage(sid, "outage", "provider_unavailable")
+    (event,) = broker.after(sid, 0)
+    assert event.type == "outage_start"
+    assert event.data == {"state": "OUTAGE", "reason": "provider_unavailable"}
+    assert await driver._db_now() is None
+
+
+def test_one_ordering_rule_for_every_live_read() -> None:
+    """Review of f5087bf2, 9+10: a live read without its count (the driver's fallback) takes
+    the next place in the order, so the poll that follows does not publish it twice."""
+    b = EventBroker()
+    sid = uuid.uuid4()
+    b.observe(sid, "STARTING", {})
+    assert b.observe(sid, "ACTIVE", {}, outage_count=0).type == "committed"  # type: ignore[union-attr]
+    assert b.observe(sid, "OUTAGE", {"reason": "x"}).type == "outage_start"  # type: ignore[union-attr]
+    assert (
+        b.observe(sid, "OUTAGE", {}, outage_count=1) is None
+    )  # the same place: nothing
+    assert b.observe(sid, "ACTIVE", {}, outage_count=1).type == "outage_end"  # type: ignore[union-attr]
+    assert [e.type for e in b.after(sid, 0)] == [
+        "committed",
+        "outage_start",
+        "outage_end",
+    ]
 
 
 def test_ids_carry_the_broker_nonce_and_the_channel_generation() -> None:

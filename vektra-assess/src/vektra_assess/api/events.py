@@ -49,7 +49,7 @@ from vektra_assess.api.session_gate import ANY_OPEN, session_tx
 from vektra_assess.errors import close_message_code
 from vektra_assess.provider_alerts import outage_reason
 from vektra_assess.start_rules import SYSTEM_ROLLBACK_REASONS
-from vektra_assess.timing import due_warnings
+from vektra_assess.timing import due_warnings, remaining_s
 from vektra_assess.tokens import SessionClaims
 
 EVENT_TYPES = frozenset(
@@ -70,6 +70,8 @@ EVENT_TYPES = frozenset(
     }
 )
 TERMINAL = frozenset({"closed", "start_rolled_back"})
+#: the live session states, between which reads are ordered by ``outage_key``
+LIVE = frozenset({"ACTIVE", "OUTAGE"})
 #: the only event whose payload may carry text (post-checked reply text)
 CONTENT_EVENTS = frozenset({"reply_delta"})
 
@@ -203,21 +205,41 @@ class EventBroker:
         ch = self._channel(sid)
         if ch.ended_at is not None or ch.last_state == "CLOSED":
             return None
-        key = outage_key(state, outage_count)
         timed = dict(data, at=_iso(at)) if at is not None else data
-        if key is not None and ch.last_key is not None:
-            if key <= ch.last_key:
-                return None
-            before, ch.last_key, ch.last_state = ch.last_key, key, state
-            out = None
-            if key // 2 > before // 2:
-                out = self.publish(sid, "outage_end", timed)
-            if key % 2:
-                out = self.publish(sid, "outage_start", timed)
-            return out
-        if key is not None:
-            ch.last_key = key
-        prev, ch.last_state = ch.last_state, state
+        prev, prev_key = ch.last_state, ch.last_key
+        if state in LIVE:
+            key = outage_key(state, outage_count)
+            if key is None and prev_key is not None:
+                # a live read without its count (the driver's fallback): the next state in the
+                # order, or the same one
+                key = prev_key + (0 if state == prev else 1)
+            if key is not None and prev_key is not None:
+                # REQ-086 (M4.1, M4.2): one ordering rule between live reads
+                if key <= prev_key:
+                    return None
+                ch.last_state, ch.last_key = state, key
+                out = None
+                if (
+                    key // 2 > prev_key // 2
+                ):  # an interval ended since (the moved deadline)
+                    out = self.publish(sid, "outage_end", timed)
+                if key % 2:  # and one is open now
+                    out = self.publish(sid, "outage_start", timed)
+                return out
+            # no order yet: the first live read (after STARTING, or the channel's first)
+            ch.last_state, ch.last_key = state, key
+            if prev == "STARTING":
+                return self.publish(
+                    sid, "committed" if state == "ACTIVE" else "state", timed
+                )
+            if prev in LIVE and prev != state:  # counts unknown on both sides
+                return self.publish(
+                    sid, "outage_start" if state == "OUTAGE" else "outage_end", timed
+                )
+            return (
+                None  # the first observation: every connection already got a snapshot
+            )
+        ch.last_state = state
         if prev == state:
             return None
         if state is None:
@@ -228,18 +250,7 @@ class EventBroker:
             )
         if state == "CLOSED":
             return self.publish(sid, "closed", data)
-        if prev == "STARTING" and state == "ACTIVE":
-            return self.publish(sid, "committed", data)
-        # REQ-086 (M4.1, M4.2): the outage and its end; ``outage_end`` carries the moved deadline
-        if prev == "ACTIVE" and state == "OUTAGE":
-            return self.publish(sid, "outage_start", timed)
-        if prev == "OUTAGE" and state == "ACTIVE":
-            return self.publish(sid, "outage_end", timed)
-        if prev is None:
-            return (
-                None  # the first observation: every connection already got a snapshot
-            )
-        return self.publish(sid, "state", data)
+        return None if prev is None else self.publish(sid, "state", data)
 
     def warn(
         self,
@@ -336,30 +347,26 @@ POLL_S = 1.0
 KEEPALIVE_S = 15.0
 MAX_STREAM_S = 3600.0  # the client reconnects with Last-Event-ID
 
-#: what the API driver reads in the transaction that opened an outage, for ``observe``: the
-#: current deadline and the session's outage intervals, counted (never sent to a client; the
-#: count tells the broker that an outage ended and another began between two observations of the
-#: same state). Intervals are only added while the session is live (purge and shred run after the
-#: close), so the count only grows
-OUTAGE_FACTS = text(
-    "SELECT deadline_at, (SELECT count(*) FROM assess_outage_incidents i "
-    "WHERE i.session_id = assess_sessions.id) AS outage_count "
-    "FROM assess_sessions WHERE id = :s"
-)
-#: the database clock, read AFTER a commit: the ``at`` of what that commit decided (a snapshot
-#: whose ``server_now`` is not below it was taken after the commit, so it shows the change)
+#: the database clock: the ``at`` of an event no status read decides (``reply_interrupted``
+#: without a turn); a snapshot whose ``server_now`` is not below it was taken after it
 DB_NOW = text("SELECT clock_timestamp()")
-#: the one status read (the stream's poll and its opening snapshot): state, the open outage's
-#: reason and the outage count in ONE statement, so they always agree with each other.
-#: ``read_at`` (``clock_timestamp()``, evaluated during the statement, so not before the data it
-#: reads) is the ``at`` of the events published from it
+#: the open outage interval of the session row in scope (the latest one not ended)
+_OPEN_OUTAGE = (
+    "FROM assess_outage_incidents i WHERE i.session_id = assess_sessions.id "
+    "AND i.ended_at IS NULL ORDER BY i.started_at DESC LIMIT 1"
+)
+#: the one status read (the stream's poll, its opening snapshot, and the turn driver after it
+#: opened an outage): state, the open outage's reason and start, and the session's outage
+#: intervals counted (never sent to a client: ``observe`` orders reads by it; intervals are only
+#: added while the session is live, purge and shred run after the close, so it only grows), all
+#: in ONE statement so they always agree. ``read_at`` (``clock_timestamp()``, evaluated during
+#: the statement, so not before the data it reads) is the ``at`` of the events published from it
 _STATUS = text(
     "SELECT state, close_reason, epoch, deadline_at, duration_s, now() AS server_now, "
     "clock_timestamp() AS read_at, "
-    # the open outage interval's reason, read in OUTAGE only: what the student is told
-    "CASE WHEN state = 'OUTAGE' THEN (SELECT i.reason_code FROM assess_outage_incidents i "
-    "WHERE i.session_id = assess_sessions.id AND i.ended_at IS NULL "
-    "ORDER BY i.started_at DESC LIMIT 1) END AS outage_code, "
+    # read in OUTAGE only: what the student is told, and where the time left froze
+    f"CASE WHEN state = 'OUTAGE' THEN (SELECT i.reason_code {_OPEN_OUTAGE}) END AS outage_code, "
+    f"CASE WHEN state = 'OUTAGE' THEN (SELECT i.started_at {_OPEN_OUTAGE}) END AS paused_at, "
     "CASE WHEN state IN ('ACTIVE', 'OUTAGE') THEN (SELECT count(*) "
     "FROM assess_outage_incidents i WHERE i.session_id = assess_sessions.id) END "
     "AS outage_count "
@@ -377,7 +384,7 @@ _ROLLBACK_REASON = text(
 ).bindparams(sys=list(SYSTEM_ROLLBACK_REASONS))
 
 
-def _status_data(row: Any) -> dict[str, Any]:
+def status_payload(row: Any) -> dict[str, Any]:
     """The payload of a ``_STATUS`` row: the opening ``state`` snapshot and any event the
     broker publishes from an observation (``outage_end`` carries the moved ``deadline_at``)."""
     data = {
@@ -390,10 +397,20 @@ def _status_data(row: Any) -> dict[str, Any]:
     if row.state == "OUTAGE":
         # optional, OUTAGE only: provider_unavailable | service_misconfigured
         data["reason"] = outage_reason(getattr(row, "outage_code", None))
+        # optional, OUTAGE only: the time left, frozen at the open outage's start (the same
+        # computation as GET /sessions/{sid}); outage_start and the opening state carry it
+        paused = getattr(row, "paused_at", None) or row.server_now
+        if row.deadline_at is not None and paused is not None:
+            data["remaining_s"] = remaining_s(row.deadline_at, paused)
     return data
 
 
-def _count(row: Any) -> int | None:
+async def read_status(conn: Any, sid: UUID) -> Any:
+    """One ``_STATUS`` read (None: no row)."""
+    return (await conn.execute(_STATUS, {"s": sid})).first()
+
+
+def status_count(row: Any) -> int | None:
     return int(row.outage_count) if row.outage_count is not None else None
 
 
@@ -425,7 +442,11 @@ async def _poll(request: Request, sid: UUID) -> Polled:
             sid, row.deadline_at, row.server_now, int(row.duration_s), at=row.read_at
         )
     return Polled(
-        str(row.state), int(row.epoch), _status_data(row), _count(row), row.read_at
+        str(row.state),
+        int(row.epoch),
+        status_payload(row),
+        status_count(row),
+        row.read_at,
     )
 
 
@@ -465,7 +486,7 @@ async def session_events(
     # (no row any more: a Start rolled back after the gate; the gate's row stands, the poll
     # reports the rollback)
     seen = str(status.state) if status is not None else row.state
-    snapshot = _status_data(status if status is not None else row)
+    snapshot = status_payload(status if status is not None else row)
     broker = broker_of(request)
     # read before the seeding below creates a channel: an id of a channel that is gone is foreign
     last = broker.last_event_id(sid, request.headers.get("last-event-id"))
@@ -475,7 +496,7 @@ async def session_events(
         sid,
         seen,
         snapshot,
-        outage_count=_count(status) if status is not None else None,
+        outage_count=status_count(status) if status is not None else None,
         at=status.read_at if status is not None else None,
     )
     poll_s, keepalive_s, max_s = _settings(request)

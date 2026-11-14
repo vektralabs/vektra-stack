@@ -94,6 +94,7 @@ async def test_absent_facts_refuse_and_queue_one_refresh(pg) -> None:  # type: i
             "cmid": 50,
             "courseid": COURSE,
             "activity_type": "assign",
+            "queued_by": "refusal",
         }
 
 

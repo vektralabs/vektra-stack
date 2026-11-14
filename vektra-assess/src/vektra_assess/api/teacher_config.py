@@ -17,10 +17,11 @@ GET: the non-secret values, ``impostata`` / ``non impostata`` for each secret fi
 recipients' count), the computed opening condition, the end-date warning, the review-options
 warning and the number of active sessions. It never returns a solution, a rubric or an address.
 
-An enable refused on an LMS fact (``teacher.validation.LMS_FACT_CODES``: no cut-off, no close
-date, team submission, marking guide, no LMS rubric, unreadable) that was read more than
-``api.teachers.FACT_FRESH_S`` ago queues a refresh of the facts; when every error of the refusal
-is such a fact, the 400 carries ``error.details.retry_after_s`` and ``Retry-After``.
+A PUT refused on an LMS fact (``teacher.validation.is_lms_fact_error``: no cut-off, no close
+date, team submission, marking guide, no LMS rubric, unreadable, or an end date with no opening
+because the cached facts have no close date) queues a refresh of the facts unless they already
+answer a refusal (``api.teachers``); when every error of the refusal is such a fact and a
+refresh was queued now, the 400 carries ``error.details.retry_after_s`` and ``Retry-After``.
 
 ``POST /activities/{cmid}/gate-refresh``: the plugin opens a teacher page; queue a refresh of the
 activity's facts now (coalesced, idempotent, never a refusal of the page). See ``gate_refresh``.
@@ -51,6 +52,7 @@ from vektra_assess.api.deps import settings_of
 from vektra_assess.api.teacher_ops import opening_for
 from vektra_assess.api.teachers import (
     GATE_ROW,
+    QUEUED_BY_PAGE,
     REFRESH_MIN_INTERVAL_S,
     RETRY_AFTER_S,
     TeacherGate,
@@ -166,7 +168,7 @@ async def _refuse_invalid(
     """The 400 of a refused PUT. An LMS-fact refusal on facts that were not just read queues
     their refresh; ``retry_after_s`` only when EVERY error is such a fact (the retry can then
     pass as it is; any other error needs the teacher first)."""
-    on_facts = [e for e in errors if e.code in v.LMS_FACT_CODES]
+    on_facts = [e for e in errors if v.is_lms_fact_error(e, gate.facts)]
     queued = bool(on_facts) and await refresh_after_fact_refusal(
         engine_of(request), site, cmid, gate
     )
@@ -554,7 +556,13 @@ async def gate_refresh(
             and float(row.age_s) <= REFRESH_MIN_INTERVAL_S
             and (facts.get("resolved") is True or facts.get("hint") == list(hint))
         )
-        queued = False if recent else await queue_teacher_gate(conn, site, c, *hint)
+        queued = (
+            False
+            if recent
+            else await queue_teacher_gate(
+                conn, site, c, *hint, follow_up=True, queued_by=QUEUED_BY_PAGE
+            )
+        )
     log.info("assess_teacher_gate_refresh", site_id=str(site), cmid=c, queued=queued)
     return JSONResponse(
         {

@@ -436,10 +436,10 @@ class Proposed:
 
 
 #: the PUT config codes decided on a worker-read LMS fact (the cached teacher gate row), which the
-#: teacher may have just changed in the LMS: a refusal made of these only, on facts not just
-#: read, queues a refresh and tells the plugin to retry (``api.teacher_config``). The enable
-#: refusals, and the ``available_until`` checks against the opening (``check_end_date``), whose
-#: floor comes from the cached close date / cut-off (``opening_of``)
+#: teacher may have just changed in the LMS: a refusal made of these only queues a refresh and
+#: tells the plugin to retry (``api.teacher_config``). The enable refusals only: an end date
+#: before the opening (``not_after_opening``) is the teacher's own input, and ``opening_unknown``
+#: is an LMS fact only when the cached facts lack the close date (``is_lms_fact_error``)
 LMS_FACT_CODES = frozenset(
     {
         "lms_facts_unreadable",
@@ -448,10 +448,21 @@ LMS_FACT_CODES = frozenset(
         "team_submission",
         "marking_guide",
         "lms_rubric_missing",
-        "opening_unknown",
-        "not_after_opening",
     }
 )
+
+
+def is_lms_fact_error(error: FieldError, facts: Mapping[str, Any]) -> bool:
+    """Whether a PUT field error was decided on a cached LMS fact: an ``LMS_FACT_CODES`` code,
+    or ``opening_unknown`` when the cached facts have no close date / cut-off (unset or
+    unreadable); an unknown opening for any other reason (the capability matrix, no teacher
+    date) is not something a fresh read of the facts changes."""
+    if error.code in LMS_FACT_CODES:
+        return True
+    return error.code == "opening_unknown" and epoch_fact(facts, "close_at") in (
+        None,
+        0,
+    )
 
 
 def enable_refusals(

@@ -237,9 +237,9 @@ async def test_every_input_readable_refuses_the_date_and_requires_none(pg) -> No
             fallback_url(926), json=fb(CLOSE, activity_type="quiz"), headers=teacher()
         )
         assert r.status_code == 400, r.text
-        # a refresh cannot lift it (the matrix holds every input readable): no hint (fifth
-        # review of #221, 5)
-        assert "retry_after_s" not in err(r)["details"]
+        # decided on the cached facts too (automatic_close_at, close_at): a refresh may change
+        # it, so it hints (sixth review of #221, C: one wasted retry is acceptable)
+        assert err(r)["details"]["retry_after_s"] == 3
         assert err(r)["details"]["fields"] == [
             {"field": "opening_at", "code": "fallback_not_needed"}
         ]

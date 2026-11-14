@@ -151,3 +151,20 @@ async def enqueue_job(
         return False  # the pending job with this key covers it
     await conn.execute(_NOTIFY)
     return True
+
+
+async def enqueue_with_followup(
+    conn: AsyncConnection,
+    kind: JobKind,
+    args: Mapping[str, str | int],
+    key: str,
+    followup_key: str,
+) -> bool:
+    """Queue ``kind`` under ``key``, or, when a job with that key is still pending (it may
+    already be running and have read before the caller's change: the API cannot tell, it may
+    only INSERT), the single follow-up under ``followup_key``. Nothing more while both are
+    pending, which bounds the reads per subject. True when a job was inserted now."""
+    for k in (key, followup_key):
+        if await enqueue_job(conn, kind, args, dedupe_key=k):
+            return True
+    return False

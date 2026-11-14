@@ -594,3 +594,55 @@ async def test_a_row_committed_after_the_request_began_is_fresh(
         assert r.status_code == 202 and r.json()["queued"] is False  # a recent read
     finally:
         await ctx.__aexit__(None, None, None)
+
+
+async def test_a_render_upsert_never_lets_an_older_read_win(pg) -> None:  # type: ignore[no-untyped-def]
+    """Sixth review, A: a render check and its follow-up can run at once; the stored render
+    state and gate inputs keep the read that began last (a row dated past the clock, after a
+    backward step, stays replaceable)."""
+    from sqlalchemy.ext.asyncio import create_async_engine
+    from support.world import make_site
+
+    from vektra_assess.gates import ButtonState, Code, GateDecision
+    from vektra_assess.worker.render import store_render
+
+    site = await make_site(pg)
+    ((now,),) = await pg.run("super", "SELECT clock_timestamp()")
+    from datetime import timedelta
+
+    engine = create_async_engine(pg.url("worker"))
+
+    async def stored() -> tuple[Any, Any]:
+        ((status, inputs),) = await pg.run(
+            "super",
+            "SELECT rs.status, gi.inputs FROM assess_render_state rs JOIN assess_gate_inputs gi "
+            "USING (site_id, student_userid, cmid) WHERE rs.site_id = :s",
+            {"s": site},
+        )
+        return status, inputs if isinstance(inputs, dict) else json.loads(inputs)
+
+    try:
+        newer = GateDecision(Code.OK, ButtonState.ELIGIBLE)
+        older = GateDecision(
+            Code.NOT_ENROLLED, ButtonState.NOT_OPEN, reasons=(Code.NOT_ENROLLED,)
+        )
+        await store_render(engine.connect, site, 701, 98, newer, observed_at=now)
+        await store_render(
+            engine.connect, site, 701, 98, older, observed_at=now - timedelta(minutes=1)
+        )
+        status, inputs = await stored()
+        assert (status, inputs["code"]) == ("eligible", "ok")
+        # dated an hour ahead (a clock step): replaced by the next read
+        await pg.run(
+            "super",
+            "UPDATE assess_render_state SET computed_at = now() + interval '1 hour'",
+        )
+        await pg.run(
+            "super",
+            "UPDATE assess_gate_inputs SET refreshed_at = now() + interval '1 hour'",
+        )
+        await store_render(engine.connect, site, 701, 98, older, observed_at=now)
+        status, inputs = await stored()
+        assert (status, inputs["code"]) == ("not_open", "not_enrolled")
+    finally:
+        await engine.dispose()

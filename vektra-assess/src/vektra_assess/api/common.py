@@ -19,6 +19,9 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from vektra_assess.api.site_binding import bind_site
 from vektra_assess.errors import assess_unavailable, bad_request, key_not_bound
 from vektra_assess.gates import Opening
+
+# the one tolerance, shared with the worker's upserts; re-exported for the API's callers
+from vektra_assess.timing import CLOCK_SKEW_TOLERANCE_S as CLOCK_SKEW_TOLERANCE_S
 from vektra_shared.errors import ErrorResponse, http_status_for
 
 #: no assess request body is legitimately larger than this (a turn is capped far below it)
@@ -54,13 +57,6 @@ async def site_row_of_key(conn: Any, key: Any, purpose: str) -> Any:
 async def site_of_key(conn: Any, key: Any, purpose: str) -> Any:
     """The enabled site a key is bound to for ``purpose``, bound for the rest of the request."""
     return (await site_row_of_key(conn, key, purpose)).id
-
-
-#: how far below zero a cached row's age may be and still count as fresh. Ages are read as
-#: ``clock_timestamp() - <read time>``; a row written by another session a moment ago, or a
-#: little skew between the clocks that dated it, gives a small negative age. Beyond this it
-#: is a backward clock step: the row is not trusted (a refresh is queued)
-CLOCK_SKEW_TOLERANCE_S = 5.0
 
 
 def is_fresh(age_s: Any, max_age_s: float) -> bool:

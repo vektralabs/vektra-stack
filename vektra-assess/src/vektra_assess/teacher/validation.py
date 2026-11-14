@@ -451,10 +451,12 @@ LMS_FACT_CODES = frozenset(
 )
 
 
-#: the ``PUT opening-fallback`` refusals decided on the cached gate facts (the close date and
-#: whether it is readable): a refresh may lift them. Not ``fallback_not_needed``: it follows
-#: from the capability matrix, which a refresh of the facts does not change
-OPENING_FACT_CODES = frozenset({"close_unreadable", "no_close_date", "before_close"})
+#: the ``PUT opening-fallback`` refusals decided on the cached gate facts (the close date, its
+#: readability, the automatic close): a refresh may lift them. ``fallback_not_needed`` too: it
+#: also depends on the matrix, so a retry may be wasted once, which is acceptable
+OPENING_FACT_CODES = frozenset(
+    {"fallback_not_needed", "close_unreadable", "no_close_date", "before_close"}
+)
 
 
 def is_lms_fact_error(error: FieldError, opening_source: str | None) -> bool:

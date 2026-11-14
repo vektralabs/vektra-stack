@@ -736,3 +736,22 @@ async def test_a_probe_that_cannot_be_built_never_loses_the_marker(
         row = await rig.row()
         assert (row.state, row.last) == (state, "bot/interrupted")
         assert len(built) == (1 if mode.endswith(":404") else 0)
+
+
+async def test_an_enrolment_check_dated_far_in_the_future_is_not_fresh(
+    pg, worker
+) -> None:  # type: ignore[no-untyped-def]
+    """Sixth review, B: the enrolment freshness uses the one rule (``is_fresh``): a re-check
+    dated beyond the clock-skew tolerance (a backward clock step) is not trusted."""
+    async with rigged(pg, worker) as rig:
+        url = f"/api/v1/assess/sessions/{rig.sid}"
+        r = await rig.w.client.get(url, headers=bearer(rig.token))
+        assert r.status_code == 200, r.text
+        await rig.pg.run(
+            "super",
+            "UPDATE assess_enrolment_checks SET checked_at = now() + interval '1 hour' "
+            "WHERE session_id = :s",
+            {"s": rig.sid},
+        )
+        r = await rig.w.client.get(url, headers=bearer(rig.token))
+        assert r.status_code == 503, r.text

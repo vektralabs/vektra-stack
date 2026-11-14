@@ -51,6 +51,7 @@ used to ACCEPT anything the freshness bound did not accept before.
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any, Literal
@@ -70,6 +71,7 @@ from vektra_assess.errors import (
 from vektra_assess.jobs import (
     JobKind,
     enqueue_job,
+    enqueue_with_followup,
     teacher_gate_dedupe_key,
     teacher_gate_followup_dedupe_key,
 )
@@ -151,15 +153,16 @@ async def queue_teacher_gate(
         "courseid": int(courseid),
         "activity_type": str(kind),
     }
-    keys = [teacher_gate_dedupe_key(site, cmid, int(courseid), str(kind))]
-    if follow_up:
-        keys.append(
-            teacher_gate_followup_dedupe_key(site, cmid, int(courseid), str(kind))
-        )
-    for key in keys:
-        if await enqueue_job(conn, JobKind.TEACHER_GATE, args, dedupe_key=key):
-            return True
-    return False
+    key = teacher_gate_dedupe_key(site, cmid, int(courseid), str(kind))
+    if not follow_up:
+        return await enqueue_job(conn, JobKind.TEACHER_GATE, args, dedupe_key=key)
+    return await enqueue_with_followup(
+        conn,
+        JobKind.TEACHER_GATE,
+        args,
+        key,
+        teacher_gate_followup_dedupe_key(site, cmid, int(courseid), str(kind)),
+    )
 
 
 def hint_of(facts: dict[str, Any]) -> tuple[int, str] | None:
@@ -246,6 +249,22 @@ def gate_hint(gate: TeacherGate) -> tuple[int, str] | None:
     return hint_of(gate.facts)
 
 
+async def queue_after_refusal(
+    engine: Any, queue: Callable[[Any], Awaitable[Any]]
+) -> bool:
+    """The one way a refusal queues the refresh that may lift it: AFTER the refused request,
+    in a transaction of its own (``queue(conn)``), never raising. True when it was queued (or
+    coalesced with a pending one): the refusal then carries ``retry_after_s``. False (logged):
+    no hint, the refusal is final for the client, and a 400 / 409 never becomes a 500."""
+    try:
+        async with engine.begin() as conn:
+            await queue(conn)
+    except Exception as exc:  # the refusal stands; only the retry hint is lost
+        log.warning("assess_refresh_queue_failed", error_type=type(exc).__name__)
+        return False
+    return True
+
+
 async def refresh_after_fact_refusal(
     engine: Any, site: UUID, cmid: int, gate: TeacherGate
 ) -> bool:
@@ -258,13 +277,9 @@ async def refresh_after_fact_refusal(
     hint = gate_hint(gate)
     if hint is None:
         return False
-    try:
-        async with engine.begin() as conn:
-            await queue_teacher_gate(conn, site, cmid, *hint, follow_up=True)
-    except Exception as exc:  # the refusal stands; only the retry hint is lost
-        log.warning("assess_teacher_gate_queue_failed", error_type=type(exc).__name__)
-        return False
-    return True
+    return await queue_after_refusal(
+        engine, lambda conn: queue_teacher_gate(conn, site, cmid, *hint, follow_up=True)
+    )
 
 
 def can_view_overrides(gate: TeacherGate, actor_userid: int) -> bool:

@@ -35,6 +35,7 @@ from vektra_assess.errors import assess_unavailable, rate_limited
 from vektra_assess.jobs import (
     JobKind,
     enqueue_job,
+    enqueue_with_followup,
     render_dedupe_key,
     render_followup_dedupe_key,
 )
@@ -127,12 +128,17 @@ async def queue_render_check(
     }
     if courseid:
         args["courseid"] = courseid
-    keys = [render_dedupe_key(site, userid, cmid)]
+    key = render_dedupe_key(site, userid, cmid)
     if follow_up:
-        keys.append(render_followup_dedupe_key(site, userid, cmid))
-    for key in keys:
-        if await enqueue_job(conn, JobKind.RENDER_CHECK, args, dedupe_key=key):
-            return
+        await enqueue_with_followup(
+            conn,
+            JobKind.RENDER_CHECK,
+            args,
+            key,
+            render_followup_dedupe_key(site, userid, cmid),
+        )
+    else:
+        await enqueue_job(conn, JobKind.RENDER_CHECK, args, dedupe_key=key)
 
 
 def state_view(row: Any, fresh_s: int) -> dict[str, Any]:

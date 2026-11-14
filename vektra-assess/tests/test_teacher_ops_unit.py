@@ -745,3 +745,34 @@ def test_the_reset_hint_is_backed_by_a_follow_up_render_check(
     w2 = world(reset_script(gate_row=render(age=500)))
     refused(reset(monkeypatch))
     assert w2.render_kw == [{"follow_up": True}]
+
+
+# --- sixth review of #221 ------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("gate_row", "expected"),
+    [
+        (
+            render(lms_reasons=["not_enrolled"]),
+            {"reason": "gate", "gate": "not_enrolled"},
+        ),
+        (render(age=500), {"reason": "gate_inputs_stale"}),
+    ],
+)
+def test_a_failing_render_queue_never_turns_the_reset_refusal_into_a_500(
+    world: Any, monkeypatch: pytest.MonkeyPatch, gate_row: Any, expected: Any
+) -> None:
+    """Sixth review, D: the render check is queued after the refusal, in its own
+    transaction, by a helper that never raises; the hint is present iff it was queued."""
+    world(reset_script(gate_row=gate_row))
+
+    async def broken(*_a: Any, **_k: Any) -> None:
+        raise RuntimeError("queue down")
+
+    monkeypatch.setattr(state_api, "queue_render_check", broken)
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(reset(monkeypatch))
+    assert exc.value.status_code == 409
+    assert details(exc.value.detail) == expected
+    assert not exc.value.headers

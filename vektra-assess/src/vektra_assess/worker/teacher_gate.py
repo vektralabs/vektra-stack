@@ -35,6 +35,7 @@ from uuid import UUID
 import structlog
 from sqlalchemy import text
 
+from vektra_assess.timing import CLOCK_SKEW_TOLERANCE_S
 from vektra_assess.worker.runner import AcquireDb, JobContext
 
 log = structlog.get_logger(__name__)
@@ -66,7 +67,7 @@ _UPSERT = text(
     # are the database clock (assess_jobs ids would order enqueues, not reads); a stored time
     # past that clock (the clock stepped back) never freezes the row: it is always replaceable
     "AND (assess_teacher_gate.refreshed_at <= EXCLUDED.refreshed_at "
-    "OR assess_teacher_gate.refreshed_at > clock_timestamp())"
+    "OR assess_teacher_gate.refreshed_at > clock_timestamp() + make_interval(secs => :tol))"
 )
 
 
@@ -99,6 +100,7 @@ async def refresh_teacher_gate(
                     "c": int(cmid),
                     "i": json.dumps(facts, sort_keys=True),
                     "t": observed_at,
+                    "tol": CLOCK_SKEW_TOLERANCE_S,
                 },
             )
     return facts

@@ -31,7 +31,7 @@ from fastapi import Request
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection
 
-from vektra_assess.api.common import engine_of, fail
+from vektra_assess.api.common import engine_of, fail, is_fresh
 from vektra_assess.api.deps import settings_of
 from vektra_assess.api.material import MaterialUnavailable
 from vektra_assess.api.site_binding import bind_site
@@ -241,14 +241,14 @@ async def gate(
         if (
             check is None
             or check.result != "enrolled"
-            or float(check.age_s) > enrolment_fresh_s
+            or not is_fresh(check.age_s, enrolment_fresh_s)
         ):
             raise GateRejected(assess_unavailable("enrolment_freshness"), "enrolment")
     return row
 
 
 _ENROLMENT = text(
-    "SELECT result, extract(epoch FROM now() - checked_at) AS age_s "
+    "SELECT result, extract(epoch FROM clock_timestamp() - checked_at) AS age_s "
     "FROM assess_enrolment_checks WHERE session_id = :sid ORDER BY checked_at DESC LIMIT 1"
 )
 

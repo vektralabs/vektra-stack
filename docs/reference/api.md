@@ -310,7 +310,8 @@ the worker resolves the cmid inside that course only. Missing or stale facts: `4
 retry in ONE place: `error.details.retry_after_s` (integer seconds, at least 1, never above 5;
 today 3), mirrored in the `Retry-After` header. It is NOT the envelope's top-level
 `error.retry_after` (that one stays for rate limits). Each such refusal queues the refresh (the
-job wakes the worker at once, `NOTIFY`) and ALWAYS carries the hint:
+job wakes the worker at once, `NOTIFY`) and carries the hint when the refresh is queued or
+already pending:
 
 | Status / code | `details` | When |
 |---------------|-----------|------|
@@ -324,8 +325,8 @@ in a transaction of its own; if that fails, the same refusal comes back WITHOUT 
 (never a 500), and for the client it is then final.
 
 **The hint repeats: clients must retry at most once.** Vektra cannot know when the teacher changed
-the LMS, so it never declares these refusals final: the same refusal on a retry carries the hint
-again. The plugin retries the same request once, after `retry_after_s`, and if it is refused again
+the LMS, so a refusal whose refresh is queued or pending is not final: the same refusal on a retry
+carries the hint again. The plugin retries the same request once, after `retry_after_s`, and if it is refused again
 shows that refusal to the teacher. A refusal with no hint is final: `not_an_editor` /
 `not_a_grader` on facts within the freshness bound, an end date before the teacher's own attested
 opening, and a PUT refused for an LMS fact AND another error (no recipient, no cap, ...), which

@@ -1,21 +1,24 @@
 """The operator alert of a model provider refusing the configuration (``provider_config_refused``).
 
-An ``auth_error`` or a non-429 ``http_4xx`` (``llm.types.is_config_refusal``) is the provider
+An ``auth_error`` or a non-429 ``http_4xx`` (``llm.types.is_config_refusal``) may be the provider
 refusing the deployment's configuration, which only the operator can fix (a missing key, a wrong
-model, a rejected parameter). What the student gets (live E2E follow-up, 2026-11-13):
+model, a rejected parameter). It is CONFIRMED as such (``llm.probe.refusal_is_configuration``)
+when it is an ``auth_error``, or when the turn-shaped probe is refused as well; a 4xx the probe
+does not get is that one request's (a context-length or content-policy 400) and keeps the plain
+refusal: the marked turn, ``provider_refused``, the session ACTIVE (REQ-086). What the student
+gets for a CONFIRMED one (live E2E follow-up, 2026-11-13; review of #221):
 
 - a discussion turn ends with the interrupted marker, its ``reply_interrupted`` event carries
-  ``reason: service_misconfigured``, and the session then enters OUTAGE with that same reason
-  (the open interval's ``reason_code``): the timer is frozen, the outage probe keeps checking the
-  provider (a refused probe never ends the outage), and once the configuration is fixed the
-  probe ends it and the interval is credited exactly like a provider outage (G, C and the
-  3-consecutive-failures rule included). The pending turn is NOT kept for a replay: it is
-  already answered by the marker, so a request-specific refusal (a 400 on that one request)
-  is never re-sent;
+  ``reason: service_misconfigured``, and in the marker's own transaction the session enters
+  OUTAGE with that same reason (the open interval's ``reason_code``): the timer is frozen, the
+  outage probe keeps checking the provider (a refused probe never ends the outage), and once
+  the configuration is fixed the probe ends it and the interval is credited exactly like a
+  provider outage (G, C and the 3-consecutive-failures rule included). The turn is NOT replayed;
 - a Start rolls back ``service_misconfigured`` (a system rollback, like ``provider_unavailable``
   before it).
 
-That alone is silent for the operator. So the first such refusal queues one ``operator_notify``
+That alone is silent for the operator. So the first config refusal (confirmed or not, as
+before) queues one ``operator_notify``
 job, ``{site_id, kind: provider_config_refused, reason: <cause>, window: <bucket>}``: ids and
 closed codes only. A session in OUTAGE takes no turn, so it produces no further refusal.
 

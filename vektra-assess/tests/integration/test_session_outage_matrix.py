@@ -71,6 +71,16 @@ class FaultLLM(RecordingLLMProvider):
         super().__init__([])
         self.mode = "ok"
         self.n_calls = 0
+        #: the probe's one-word call is answered whatever the mode: the refusal belongs to the
+        #: turn's request only (a context-length or content-policy 400)
+        self.probe_ok = False
+        self.probe_calls = 0
+        #: awaited before a turn's call fails (a test moves the clock or the row meanwhile)
+        self.before_fault: Any = None
+
+    @staticmethod
+    def _is_probe(messages: Any) -> bool:
+        return len(messages) == 1 and getattr(messages[0], "content", None) == "ping"
 
     def _fault(self) -> None:
         if self.mode == "down":
@@ -97,6 +107,12 @@ class FaultLLM(RecordingLLMProvider):
         self, messages: Any, model: str, **kw: Any
     ) -> AsyncIterator[CompletionChunk]:
         self.n_calls += 1
+        if self._is_probe(messages):
+            self.probe_calls += 1
+            if self.probe_ok:
+                return _ok_stream()
+        elif self.before_fault is not None:
+            await self.before_fault()
         self._fault()
         mode = self.mode
 
@@ -117,6 +133,13 @@ class FaultLLM(RecordingLLMProvider):
                 yield CompletionChunk(content=part)
 
         return gen()
+
+
+def _ok_stream() -> AsyncIterator[CompletionChunk]:
+    async def gen() -> AsyncIterator[CompletionChunk]:
+        yield CompletionChunk(content="pong")
+
+    return gen()
 
 
 def make_runner(llm: FaultLLM) -> DiscussionTurnRunner:
@@ -589,3 +612,91 @@ def test_the_probe_interval_is_5_to_10_seconds() -> None:
         t for t in _tick_table(VektraAssessSettings()) if t.name == "outage_probe"
     )
     assert 5 <= spec.interval_s and spec.interval_s + spec.jitter_s <= 10
+
+
+# --- review of #221 ------------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "mode",
+    [
+        "ContextWindowExceededError",
+        "ContentPolicyViolationError",
+        "litellm:BadRequestError:400",
+    ],
+)
+async def test_a_request_specific_400_keeps_the_plain_refusal(pg, worker, mode) -> None:  # type: ignore[no-untyped-def]
+    """Finding 1: the provider refused that request only (the probe is answered). The old path
+    stands: the marked turn, ``provider_refused``, the session ACTIVE, no interval; three of
+    them in a row never close the session."""
+    from vektra_assess.api.events import broker_of
+
+    class _Req:
+        def __init__(self, app: Any) -> None:
+            self.app = app
+
+    async with rigged(pg, worker) as rig:
+        rig.llm.mode = mode
+        rig.llm.probe_ok = True
+        for i in range(3):
+            await rig.say(f"domanda {i}")
+            row = await rig.row()
+            assert (row.state, row.intervals, row.last) == (
+                "ACTIVE",
+                0,
+                "bot/interrupted",
+            )
+        assert rig.llm.probe_calls == 3  # one probe per ambiguous refusal
+        events = broker_of(_Req(rig.w.app)).after(rig.sid, 0)  # type: ignore[arg-type]
+        reasons = [e.data["reason"] for e in events if e.type == "reply_interrupted"]
+        assert reasons == ["provider_refused"] * 3
+
+
+async def test_an_auth_error_pauses_without_a_probe(pg, worker) -> None:  # type: ignore[no-untyped-def]
+    async with rigged(pg, worker) as rig:
+        rig.llm.mode = "litellm:AuthenticationError:401"
+        rig.llm.probe_ok = (
+            True  # never asked: a refused key is always the configuration
+        )
+        await rig.say()
+        assert (await rig.row()).state == "OUTAGE"
+        assert rig.llm.probe_calls == 0
+
+
+async def test_the_marker_and_the_pause_are_one_transaction(pg, worker) -> None:  # type: ignore[no-untyped-def]
+    """Finding 6: the student turn is answered by the marker and the session paused in the SAME
+    transaction, so there is no moment with the session ACTIVE and no reply owed in which the
+    student could send a turn the pause then strands. Proven on the rows: the marker turn and
+    the session's OUTAGE update carry the same transaction id."""
+    async with rigged(pg, worker) as rig:
+        rig.llm.mode = "litellm:AuthenticationError:401"
+        await rig.say()
+        ((same, state),) = await rig.pg.run(
+            "super",
+            "SELECT s.xmin::text = t.xmin::text, s.state FROM assess_sessions s "
+            "JOIN assess_turns t ON t.session_id = s.id WHERE s.id = :s "
+            "ORDER BY t.turn_no DESC LIMIT 1",
+            {"s": rig.sid},
+        )
+        assert state == "OUTAGE" and same is True
+
+
+async def test_no_pause_when_the_marker_is_refused(pg, worker) -> None:  # type: ignore[no-untyped-def]
+    """Finding 7: when the database refuses the marked turn (here: no reply is owed any more,
+    as when the worker's reconcile answered the turn meanwhile) the session is not paused
+    either: nothing of this reply attempt was recorded, so nothing may stop the clock."""
+    async with rigged(pg, worker) as rig:
+
+        async def answered_elsewhere() -> None:
+            await rig.pg.run(
+                "super",
+                "UPDATE assess_sessions SET pending_reply_since = NULL WHERE id = :s",
+                {"s": rig.sid},
+            )
+
+        rig.llm.mode = "litellm:AuthenticationError:401"
+        rig.llm.before_fault = answered_elsewhere
+        await rig.say()
+        row = await rig.row()
+        assert (row.state, row.intervals) == ("ACTIVE", 0)
+        assert row.last == "student/normal"  # the marker was refused

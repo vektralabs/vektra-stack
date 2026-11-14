@@ -850,3 +850,54 @@ async def test_the_first_enrolment_check_keeps_its_observation_time(  # type: ig
             {"s": sid},
         )
         assert float(age[0][0]) >= 1.5, age
+
+
+@pytest.mark.parametrize(
+    ("probe_refused", "reason"),
+    [(False, "provider_unavailable"), (True, "service_misconfigured")],
+    ids=["request_specific", "configuration"],
+)
+async def test_a_part_b_400_is_the_configuration_only_if_the_probe_is_refused_too(  # type: ignore[no-untyped-def]
+    pg, worker_engine, probe_refused: bool, reason: str
+) -> None:
+    """Review of #221, finding 1: a non-auth 4xx on Part B (a context-length or content 400 of
+    that one request, or a wrong model) is the configuration only when the turn-shaped probe
+    is refused too; otherwise the Start rolls back provider_unavailable as before."""
+    from datetime import UTC, datetime, timedelta
+
+    from vektra_assess.llm.types import ProviderCallRecord, ProviderOutageError
+
+    class _Resp:
+        status_code = 404
+
+    calls: list[int] = []
+
+    async def probe() -> bool:
+        calls.append(1)
+        if probe_refused:
+            exc = type("NotFoundError", (Exception,), {})("refused")
+            exc.response = _Resp()  # type: ignore[attr-defined]
+            raise exc
+        return True
+
+    await _reset(pg)
+    await activate(pg)
+    settings = default_settings()
+    async with world(pg, settings) as w:
+        await configure_activity(pg, w.site, CMID)
+        start = datetime.now(UTC)
+        outage = ProviderOutageError(
+            ProviderCallRecord(
+                start, None, start + timedelta(seconds=1), "error", "BadRequestError",
+                "http_4xx", 400,
+            )
+        )  # fmt: skip
+        part_b = FakePartB(fail=outage)
+        part_b.config_probe = lambda: probe  # type: ignore[attr-defined]
+        sid = await _start(w)
+        handler = make_preflight_handler(
+            deps(settings, w.handoff_public, start_source(worker_engine), part_b)
+        )
+        await handler(job_context(worker_engine, sid))
+        await _rolled_back(pg, sid, reason)
+        assert calls == [1]

@@ -65,6 +65,7 @@ from vektra_assess.crypto.seal import seal
 from vektra_assess.gates import Code, GateInputs, evaluate_start_gates
 from vektra_assess.keys import AssessKeyring
 from vektra_assess.llm.activation import is_activated
+from vektra_assess.llm.probe import refusal_is_configuration
 from vektra_assess.llm.types import (
     PartBRejectedError,
     ProviderOutageError,
@@ -809,11 +810,17 @@ async def _run(deps: PreflightDeps, acquire: AcquireDb, sid: UUID) -> None:
     except ProviderOutageError as exc:
         spent = None if t_part_b is None else deps.clock() - t_part_b
         _log_part_b_outage(deps, sid, exc, remaining, spent)
-        # a configuration refusal rolls back with its own reason, which the discussion UI
-        # reads from start_rolled_back, and alerts the operator (provider_alerts)
+        # a refusal of the deployment's configuration (an auth_error; a non-429 4xx only when
+        # the turn-shaped probe is refused too, llm.probe) rolls back with its own reason, which
+        # the discussion UI reads from start_rolled_back; every config refusal alerts the
+        # operator (provider_alerts)
+        make_probe = getattr(deps.runner, "config_probe", None)
+        configuration = await refusal_is_configuration(
+            exc, make_probe() if callable(make_probe) else None
+        )
         raise _Rollback(
             Reason.SERVICE_MISCONFIGURED
-            if exc.is_config_refusal
+            if configuration
             else Reason.PROVIDER_UNAVAILABLE,
             data={"cause": exc.cause},
             config_refusal=exc.cause if exc.is_config_refusal else None,

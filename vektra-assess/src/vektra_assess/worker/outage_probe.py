@@ -36,21 +36,20 @@ the operator fixes the configuration, crediting the paused time by the same rule
 
 from __future__ import annotations
 
-import asyncio
-from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import Any
 
 import structlog
 from sqlalchemy import text
 
+# the one turn-shaped probe, shared with the API's refusal check (re-exported for callers)
+from vektra_assess.llm.probe import Probe, make_llm_probe
 from vektra_assess.llm.runner import outage_cause
 from vektra_assess.llm.types import is_config_refusal
 from vektra_assess.worker.runner import AcquireDb
 
 log = structlog.get_logger(__name__)
 
-Probe = Callable[[], Awaitable[bool]]
+__all__ = ["Probe", "ProbeResult", "close_over_cap", "make_llm_probe", "outage_tick"]
 
 #: C and the spent outage from their one SQL definition (revision 0032)
 _OVER_CAP = text(
@@ -143,49 +142,3 @@ def _log_failed_probe(exc: BaseException) -> None:
         http_status=status,
         error_type=type(exc).__name__,
     )
-
-
-def make_llm_probe(
-    llm: Any,
-    model: str,
-    *,
-    timeout_s: float,
-    max_tokens: int,
-    temperature: float,
-    seed: int | None,
-) -> Probe:
-    """A probe call shaped like a discussion turn's (``DiscussionTurnRunner._open_stream``): the
-    same provider method (``stream``), model, ``max_tokens``, ``temperature`` and ``seed``, and
-    ``llm`` is the discussion provider itself, so its extra body (``reasoning_effort``, ...)
-    reaches the probe as it reaches a turn. A provider that refuses those parameters refuses
-    the probe too; only the messages differ (one fixed word, no session content).
-
-    True as soon as the stream yields its first text, or when it completes without any (any
-    finish reason); the stream is closed there, so the probe never reads a whole answer.
-    ``timeout_s`` covers the open and the first text, like the turn's first-token deadline.
-    """
-    from vektra_shared.types import Message
-
-    extra: dict[str, object] = {} if seed is None else {"seed": seed}
-
-    async def probe() -> bool:
-        async with asyncio.timeout(timeout_s):
-            stream = await llm.stream(
-                [Message(role="user", content="ping")],
-                model,
-                temperature=temperature,
-                max_tokens=max_tokens,
-                **extra,
-            )
-            it = stream.__aiter__()
-            try:
-                async for chunk in it:
-                    if chunk.content.strip():
-                        break
-            finally:
-                close = getattr(it, "aclose", None)
-                if close is not None:
-                    await close()
-        return True
-
-    return probe

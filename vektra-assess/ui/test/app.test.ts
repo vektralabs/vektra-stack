@@ -1071,3 +1071,107 @@ describe("transcript download (plan 10)", () => {
     }
   });
 });
+
+describe("outage events replayed after a reload (2026-11-14)", () => {
+  const MISCONFIGURED =
+    "Il servizio non è disponibile per un problema tecnico. Il personale è stato avvisato: riprova più tardi. Questo tempo non ti viene conteggiato.";
+  const inMinutes = (m: number) => new Date(Date.now() + m * 60_000).toISOString();
+  const snapshot = (extra: object) => ({
+    session_id: "S",
+    state: "ACTIVE",
+    close_reason: null,
+    deadline_at: inMinutes(30),
+    server_now: new Date().toISOString(),
+    reply_pending: false,
+    turns: [{ turn_no: 1, role: "bot", kind: "opening", text: "Benvenuto" }],
+    ...extra,
+  });
+  function reloaded(view: object) {
+    const h = harness();
+    const priv = h.priv as unknown as {
+      state: { name: string };
+      deadline: number | null;
+      apply: (v: unknown) => void;
+      tick: () => void;
+      onEvent: (e: unknown) => Promise<void>;
+    };
+    priv.state = { name: "resuming" };
+    priv.apply.call(h.a, view);
+    const ev = (event: string, data: object) =>
+      priv.onEvent.call(h.a, { event, data: JSON.stringify(data) });
+    return { ...h, priv, ev };
+  }
+  const count = (haystack: string, needle: string) => haystack.split(needle).length - 1;
+
+  it("an ACTIVE snapshot ignores the replayed start and end of a past outage", async () => {
+    const deadline = inMinutes(30);
+    const { a, priv, ev } = reloaded(snapshot({ deadline_at: deadline, outage_no: 1 }));
+    expect(priv.state.name).toBe("active");
+    await ev("outage_start", { state: "OUTAGE", reason: "service_misconfigured", outage_no: 1 });
+    await ev("outage_end", { state: "ACTIVE", deadline_at: inMinutes(20), outage_no: 1 });
+    expect(priv.state.name).toBe("active");
+    expect(a.banner.hidden).toBe(true);
+    expect(a.banner.textContent).not.toContain(MISCONFIGURED);
+    expect(a.live.announcements).toBe(0);
+    expect(priv.deadline).toBe(Date.parse(deadline)); // the snapshot's deadline stands
+    expect(a.controls.timer.textContent).toBe("Mancano 30 minuti");
+    // a new outage after the snapshot still counts
+    await ev("outage_start", { state: "OUTAGE", reason: "service_misconfigured", outage_no: 2 });
+    expect(priv.state.name).toBe("outage");
+    expect(a.banner.textContent).toBe(MISCONFIGURED);
+  });
+
+  it("an ACTIVE snapshot hides a stale outage text already on screen", () => {
+    const { a, priv } = reloaded(snapshot({ state: "OUTAGE", outage_no: 1, remaining_s: 600 }));
+    expect(a.banner.hidden).toBe(false);
+    priv.apply.call(a, snapshot({ outage_no: 1 }));
+    expect(priv.state.name).toBe("active");
+    expect(a.banner.hidden).toBe(true);
+    expect(a.banner.textContent).toBe("");
+  });
+
+  it("a replayed old end during a new OUTAGE keeps the frozen time; the live end moves it", async () => {
+    const { a, priv, ev } = reloaded(
+      snapshot({
+        state: "OUTAGE",
+        outage_reason: "service_misconfigured",
+        outage_no: 2,
+        remaining_s: 24 * 60,
+        deadline_at: inMinutes(22), // the stored deadline: the time left is frozen at 24
+      }),
+    );
+    expect(priv.state.name).toBe("outage");
+    expect(a.controls.timer.textContent).toBe("Mancano 24 minuti");
+    await ev("outage_start", { state: "OUTAGE", reason: "service_misconfigured", outage_no: 1 });
+    await ev("outage_end", { state: "ACTIVE", deadline_at: inMinutes(22), outage_no: 1 });
+    await ev("outage_start", { state: "OUTAGE", reason: "service_misconfigured", outage_no: 2 });
+    priv.tick.call(a);
+    expect(priv.state.name).toBe("outage");
+    expect(a.controls.timer.textContent).toBe("Mancano 24 minuti");
+    // the open incident's own end is live: the session resumes with the moved deadline
+    await ev("outage_end", { state: "ACTIVE", deadline_at: inMinutes(26), outage_no: 2 });
+    expect(priv.state.name).toBe("active");
+    expect(a.controls.timer.textContent).toBe("Mancano 26 minuti");
+  });
+
+  it("a reload during an outage shows its text once, never twice", async () => {
+    const { a, root, ev } = reloaded(
+      snapshot({ state: "OUTAGE", outage_reason: "service_misconfigured", outage_no: 2, remaining_s: 1440 }),
+    );
+    await ev("outage_start", { state: "OUTAGE", reason: "service_misconfigured", outage_no: 1 });
+    await ev("outage_end", { state: "ACTIVE", outage_no: 1 });
+    await ev("outage_start", { state: "OUTAGE", reason: "service_misconfigured", outage_no: 2 });
+    expect(a.banner.querySelectorAll("p").length).toBe(1);
+    expect(a.banner.textContent).toBe(MISCONFIGURED);
+    expect(count(root.textContent ?? "", MISCONFIGURED)).toBe(1); // the banner only
+    expect(a.live.announcements).toBe(0);
+  });
+
+  it("outage events without outage_no (an older server) still count", async () => {
+    const { priv, ev } = reloaded(snapshot({}));
+    await ev("outage_start", { state: "OUTAGE" });
+    expect(priv.state.name).toBe("outage");
+    await ev("outage_end", { state: "ACTIVE" });
+    expect(priv.state.name).toBe("active");
+  });
+});

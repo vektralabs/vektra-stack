@@ -237,6 +237,9 @@ async def test_every_input_readable_refuses_the_date_and_requires_none(pg) -> No
             fallback_url(926), json=fb(CLOSE, activity_type="quiz"), headers=teacher()
         )
         assert r.status_code == 400, r.text
+        # a refresh cannot lift it (the matrix holds every input readable): no hint (fifth
+        # review of #221, 5)
+        assert "retry_after_s" not in err(r)["details"]
         assert err(r)["details"]["fields"] == [
             {"field": "opening_at", "code": "fallback_not_needed"}
         ]
@@ -280,3 +283,24 @@ async def test_an_opening_fallback_refused_on_cached_facts_asks_for_a_retry(  # 
             {"s": str(w.site)},
         )
         assert jobs[0][0] == 1
+
+
+async def test_a_failing_refresh_queue_never_turns_the_refusal_into_a_500(  # type: ignore[no-untyped-def]
+    pg, monkeypatch
+) -> None:
+    """Fifth review, 4: the refusal is the answer; queueing its refresh is best effort. A
+    failing queue still returns the 400, without the hint (nothing was queued)."""
+    from vektra_assess.api import teacher_ops
+
+    async def broken(*_a: Any, **_k: Any) -> bool:
+        raise RuntimeError("queue down")
+
+    monkeypatch.setattr(teacher_ops, "queue_teacher_gate", broken)
+    async with world(pg) as w:
+        with_transcript_key(w)
+        await configure_activity(pg, w.site, 931, attested=False, enabled=False)
+        await seed_teacher_gate(pg, w.site, 931, age="1 minute", close_at=0)
+        r = await w.client.put(fallback_url(931), json=fb(CLOSE), headers=teacher())
+        assert r.status_code == 400, r.text
+        assert [f["code"] for f in err(r)["details"]["fields"]] == ["no_close_date"]
+        assert "retry_after_s" not in err(r)["details"]

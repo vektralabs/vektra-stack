@@ -94,6 +94,13 @@ def render_dedupe_key(site_id: object, userid: int, cmid: int) -> str:
     return f"render_check:{site_id}:{userid}:{cmid}"
 
 
+def render_followup_dedupe_key(site_id: object, userid: int, cmid: int) -> str:
+    """The ONE follow-up render check allowed beside a pending one (as for the teacher gate,
+    ``teacher_gate_followup_dedupe_key``): the pending one may already be running and have read
+    before a change, so a refusal that promises a retry queues this one too."""
+    return render_dedupe_key(site_id, userid, cmid) + ":next"
+
+
 _ARG_TYPES = (str, int)
 
 

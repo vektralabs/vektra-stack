@@ -42,7 +42,14 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import text
 
 from vektra_assess import privacy
-from vektra_assess.api.common import engine_of, fail, iso_time, parse_body, site_of_key
+from vektra_assess.api.common import (
+    engine_of,
+    fail,
+    is_fresh,
+    iso_time,
+    parse_body,
+    site_of_key,
+)
 from vektra_assess.api.deps import settings_of
 from vektra_assess.api.teachers import (
     RETRY_AFTER_S,
@@ -113,7 +120,8 @@ _CONFIG = text(
 #: waited for the activity lock past the end date
 _CLOCK = text("SELECT extract(epoch FROM clock_timestamp())::bigint AS db_now")
 _RENDER = text(
-    "SELECT inputs, extract(epoch FROM now() - refreshed_at) AS age_s FROM assess_gate_inputs "
+    "SELECT inputs, extract(epoch FROM clock_timestamp() - refreshed_at) AS age_s "
+    "FROM assess_gate_inputs "
     "WHERE site_id = :s AND student_userid = :u AND cmid = :c"
 )
 _INSERT_GRANT = text(
@@ -287,9 +295,7 @@ async def reset_session(
         inputs = render.inputs if render is not None else None
         fresh = (
             render is not None
-            and render.age_s is not None
-            # dated past the database clock (a backward clock step): not fresh
-            and 0 <= float(render.age_s) <= settings.teacher_gate_max_age_s
+            and is_fresh(render.age_s, settings.teacher_gate_max_age_s)
             and isinstance(inputs, dict)
             and isinstance(inputs.get("lms_reasons"), list)
             # evaluated with the REQ-091 date in force now (a moved date changes gate (d))
@@ -299,7 +305,9 @@ async def reset_session(
             # the LMS half is evaluated by the worker: ask for it and let the teacher retry
             from vektra_assess.api.state import queue_render_check
 
-            await queue_render_check(conn, site, student, c, body.courseid)
+            await queue_render_check(
+                conn, site, student, c, body.courseid, follow_up=True
+            )
             err = reset_refused("gate_inputs_stale", **retry_details(RETRY_AFTER_S))
             raise _Refused(fail(err, retry_headers(err)))
         code = gate_code([str(x) for x in inputs["lms_reasons"]])  # type: ignore[index]
@@ -309,7 +317,9 @@ async def reset_session(
             # retries at most once)
             from vektra_assess.api.state import queue_render_check
 
-            await queue_render_check(conn, site, student, c, body.courseid)
+            await queue_render_check(
+                conn, site, student, c, body.courseid, follow_up=True
+            )
             err = reset_refused("gate", gate=code, **retry_details(RETRY_AFTER_S))
             raise _Refused(fail(err, retry_headers(err)))
         # the LOCKED row's close reason: the worker may have closed the session between the
@@ -603,8 +613,17 @@ async def put_opening_fallback(
             if hint is not None and all(e.code in v.OPENING_FACT_CODES for e in errors):
                 # decided on the CACHED gate facts (the close date, its readability): the
                 # teacher may have just changed them in the LMS. Re-read and hint (the client
-                # retries at most once); this transaction commits with the refusal
-                await queue_teacher_gate(conn, site, c, *hint, follow_up=True)
+                # retries at most once); this transaction commits with the refusal. The queue
+                # is best effort in a savepoint: a failure loses the hint, never the 400
+                try:
+                    async with conn.begin_nested():
+                        await queue_teacher_gate(conn, site, c, *hint, follow_up=True)
+                except Exception as exc:
+                    log.warning(
+                        "assess_teacher_gate_queue_failed",
+                        error_type=type(exc).__name__,
+                    )
+                    raise _Refused(_invalid(errors)) from None
                 raise _Refused(_invalid(errors, RETRY_AFTER_S))
             raise _Refused(_invalid(errors))
         at = int(body.opening_at.timestamp())

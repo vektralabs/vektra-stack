@@ -43,6 +43,7 @@ from vektra_assess import privacy
 from vektra_assess.api.common import (
     engine_of,
     fail,
+    is_fresh,
     iso_time,
     opening_json,
     parse_body,
@@ -564,9 +565,8 @@ async def gate_refresh(
             raise fail(bad_request("teacher_gate_hint"))
         recent = (
             row is not None
-            and row.age_s is not None
-            # a row dated past the database clock (a backward clock step) is not "recent"
-            and 0 <= float(row.age_s) <= REFRESH_MIN_INTERVAL_S
+            # the one freshness rule: a row dated well past the clock is not "recent"
+            and is_fresh(row.age_s, REFRESH_MIN_INTERVAL_S)
             and (facts.get("resolved") is True or facts.get("hint") == list(hint))
         )
         queued = (

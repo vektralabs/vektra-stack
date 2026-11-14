@@ -1030,3 +1030,42 @@ async def test_the_confirming_probe_stays_inside_the_jobs_hard_budget(  # type: 
         )  # fmt: skip
         await handler(job_context(worker_engine, sid))
         await _rolled_back(pg, sid, "provider_unavailable")
+
+
+async def test_without_an_explicit_job_budget_the_policy_default_bounds_the_probe(  # type: ignore[no-untyped-def]
+    pg, worker_engine
+) -> None:
+    """Fifth review, 8: ``PreflightDeps.job_budget_s`` None (no worker composition) falls back
+    to the policy's default for these settings, inside the handler; a probe answering well
+    within it confirms the configuration."""
+    from datetime import UTC, datetime, timedelta
+
+    from vektra_assess.llm.types import ProviderCallRecord, ProviderOutageError
+
+    class _Resp:
+        status_code = 404
+
+    async def refused() -> bool:
+        exc = type("NotFoundError", (Exception,), {})("refused")
+        exc.response = _Resp()  # type: ignore[attr-defined]
+        raise exc
+
+    settings = default_settings()
+    await _reset(pg)
+    await activate(pg)
+    async with world(pg, settings) as w:
+        await configure_activity(pg, w.site, CMID)
+        start = datetime.now(UTC)
+        outage = ProviderOutageError(
+            ProviderCallRecord(
+                start, None, start + timedelta(seconds=1), "error", "NotFoundError",
+                "http_4xx", 404,
+            )
+        )  # fmt: skip
+        part_b = FakePartB(fail=outage)
+        part_b.config_probe = lambda: refused  # type: ignore[attr-defined]
+        sid = await _start(w)
+        d = deps(settings, w.handoff_public, start_source(worker_engine), part_b)
+        assert d.job_budget_s is None
+        await make_preflight_handler(d)(job_context(worker_engine, sid))
+        await _rolled_back(pg, sid, "service_misconfigured")

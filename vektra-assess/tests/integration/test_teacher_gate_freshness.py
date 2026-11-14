@@ -576,3 +576,21 @@ async def test_facts_dated_in_the_future_are_neither_fresh_nor_recent(
         assert r.status_code == 202 and r.json()["queued"] is True
     finally:
         await ctx.__aexit__(None, None, None)
+
+
+async def test_a_row_committed_after_the_request_began_is_fresh(
+    pg, monkeypatch
+) -> None:  # type: ignore[no-untyped-def]
+    """Fifth review, 1/2/6: a row dated a moment past the reading transaction's start (it was
+    committed meanwhile, or the clocks differ a little) is fresh, not a clock step."""
+    ctx, w = await ready(pg, monkeypatch)
+    try:
+        await seed_gate(pg, w.site, 96, age="-2 seconds")
+        r = await w.client.put(config_url(96), json=enable(), headers=auth("teacher"))
+        assert r.status_code == 200, r.text
+        assert await gate_jobs(pg, w.site, 96) == []
+        await seed_gate(pg, w.site, 97, age="-2 seconds")
+        r = await w.client.post(refresh_url(97), json=action(), headers=auth("teacher"))
+        assert r.status_code == 202 and r.json()["queued"] is False  # a recent read
+    finally:
+        await ctx.__aexit__(None, None, None)

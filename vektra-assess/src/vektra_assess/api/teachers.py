@@ -60,7 +60,7 @@ import structlog
 from fastapi import HTTPException, Request
 from sqlalchemy import text
 
-from vektra_assess.api.common import fail
+from vektra_assess.api.common import fail, is_fresh
 from vektra_assess.audit import AssessAuditEvent, write_event
 from vektra_assess.errors import (
     bad_request,
@@ -84,7 +84,7 @@ NOT_IN_COURSE = "activity_not_in_course"
 
 #: the one read of an activity's cached facts (the role checks and ``gate-refresh``)
 GATE_ROW = text(
-    "SELECT inputs, refreshed_at, extract(epoch FROM now() - refreshed_at) AS age_s "
+    "SELECT inputs, refreshed_at, extract(epoch FROM clock_timestamp() - refreshed_at) AS age_s "
     "FROM assess_teacher_gate WHERE site_id = :s AND cmid = :c"
 )
 
@@ -206,9 +206,9 @@ async def check_fresh_teacher(
     row = (await conn.execute(GATE_ROW, {"s": site, "c": int(cmid)})).first()
     facts = dict(row.inputs) if row is not None and isinstance(row.inputs, dict) else {}
     age = float(row.age_s) if row is not None and row.age_s is not None else None
-    # a negative age (the row dated past the database clock, after a backward clock step) is
-    # not fresh: the refresh is queued and the stale refusal hints
-    fresh = age is not None and 0 <= age <= max_age_s
+    # the one rule (``api.common.is_fresh``): a row dated well past the clock (a backward
+    # clock step) is not fresh, the refresh is queued and the stale refusal hints
+    fresh = is_fresh(age, max_age_s)
 
     async def refresh() -> TeacherGate:
         hint = refresh_hint(facts, courseid_hint, kind_hint)

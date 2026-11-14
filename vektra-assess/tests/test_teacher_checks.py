@@ -219,3 +219,27 @@ def test_the_retry_hint_is_in_one_place_capped_and_never_on_a_final_refusal() ->
         "reason": "gate_inputs_stale",
         "retry_after_s": 3,
     }
+
+
+# --- fifth review of #221 ------------------------------------------------------------------------
+
+
+def test_one_freshness_rule_tolerates_a_small_negative_age() -> None:
+    """Fifth review, 1/2/6: ages are read against clock_timestamp(); a row committed after the
+    reading transaction began, or a little skew, gives a small negative age: fresh. Beyond
+    CLOCK_SKEW_TOLERANCE_S below zero it is a clock step: not fresh."""
+    from vektra_assess.api.common import CLOCK_SKEW_TOLERANCE_S, is_fresh
+
+    assert CLOCK_SKEW_TOLERANCE_S == 5
+    assert is_fresh(0.0, 120) and is_fresh(120.0, 120) and is_fresh(-4.9, 120)
+    assert not is_fresh(120.1, 120)
+    assert not is_fresh(-5.1, 120)
+    assert not is_fresh(None, 120)
+    assert is_fresh(-2.0, 10) and not is_fresh(11.0, 10)
+
+
+@pytest.mark.parametrize(
+    ("age", "want"), [(-2.0, TeacherCheck.OK), (-10.0, TeacherCheck.STALE)]
+)
+def test_the_teacher_gate_uses_the_one_rule(age: float, want: TeacherCheck) -> None:
+    assert check(Conn(gate(age=age))) is want

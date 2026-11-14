@@ -83,6 +83,7 @@ class World:
         self.check = check
         self.events: list[tuple[Any, dict[str, Any]]] = []
         self.renders: list[tuple[Any, ...]] = []
+        self.render_kw: list[dict[str, Any]] = []
         self.privacy = True
         self.readable: dict[str, bool] = {}
         self.facts: dict[str, Any] = {"activity_type": "quiz", "close_at": NOW - 3600}
@@ -114,8 +115,9 @@ def world(monkeypatch: pytest.MonkeyPatch) -> Any:
     async def write_event(conn: Any, event: Any, **kw: Any) -> None:
         holder["w"].events.append((event, kw))
 
-    async def queue_render_check(conn: Any, *args: Any) -> None:
+    async def queue_render_check(conn: Any, *args: Any, **kw: Any) -> None:
         holder["w"].renders.append(args)
+        holder["w"].render_kw.append(kw)
 
     async def is_configured(conn: Any, site: Any) -> bool:
         return holder["w"].privacy
@@ -712,3 +714,34 @@ def test_iso_previous_date_is_returned_when_one_was_set(
     _, view = run(fallback(monkeypatch, at(NOW) + timedelta(hours=1)))
     assert view["previous"].startswith("2027-")
     assert w.events[0][1]["data"]["old"] == NOW + 60
+
+
+# --- fifth review of #221 ------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("age", "stale"), [(-2.0, False), (-10.0, True), (121.0, True)]
+)
+def test_a_render_read_a_moment_after_the_transaction_began_is_fresh(
+    world: Any, monkeypatch: pytest.MonkeyPatch, age: float, stale: bool
+) -> None:
+    """Fifth review, 1/2/6: a small negative age is a row committed after the request's
+    transaction began (or a little clock skew): fresh. Only past CLOCK_SKEW_TOLERANCE_S is it a
+    clock step, stale like an old row."""
+    world(reset_script(gate_row=render(age=age, lms_reasons=["not_enrolled"])))
+    status, detail = refused(reset(monkeypatch))
+    assert status == 409
+    assert details(detail)["reason"] == ("gate_inputs_stale" if stale else "gate")
+
+
+def test_the_reset_hint_is_backed_by_a_follow_up_render_check(
+    world: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Fifth review, 3: a render check already running may have read before the teacher's
+    change; the reset's refresh asks for the follow-up beside it, as the teacher gate does."""
+    w = world(reset_script(gate_row=render(lms_reasons=["not_enrolled"])))
+    refused(reset(monkeypatch))
+    assert w.render_kw == [{"follow_up": True}]
+    w2 = world(reset_script(gate_row=render(age=500)))
+    refused(reset(monkeypatch))
+    assert w2.render_kw == [{"follow_up": True}]

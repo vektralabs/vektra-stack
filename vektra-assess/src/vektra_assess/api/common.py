@@ -56,6 +56,22 @@ async def site_of_key(conn: Any, key: Any, purpose: str) -> Any:
     return (await site_row_of_key(conn, key, purpose)).id
 
 
+#: how far below zero a cached row's age may be and still count as fresh. Ages are read as
+#: ``clock_timestamp() - <read time>``; a row written by another session a moment ago, or a
+#: little skew between the clocks that dated it, gives a small negative age. Beyond this it
+#: is a backward clock step: the row is not trusted (a refresh is queued)
+CLOCK_SKEW_TOLERANCE_S = 5.0
+
+
+def is_fresh(age_s: Any, max_age_s: float) -> bool:
+    """The ONE freshness rule of the cached LMS rows (teacher gate, render state, gate inputs):
+    an age in [-CLOCK_SKEW_TOLERANCE_S, max_age_s]. Absent (None) is not fresh."""
+    if age_s is None:
+        return False
+    age = float(age_s)
+    return -CLOCK_SKEW_TOLERANCE_S <= age <= max_age_s
+
+
 def iso_time(value: Any) -> str | None:
     """The one epoch / datetime -> ISO 8601 rule of the assess views: epoch seconds as an
     ``int`` (0 included: 1970-01-01T00:00:00+00:00, a value, not "absent"), or an aware

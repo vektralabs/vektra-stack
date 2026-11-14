@@ -185,17 +185,20 @@ this table.
 is a header. Each event is
 
 ```text
-id: <n>
+id: <nonce>:<n>
 event: <type>
 data: <one line of JSON>
 
 ```
 
-with `<n>` a per-session counter that only grows. A connection always starts with
-`event: state` carrying no `id` (it does not move the client's cursor). A comment line
+with `<nonce>` the id of the API process's event broker (new at each start) and `<n>` a
+per-session counter that only grows; clients treat the id as opaque. A connection always starts
+with `event: state` carrying no `id` (it does not move the client's cursor). A comment line
 `: keep-alive` is sent every 15 s of silence. The server ends a stream after one hour; the client
-reconnects with `Last-Event-ID: <n>` and gets the events the in-memory ring still holds after
-`<n>`. Persisted turns are read from `GET /sessions/{sid}`, never from the stream. The event
+reconnects with `Last-Event-ID` set to the last id it read and gets the events the in-memory ring
+still holds after it. A `Last-Event-ID` of another broker (from before a restart), unparseable,
+or ahead of the session's ids counts as none: the whole ring is replayed. A bare `<n>` (a
+client from before the nonce) is still read. Persisted turns are read from `GET /sessions/{sid}`, never from the stream. The event
 types and their payloads are listed under **Events** below. The broker is in the API process, so
 the stream is correct with one API process only (see the deployment guide).
 
@@ -279,7 +282,7 @@ selected server-side at Start.
 | POST | `/api/v1/assess/tokens` | `assess:mint` API key | `201 {"token", "expires_in"}` pre-session token. Optional body field `privacy_notice_version`: the `pre_session.privacy.notice_version` the student saw, sent on the **Start** mint (harmless on the others). Only its format is checked here (1-40 characters, not blank, no control character: C0 but tab and newline, DEL, C1), after the login-as assertion; it is never compared at mint and travels in the token as the claim `notice_version`, which only Start compares (`GET /state` and a resume ignore it) | `401 ERR-AUTH-001`, `403 ERR-ASSESS-006` (login-as, audited before any other body check), `403 ERR-ASSESS-007` (key not bound to the site), `400 ERR-ASSESS-014` (an invalid `privacy_notice_version`: `details.reason` `<code>:privacy_notice_version`, codes `too_long`, `empty`, `not_a_string`, `control_character`), `403 ERR-ASSESS-016` (plugin too old) |
 | GET | `/api/v1/assess/state` | pre-session | `200 {"state", "reason", ...}` the student's render state | `401 ERR-ASSESS-005`, `429 ERR-ASSESS-012` (`state_rate`) |
 | POST | `/api/v1/assess/sessions` | pre-session | `202 {"session_id", "state": "STARTING", "token", "session_no"}` | `401 ERR-ASSESS-005` (also a jti never minted by the site's current mint key: `mint_correlation`), `409 ERR-ASSESS-015` (gate code, `session_already_open`, `already_discussed`, `activity_not_configured`), `409 ERR-ASSESS-029` (`privacy_notice_changed`: the token carries a `privacy_notice_version` that is not the site's current one; no session, token not consumed, audited `assess_start_refused` with `presented_notice_version` and `current_notice_version`), `429 ERR-ASSESS-012` (`start_rate_cap`, `retry_after`), `503 ERR-ASSESS-013` (capacity), `503 ERR-ASSESS-001` (worker not ready, `start_breaker_open`) |
-| GET | `/api/v1/assess/sessions/{sid}` | session (or pre-session: resume, re-mints) | `200 {"session_id", "state", "close_reason", "session_no", "deadline_at", "server_now", "remaining_s" (frozen at the outage start while in OUTAGE), "outage_reason" (OUTAGE only: `provider_unavailable` or `service_misconfigured`), "committed_at", "reply_pending", "turns": [{"turn_no", "role", "kind", "text", "flagged"}], "event_cursor" (integer, always: the id of the session's last stream event, read before the snapshot; open the stream with it as `Last-Event-ID`, see Events)}` | `401`, `404 ERR-ASSESS-008`, `409 ERR-ASSESS-009` (closed), `409 ERR-ASSESS-011`, `503 ERR-ASSESS-001` |
+| GET | `/api/v1/assess/sessions/{sid}` | session (or pre-session: resume, re-mints) | `200 {"session_id", "state", "close_reason", "session_no", "deadline_at", "server_now", "remaining_s" (frozen at the outage start while in OUTAGE), "outage_reason" (OUTAGE only: `provider_unavailable` or `service_misconfigured`), "committed_at", "reply_pending", "turns": [{"turn_no", "role", "kind", "text", "flagged"}], "event_cursor" (opaque string, always: where the stream starts for this snapshot, read before it; open the stream with it as `Last-Event-ID`, see Events)}` | `401`, `404 ERR-ASSESS-008`, `409 ERR-ASSESS-009` (closed), `409 ERR-ASSESS-011`, `503 ERR-ASSESS-001` |
 | GET | `/api/v1/assess/sessions/{sid}/events` | session | `200 text/event-stream` (below) | as GET; a CLOSED session answers a content-free `state` + `closed` |
 | POST | `/api/v1/assess/sessions/{sid}/turns` | session | `202 {"session_id", "turn_no"}`; the reply streams on the events | `400 ERR-ASSESS-014` (`message_empty`, `message_too_long`), `409 ERR-ASSESS-010` (reply pending), `409 ERR-ASSESS-011` (deadline passed, OUTAGE), `429 ERR-ASSESS-012` (`message_rate` "Attendi qualche secondo"), `503 ERR-ASSESS-001` (`enrolment_freshness`) |
 | POST | `/api/v1/assess/sessions/{sid}/retry` | session | `202 {"session_id", "state", "reply_pending"}`; asks the server to answer a pending turn now, never ends OUTAGE | `409`, `429 ERR-ASSESS-012` (`retry_rate`) |
@@ -588,7 +591,9 @@ the row is live at the token's epoch. A connection without `Last-Event-ID` repla
 ring, so a client that loads `GET /sessions/{sid}` first (a reload, a resume) opens the stream
 with that response's `event_cursor` as `Last-Event-ID`: the events the snapshot already reflects
 are not replayed as live (an event published between the two reads may come once more, none is
-skipped). `state` (snapshot on connect: `state`, `close_reason`, `message_code`, `deadline_at`,
+skipped). While a reply is owed (`reply_pending`), the cursor stops before that reply's first
+event, so its `reply_delta` are replayed into the reply in progress; outage events the snapshot
+already shows are skipped by that stream even when published after the cursor. `state` (snapshot on connect: `state`, `close_reason`, `message_code`, `deadline_at`,
 `server_now`, and in OUTAGE `reason`), `committed`,
 `start_rolled_back` (`reason`: the rollback reason, e.g. `provider_unavailable`,
 `service_misconfigured`, `capacity`; `technical_problem_persistent` after 3 consecutive system

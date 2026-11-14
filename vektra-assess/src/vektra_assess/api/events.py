@@ -26,12 +26,13 @@ from __future__ import annotations
 
 import asyncio
 import json
+import secrets
 import time
 from collections import deque
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any
+from typing import Any, NamedTuple
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Request
@@ -70,6 +71,25 @@ TERMINAL = frozenset({"closed", "start_rolled_back"})
 CONTENT_EVENTS = frozenset({"reply_delta"})
 
 
+def _digits(raw: str) -> bool:
+    return raw.isascii() and raw.isdigit() and len(raw) < 12
+
+
+#: the reply events: the first of a reply (``turn_accepted`` or its first ``reply_delta``) marks
+#: where a reload during it must start; its end clears the mark
+_REPLY_START = frozenset({"turn_accepted", "reply_delta"})
+_REPLY_END = frozenset({"reply_done", "reply_interrupted", "closed"})
+
+
+def outage_key(state: str | None, outage_count: int | None) -> int | None:
+    """One monotonic order over the live outage states: ACTIVE after ``c`` intervals is
+    ``2c``, OUTAGE in the ``c``-th is ``2c - 1``. ``None`` outside ACTIVE / OUTAGE or with the
+    count unknown. ``key // 2`` is the number of intervals that have ended."""
+    if outage_count is None or state not in ("ACTIVE", "OUTAGE"):
+        return None
+    return 2 * outage_count - (1 if state == "OUTAGE" else 0)
+
+
 @dataclass(frozen=True)
 class Event:
     id: int
@@ -78,10 +98,13 @@ class Event:
     #: the session epoch a content event was produced under (never serialized): a stream
     #: delivers it only to a token of the same epoch, re-checked against the row (M3.4)
     epoch: int | None = None
+    #: an outage event's ``outage_key`` (never serialized): a stream opened from a snapshot
+    #: skips the outage events that snapshot already reflects
+    key: int | None = None
 
-    def sse(self) -> str:
+    def sse(self, nonce: str) -> str:
         payload = json.dumps(self.data, separators=(",", ":"), ensure_ascii=False)
-        return f"id: {self.id}\nevent: {self.type}\ndata: {payload}\n\n"
+        return f"id: {nonce}:{self.id}\nevent: {self.type}\ndata: {payload}\n\n"
 
 
 @dataclass
@@ -89,7 +112,8 @@ class _Channel:
     ring: deque[Event]
     next_id: int = 1
     last_state: str | None = None
-    last_outage_count: int | None = None  # the outage intervals counted with last_state
+    last_key: int | None = None  # the outage_key of the last observation, when known
+    reply_mark: int | None = None  # the id just before the current reply's first event
     touched: float = 0.0
     ended_at: float | None = None  # when a terminal event was published
     warned: set[tuple[int, str]] = field(default_factory=set)  # (minutes, deadline ISO)
@@ -113,6 +137,10 @@ class EventBroker:
         self._closed_ttl = closed_ttl_s
         self._clock = clock
         self._channels: dict[UUID, _Channel] = {}
+        #: this broker instance's id: an event id is ``<nonce>:<n>``, so a cursor or a
+        #: Last-Event-ID from another instance (before an API restart) is recognised as foreign
+        #: instead of being ahead of every new id
+        self.nonce = secrets.token_hex(8)
 
     def _channel(self, sid: UUID) -> _Channel:
         ch = self._channels.get(sid)
@@ -129,13 +157,18 @@ class EventBroker:
         data: dict[str, Any] | None = None,
         *,
         epoch: int | None = None,
+        key: int | None = None,
     ) -> Event:
         if type_ not in EVENT_TYPES:
             raise ValueError(f"unknown event type {type_!r} (the catalogue is closed)")
         ch = self._channel(sid)
         if type_ in CONTENT_EVENTS and epoch is None:
             raise ValueError("a content event carries the epoch it was produced under")
-        event = Event(ch.next_id, type_, dict(data or {}), epoch)
+        event = Event(ch.next_id, type_, dict(data or {}), epoch, key)
+        if type_ in _REPLY_START and ch.reply_mark is None:
+            ch.reply_mark = event.id - 1
+        elif type_ in _REPLY_END:
+            ch.reply_mark = None
         ch.next_id += 1
         ch.ring.append(event)
         if type_ in TERMINAL and ch.ended_at is None:
@@ -155,34 +188,28 @@ class EventBroker:
         """Report the polled state (``None``: the row is gone). Publishes on a change only.
 
         ``outage_count``: the session's outage intervals, counted with the state (``None``:
-        unknown). The state string alone cannot see an outage that ended and another that began
-        between two observations (OUTAGE then OUTAGE), nor a whole outage between them (ACTIVE
-        then ACTIVE, with a moved deadline): a higher count is that change. A lower count than
-        the last one is an older read than what was already observed, and is ignored."""
+        unknown). Between live states the reads are ordered by ``outage_key`` alone: a read not
+        above the last key is old news and ignored; a higher one publishes ``outage_end`` if an
+        interval ended since (``deadline_at`` in ``data`` is the moved one), then
+        ``outage_start`` if one is open now. This also sees an outage that ended and another that
+        began between two reads (OUTAGE then OUTAGE), and a whole one between them."""
         ch = self._channel(sid)
-        last_count = ch.last_outage_count
-        if outage_count is not None and last_count is not None:
-            if outage_count < last_count:
-                return (
-                    None  # a read taken before the last observation: nothing new in it
-                )
-        if outage_count is not None:
-            ch.last_outage_count = outage_count
+        key = outage_key(state, outage_count)
+        if key is not None and ch.last_key is not None:
+            if key <= ch.last_key:
+                return None
+            before, ch.last_key, ch.last_state = ch.last_key, key, state
+            out = None
+            if key // 2 > before // 2:
+                out = self.publish(sid, "outage_end", data, key=2 * (key // 2))
+            if key % 2:
+                out = self.publish(sid, "outage_start", data, key=key)
+            return out
+        if key is not None:
+            ch.last_key = key
         prev, ch.last_state = ch.last_state, state
         if prev == state:
-            if (
-                outage_count is None
-                or last_count is None
-                or outage_count <= last_count
-                or state not in ("ACTIVE", "OUTAGE")
-            ):
-                return None
-            # the previous interval ended (its credit moved deadline_at, which ``data`` carries)
-            ended = self.publish(sid, "outage_end", data)
-            # ... and in OUTAGE a new one is open now
-            return (
-                self.publish(sid, "outage_start", data) if state == "OUTAGE" else ended
-            )
+            return None
         if state is None:
             return (
                 self.publish(sid, "start_rolled_back", data)
@@ -195,9 +222,9 @@ class EventBroker:
             return self.publish(sid, "committed", data)
         # REQ-086 (M4.1, M4.2): the outage and its end; ``outage_end`` carries the moved deadline
         if prev == "ACTIVE" and state == "OUTAGE":
-            return self.publish(sid, "outage_start", data)
+            return self.publish(sid, "outage_start", data, key=key)
         if prev == "OUTAGE" and state == "ACTIVE":
-            return self.publish(sid, "outage_end", data)
+            return self.publish(sid, "outage_end", data, key=key)
         if prev is None:
             return (
                 None  # the first observation: every connection already got a snapshot
@@ -223,15 +250,47 @@ class EventBroker:
             )
         return out
 
-    def cursor(self, sid: UUID) -> int:
-        """The id of the session's last published event (0: none, or no channel yet). A
-        snapshot read after this carries it, and the client's stream starts from it, so the
-        events the snapshot already reflects are not replayed. Never creates a channel."""
+    def cursor(self, sid: UUID) -> tuple[int, int | None]:
+        """(the id of the session's last published event, 0 when none or no channel; the id
+        just before the current reply's first event, None when no reply is under way). A
+        snapshot read after this starts the client's stream there, so the events it already
+        reflects are not replayed, except a pending reply's, which the snapshot does not hold
+        yet. Never creates a channel."""
         ch = self._channels.get(sid)
         if ch is None:
-            return 0
+            return 0, None
         ch.touched = self._clock()
-        return ch.next_id - 1
+        return ch.next_id - 1, ch.reply_mark
+
+    def last_event_id(self, sid: UUID, raw: str | None) -> tuple[int, int | None]:
+        """A ``Last-Event-ID`` (or a snapshot's ``event_cursor``) read against this broker:
+        (the id to stream after, the snapshot's outage key when the cursor carries one).
+        ``<nonce>:<n>[:<key>]`` counts only with this instance's nonce; a bare ``<n>`` (a
+        client from before the nonce) is still accepted. Foreign, unparseable, or ahead of the
+        channel's ids (an older instance): no cursor, the whole ring replays (the client
+        discards replies its snapshot already shows by their turn_no)."""
+        parts = (raw or "").strip().split(":")
+        if len(parts) == 1:
+            nonce, n_raw, key_raw = self.nonce, parts[0], ""
+        elif len(parts) in (2, 3):
+            nonce, n_raw, key_raw = (
+                parts[0],
+                parts[1],
+                (parts[2] if len(parts) == 3 else ""),
+            )
+        else:
+            return 0, None
+        if (
+            nonce != self.nonce
+            or not _digits(n_raw)
+            or (key_raw and not _digits(key_raw))
+        ):
+            return 0, None
+        n = int(n_raw)
+        ch = self._channels.get(sid)
+        if n >= (ch.next_id if ch is not None else 1):
+            return 0, None
+        return n, (int(key_raw) if key_raw else None)
 
     def after(self, sid: UUID, last_id: int) -> list[Event]:
         ch = self._channels.get(sid)
@@ -344,10 +403,22 @@ def _count(row: Any) -> int | None:
     return int(row.outage_count) if row.outage_count is not None else None
 
 
-async def _poll(
-    request: Request, sid: UUID
-) -> tuple[str | None, int | None, dict[str, Any], int | None]:
-    """(state, epoch, payload, outage count); state None: the row is gone."""
+class Polled(NamedTuple):
+    """One ``_STATUS`` read; ``state`` None: the row is gone (a rolled-back Start)."""
+
+    state: str | None
+    epoch: int | None
+    data: dict[str, Any]
+    outage_count: int | None = None
+
+
+async def status_key(conn: Any, sid: UUID) -> int | None:
+    """The session's ``outage_key`` now (state and count in one statement), for a snapshot."""
+    row = (await conn.execute(_STATUS, {"s": sid})).first()
+    return outage_key(row.state, _count(row)) if row is not None else None
+
+
+async def _poll(request: Request, sid: UUID) -> Polled:
     async with engine_of(request).connect() as conn:
         row = (await conn.execute(_STATUS, {"s": sid})).first()
         if row is None:
@@ -359,17 +430,12 @@ async def _poll(
                 # REQ-071: "Problema tecnico persistente" while the streak of system rollbacks
                 # of this student and activity lasts (the teacher and operator were notified)
                 reason = "technical_problem_persistent"
-            return None, None, {"reason": reason}, None
+            return Polled(None, None, {"reason": reason})
     if row.state == "ACTIVE" and row.deadline_at is not None and row.duration_s:
         broker_of(request).warn(
             sid, row.deadline_at, row.server_now, int(row.duration_s)
         )
-    return str(row.state), int(row.epoch), _status_data(row), _count(row)
-
-
-def _last_event_id(request: Request) -> int:
-    raw = request.headers.get("last-event-id", "0").strip()
-    return int(raw) if raw.isascii() and raw.isdigit() and len(raw) < 12 else 0
+    return Polled(str(row.state), int(row.epoch), _status_data(row), _count(row))
 
 
 def _settings(request: Request) -> tuple[float, float, float]:
@@ -410,13 +476,21 @@ async def session_events(
     seen = str(status.state) if status is not None else row.state
     snapshot = _status_data(status if status is not None else row)
     broker = broker_of(request)
+    # read before the seeding below publishes anything: a cursor ahead of the channel is foreign
+    last, seen_key = broker.last_event_id(sid, request.headers.get("last-event-id"))
     # seed the channel with the state this connection saw, so the next poll reports a change
-    # (STARTING -> ACTIVE is ``committed``) even when no other connection observed it first
+    # (STARTING -> ACTIVE is ``committed``) even when no other connection observed it first.
+    # What it publishes is for every tab of the session; this connection skips below what its
+    # client's snapshot already reflects (``seen_key``)
     broker.observe(
         sid, seen, snapshot, outage_count=_count(status) if status is not None else None
     )
     poll_s, keepalive_s, max_s = _settings(request)
-    last = _last_event_id(request)
+    nonce = broker.nonce
+
+    def reflected(event: Event) -> bool:
+        """An outage event the client's snapshot (``event_cursor``) already shows."""
+        return seen_key is not None and event.key is not None and event.key <= seen_key
 
     async def stream() -> AsyncIterator[str]:
         nonlocal last
@@ -432,17 +506,12 @@ async def session_events(
                 e for e in broker.after(sid, last) if e.type not in CONTENT_EVENTS
             ]
             for event in replay:
-                yield event.sse()
+                yield event.sse(nonce)
             if not any(e.type in TERMINAL for e in replay):
                 yield f"event: closed\ndata: {payload}\n\n"
             return
-        # the last row read (state, epoch, data, outage count) and when it was taken (monotonic)
-        polled: tuple[str | None, int | None, dict[str, Any], int | None] = (
-            None,
-            None,
-            {},
-            None,
-        )
+        # the last row read and when it was taken (monotonic)
+        polled = Polled(None, None, {})
         polled_at = float("-inf")
         while time.monotonic() - started < max_s:
             # the channel is never evicted here: every open tab and every reconnect must read the
@@ -459,8 +528,10 @@ async def session_events(
                 if time.monotonic() - polled_at >= poll_s:
                     polled = await _poll(request, sid)
                     polled_at = time.monotonic()
-                    broker.observe(sid, polled[0], polled[2], outage_count=polled[3])
-                state, epoch = polled[0], polled[1]
+                    broker.observe(
+                        sid, polled.state, polled.data, outage_count=polled.outage_count
+                    )
+                state, epoch = polled.state, polled.epoch
                 live = state in ("ACTIVE", "OUTAGE") and epoch == claims.epoch
                 if state in ("ACTIVE", "OUTAGE") and epoch != claims.epoch:
                     return  # revoked under this connection: nothing more for this token
@@ -471,15 +542,19 @@ async def session_events(
                     not live or event.epoch != claims.epoch
                 ):
                     continue
-                yield event.sse()
+                if reflected(event):
+                    continue
+                yield event.sse(nonce)
                 if event.type in TERMINAL:
                     return
             now = time.monotonic()
             if now >= next_poll:
                 polled = await _poll(request, sid)
                 polled_at = time.monotonic()
-                state, epoch, data, count = polled
-                broker.observe(sid, state, data, outage_count=count)
+                state, epoch = polled.state, polled.epoch
+                broker.observe(
+                    sid, state, polled.data, outage_count=polled.outage_count
+                )
                 next_poll = now + poll_s
                 if state is not None and state != "CLOSED" and epoch != claims.epoch:
                     return  # revoked under this connection: the client must re-authenticate

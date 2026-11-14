@@ -29,7 +29,7 @@ from vektra_assess.api.deps import (
     settings_of,
     tokens_of,
 )
-from vektra_assess.api.events import broker_of
+from vektra_assess.api.events import broker_of, status_key
 from vektra_assess.api.gate import verify_assess_token_any
 from vektra_assess.api.material import Material, MaterialUnavailable, load_material
 from vektra_assess.api.session_gate import (
@@ -122,9 +122,13 @@ async def get_session(
     # the stream's cursor, read BEFORE the snapshot: the client's stream starts after it, so an
     # event the snapshot already reflects is not replayed as live, and an event published
     # meanwhile is at worst delivered once more (an event is never skipped)
-    cursor = broker_of(request).cursor(sid)
+    broker = broker_of(request)
+    last_id, reply_mark = broker.cursor(sid)
     try:
         async with engine_of(request).begin() as conn:
+            # the outage position read before the snapshot too (so never past it): the stream
+            # skips only the outage events at or below it, which the snapshot already shows
+            key = await status_key(conn, sid)
             if resume:
                 consumed = (
                     await conn.execute(
@@ -181,8 +185,14 @@ async def get_session(
                 flagged,
                 outage.reason_code if outage is not None else None,
             )
-            # every state this route serves: the Last-Event-ID the client's stream starts from
-            body["event_cursor"] = cursor
+            # every state this route serves: the Last-Event-ID the client's stream starts from.
+            # A reply under way is not in the snapshot yet: its events from the first one on
+            # are replayed (the client streams them into the pending reply)
+            if body["reply_pending"] and reply_mark is not None:
+                last_id = min(last_id, reply_mark)
+            body["event_cursor"] = f"{broker.nonce}:{last_id}" + (
+                f":{key}" if key is not None else ""
+            )
             if resume:
                 # minted INSIDE the transaction: a refusal (past deadline + grace) rolls the jti
                 # consumption back, so the pre-session token is not burnt for nothing

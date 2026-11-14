@@ -1120,20 +1120,39 @@ describe("a reload starts the stream after its snapshot (live 2026-11-14)", () =
   }
 
   it("opens the stream from the snapshot's event_cursor, so nothing it shows is replayed", async () => {
-    const { streams } = await reloaded(snapshot({ event_cursor: 41 }));
+    const { streams } = await reloaded(snapshot({ event_cursor: "a1b2c3d4e5f60718:41:2" }));
     expect(streams.length).toBe(1);
-    expect(streams[0]["Last-Event-ID"]).toBe("41");
+    expect(streams[0]["Last-Event-ID"]).toBe("a1b2c3d4e5f60718:41:2"); // opaque, sent as is
   });
 
-  it("without a cursor (an older server, or no event yet) the stream opens as before", async () => {
-    for (const extra of [{}, { event_cursor: 0 }]) {
+  it("without a usable cursor (an older server) the stream opens as before", async () => {
+    for (const extra of [{}, { event_cursor: "" }, { event_cursor: 41 }, { event_cursor: "a\nb" }]) {
       const { streams } = await reloaded(snapshot(extra));
       expect(streams[0]["Last-Event-ID"]).toBeUndefined();
     }
   });
 
+  it("a reload mid-reply streams the pending reply from its first delta", async () => {
+    // the server's cursor stops before the reply's first event: its turn_accepted (already in
+    // the snapshot) is ignored, its deltas build the reply in progress
+    const { a, ev } = await reloaded(
+      snapshot({
+        reply_pending: true,
+        event_cursor: "n:4:0",
+        turns: [
+          { turn_no: 1, role: "bot", kind: "opening", text: "Benvenuto" },
+          { turn_no: 2, role: "student", kind: "normal", text: "domanda" },
+        ],
+      }),
+    );
+    await ev("turn_accepted", { turn_no: 2 });
+    await ev("reply_delta", { text: "Inizio " });
+    await ev("reply_delta", { text: "della risposta" });
+    expect(a.chat.list.querySelector(".streaming")?.textContent).toContain("Inizio della risposta");
+  });
+
   it("a live outage after the snapshot is applied, its text shown once", async () => {
-    const { a, root, priv, ev } = await reloaded(snapshot({ event_cursor: 9 }));
+    const { a, root, priv, ev } = await reloaded(snapshot({ event_cursor: "n:9" }));
     expect(priv.state.name).toBe("active");
     await ev("outage_start", { state: "OUTAGE", reason: "service_misconfigured" });
     expect(priv.state.name).toBe("outage");
@@ -1150,7 +1169,7 @@ describe("a reload starts the stream after its snapshot (live 2026-11-14)", () =
         outage_reason: "service_misconfigured",
         remaining_s: 24 * 60,
         deadline_at: inMinutes(22), // the stored deadline; the time left is frozen at 24
-        event_cursor: 17,
+        event_cursor: "n:17:1",
       }),
     );
     expect(priv.state.name).toBe("outage");

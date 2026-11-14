@@ -32,7 +32,7 @@ interface SessionView {
   reply_pending: boolean;
   remaining_s?: number; // frozen at the outage start while in OUTAGE
   outage_reason?: string; // OUTAGE only: provider_unavailable | service_misconfigured
-  event_cursor?: number; // the stream's last event id when the snapshot was read (optional)
+  event_cursor?: string; // opaque: the Last-Event-ID the stream starts from (optional)
   turns: Turn[];
   token?: string;
 }
@@ -303,11 +303,11 @@ export class App {
     );
   }
 
-  private openStream(cursor?: number): void {
+  private openStream(cursor?: unknown): void {
     void consume({
       url: `${this.cfg.apiBase}/sessions/${this.sid}/events`,
-      lastEventId:
-        typeof cursor === "number" && Number.isInteger(cursor) && cursor > 0 ? String(cursor) : undefined,
+      // opaque to the page; the server decides what it means (and ignores a stale one)
+      lastEventId: typeof cursor === "string" && /^[\x21-\x7e]{1,64}$/.test(cursor) ? cursor : undefined,
       token: () => this.token,
       onEvent: (ev) => void this.onEvent(ev),
       onTerminal: (status) =>

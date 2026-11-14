@@ -36,6 +36,11 @@ def parse(body: str) -> list[dict[str, Any]]:
     return out
 
 
+def _id(event: dict[str, Any]) -> int:
+    """The number of an event id ``<broker nonce>:<n>``."""
+    return int(str(event["id"]).rsplit(":", 1)[-1])
+
+
 @pytest.fixture
 async def worker(pg):  # type: ignore[no-untyped-def]
     await _reset(pg)
@@ -44,7 +49,7 @@ async def worker(pg):  # type: ignore[no-untyped-def]
     await engine.dispose()
 
 
-async def _stream(w, sid, token: str, last: int | None = None) -> str:  # type: ignore[no-untyped-def]
+async def _stream(w, sid, token: str, last: int | str | None = None) -> str:  # type: ignore[no-untyped-def]
     headers = {"Authorization": f"Bearer {token}"}
     if last is not None:
         headers["Last-Event-ID"] = str(last)
@@ -74,7 +79,7 @@ async def test_starting_then_committed_then_closed(pg, worker) -> None:  # type:
         types = [e["event"] for e in events]
         assert types == ["state", "committed", "closed"], types
         assert events[0]["data"]["state"] == "STARTING" and "id" not in events[0]
-        assert [int(e["id"]) for e in events[1:]] == [1, 2]
+        assert [_id(e) for e in events[1:]] == [1, 2]
         assert events[2]["data"]["close_reason"] == "finished"
         # no event payload carries opening-turn text (only reply_delta may carry text)
         body = json.dumps(events)
@@ -127,7 +132,7 @@ async def test_reconnect_replays_after_last_event_id(pg, worker) -> None:  # typ
             "reply_done",
             "closed",
         ]
-        assert [int(e["id"]) for e in events[1:]] == [3, 4, 5]
+        assert [_id(e) for e in events[1:]] == [3, 4, 5]
 
 
 async def test_events_need_a_session_token_in_the_header(pg, worker) -> None:  # type: ignore[no-untyped-def]
@@ -177,7 +182,7 @@ async def test_two_streams_both_receive_closed_and_a_reconnect_drains_it(
             await asyncio.wait_for(_stream(w, s.session_id, s.session_token, last=3), 5)
         )
         assert [e["event"] for e in events] == ["state", "closed"]
-        assert int(events[1]["id"]) == 4
+        assert _id(events[1]) == 4
 
 
 async def test_a_reconnect_after_close_never_replays_reply_text(pg, worker) -> None:  # type: ignore[no-untyped-def]
@@ -278,7 +283,9 @@ async def test_a_reload_streams_from_the_snapshot_cursor(pg, worker) -> None:  #
         assert r.status_code == 200, r.text
         assert r.json()["state"] == "ACTIVE"
         cursor = r.json()["event_cursor"]
-        assert cursor == broker.cursor(sid) and cursor >= 5
+        nonce, n, key = cursor.split(":")
+        assert nonce == broker.nonce and int(n) == broker.cursor(sid)[0] >= 5
+        assert key == "2"  # ACTIVE after one interval
         reload = asyncio.create_task(_stream(w, sid, s.session_token, last=cursor))
         await asyncio.sleep(0.3)
         await enter()  # live, after the snapshot: delivered
@@ -291,7 +298,7 @@ async def test_a_reload_streams_from_the_snapshot_cursor(pg, worker) -> None:  #
         assert first[:1] == ["state"] and "outage_end" in first and "warning" in first
         events = parse(await asyncio.wait_for(reload, 15))
         assert [e["event"] for e in events] == ["state", "outage_start", "closed"]
-        assert all(int(e["id"]) > cursor for e in events[1:])
+        assert all(_id(e) > int(n) for e in events[1:])
         assert events[1]["data"]["reason"] == "provider_unavailable"
 
 
@@ -318,7 +325,7 @@ async def test_an_outage_ended_and_reopened_between_polls_is_published(
         await asyncio.sleep(0.3)  # observed: OUTAGE, one interval
         tab.cancel()  # no connection polls while the next two changes happen
         await asyncio.sleep(0.1)
-        seen = broker.cursor(sid)
+        seen = broker.cursor(sid)[0]
         await end()
         await enter()
         reload = asyncio.create_task(_stream(w, sid, s.session_token, last=seen))
@@ -336,3 +343,72 @@ async def test_an_outage_ended_and_reopened_between_polls_is_published(
         ]
         assert events[0]["data"]["state"] == "OUTAGE"
         assert events[0]["data"]["reason"] == "provider_unavailable"
+
+
+async def test_the_seed_never_resends_what_the_snapshot_shows(pg, worker) -> None:  # type: ignore[no-untyped-def]
+    """Review of 1deac5c9, 4: an outage no poll saw yet is published when the reloading stream
+    seeds the channel (other tabs need it), but that stream skips it: its snapshot shows it."""
+    from vektra_assess.api.events import broker_of
+
+    async with world(pg, assess_sse_timing=TIMING) as w:
+        s = await seed_session(w, worker, "ACTIVE")
+        sid, auth = s.session_id, {"Authorization": f"Bearer {s.session_token}"}
+        enter, end = _outage_helpers(pg, worker, sid)
+
+        class R:
+            app = w.app
+
+        broker = broker_of(R())  # type: ignore[arg-type]
+        tab = asyncio.create_task(_stream(w, sid, s.session_token))
+        await asyncio.sleep(0.3)  # the channel has seen ACTIVE
+        tab.cancel()
+        await asyncio.sleep(0.1)
+        await enter()  # no poll sees it
+        r = await w.client.get(f"/api/v1/assess/sessions/{sid}", headers=auth)
+        assert r.json()["state"] == "OUTAGE"
+        reload = asyncio.create_task(
+            _stream(w, sid, s.session_token, last=r.json()["event_cursor"])
+        )
+        await asyncio.sleep(0.3)
+        assert [e.type for e in broker.after(sid, 0)][-1:] == ["outage_start"]
+        await end()  # live: delivered
+        await asyncio.sleep(0.3)
+        async with worker.begin() as conn:
+            await conn.execute(
+                text("SELECT assess_close_session(:s, 1, 'finished')"), {"s": sid}
+            )
+        events = parse(await asyncio.wait_for(reload, 15))
+        assert [e["event"] for e in events] == ["state", "outage_end", "closed"]
+
+
+async def test_a_cursor_from_before_a_restart_replays_the_ring(pg, worker) -> None:  # type: ignore[no-untyped-def]
+    """Review of 1deac5c9, 1: a cursor ahead of a new broker's ids (an API restart) must not
+    drop every event: another instance's cursor counts as none."""
+    from vektra_assess.api.events import EventBroker, broker_of
+
+    async with world(pg, assess_sse_timing=TIMING) as w:
+        s = await seed_session(w, worker, "ACTIVE")
+        sid, auth = s.session_id, {"Authorization": f"Bearer {s.session_token}"}
+
+        class R:
+            app = w.app
+
+        old = broker_of(R())  # type: ignore[arg-type]
+        for _ in range(20):
+            old.publish(sid, "warning", {"minutes": 10, "deadline_at": "x"})
+        cursor = (
+            await w.client.get(f"/api/v1/assess/sessions/{sid}", headers=auth)
+        ).json()["event_cursor"]
+        assert cursor.startswith(f"{old.nonce}:20")
+        w.app.state.assess_events = EventBroker()  # the restart
+        new = broker_of(R())  # type: ignore[arg-type]
+        new.publish(sid, "turn_accepted", {"turn_no": 2})
+        tab = asyncio.create_task(_stream(w, sid, s.session_token, last=cursor))
+        await asyncio.sleep(0.3)
+        async with worker.begin() as conn:
+            await conn.execute(
+                text("SELECT assess_close_session(:s, 1, 'finished')"), {"s": sid}
+            )
+        events = parse(await asyncio.wait_for(tab, 15))
+        assert [e["event"] for e in events] == ["state", "turn_accepted", "closed"]
+        assert events[1]["id"] == f"{new.nonce}:1"

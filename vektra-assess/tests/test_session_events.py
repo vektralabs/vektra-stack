@@ -7,7 +7,7 @@ import uuid
 
 import pytest
 
-from vektra_assess.api.events import EVENT_TYPES, EventBroker
+from vektra_assess.api.events import EVENT_TYPES, EventBroker, outage_key
 
 
 def test_ids_are_monotonic_per_session_and_the_ring_is_bounded() -> None:
@@ -81,14 +81,82 @@ def test_an_older_read_than_the_last_observation_is_ignored() -> None:
     assert b.observe(sid, "ACTIVE", {}, outage_count=1).type == "outage_end"  # type: ignore[union-attr]
 
 
+def test_reads_are_ordered_by_one_key_and_a_repeat_publishes_nothing() -> None:
+    """Review of 1deac5c9, 3+5: key = 2*count - (1 in OUTAGE); a read at or below the last key
+    is ignored whatever its state, a higher one publishes exactly the transitions between."""
+    assert [
+        outage_key(s, c) for s, c in [("ACTIVE", 0), ("OUTAGE", 1), ("ACTIVE", 1)]
+    ] == [
+        0,
+        1,
+        2,
+    ]
+    assert outage_key("CLOSED", 3) is None and outage_key("ACTIVE", None) is None
+    b = EventBroker()
+    sid = uuid.uuid4()
+    b.observe(sid, "OUTAGE", {}, outage_count=1)  # first sight: nothing
+    assert b.observe(sid, "ACTIVE", {}, outage_count=0) is None  # older: ignored
+    assert b.observe(sid, "OUTAGE", {}, outage_count=1) is None  # same: nothing
+    b.observe(sid, "OUTAGE", {}, outage_count=3)  # two ended, one open since
+    assert [(e.type, e.key) for e in b.after(sid, 0)] == [
+        ("outage_end", 4),
+        ("outage_start", 5),
+    ]
+
+
 def test_the_cursor_is_the_last_event_id_and_creates_no_channel() -> None:
     b = EventBroker()
     sid = uuid.uuid4()
-    assert b.cursor(sid) == 0 and sid not in b
-    b.publish(sid, "turn_accepted")
+    assert b.cursor(sid) == (0, None) and sid not in b
     b.publish(sid, "warning", {"minutes": 5})
-    assert b.cursor(sid) == 2
-    assert b.after(sid, b.cursor(sid)) == []  # a stream from the cursor replays nothing
+    assert b.cursor(sid) == (1, None)
+    assert (
+        b.after(sid, b.cursor(sid)[0]) == []
+    )  # a stream from the cursor replays nothing
+
+
+def test_a_reply_under_way_keeps_the_id_before_its_first_event() -> None:
+    """Review of 1deac5c9, 2: a reload mid-reply must replay the reply from its start."""
+    b = EventBroker()
+    sid = uuid.uuid4()
+    b.publish(sid, "warning", {"minutes": 10})  # 1
+    b.publish(sid, "turn_accepted", {"turn_no": 2})  # 2: the reply starts here
+    b.publish(sid, "reply_delta", {"text": "a"}, epoch=1)  # 3
+    b.publish(sid, "reply_delta", {"text": "b"}, epoch=1)  # 4
+    assert b.cursor(sid) == (4, 1)
+    b.publish(sid, "reply_done", {"turn_no": 3})  # 5: over
+    assert b.cursor(sid) == (5, None)
+    b.publish(
+        sid, "reply_delta", {"text": "c"}, epoch=1
+    )  # 6: a reply without turn_accepted
+    assert b.cursor(sid) == (6, 5)
+
+
+def test_a_cursor_from_another_broker_or_ahead_of_the_ids_is_no_cursor() -> None:
+    """Review of 1deac5c9, 1: after an API restart the old cursor is ahead of every new id;
+    it must replay the ring, not drop every event."""
+    b = EventBroker()
+    sid = uuid.uuid4()
+    for _ in range(3):
+        b.publish(sid, "turn_accepted")
+    ev = b.after(sid, 0)[0]
+    assert ev.sse(b.nonce).startswith(f"id: {b.nonce}:1\n")
+    assert b.last_event_id(sid, f"{b.nonce}:2") == (2, None)
+    assert b.last_event_id(sid, f"{b.nonce}:2:5") == (2, 5)
+    assert b.last_event_id(sid, "2") == (2, None)  # a bare id (an older client)
+    for raw in [
+        f"{EventBroker().nonce}:2",  # another instance
+        f"{b.nonce}:3",  # ahead of the ids (3 is the last: a stream after it is fine) ...
+        f"{b.nonce}:4",  # ... 4 is not
+        "4",
+        f"{b.nonce}:x",
+        f"{b.nonce}:1:2:3",
+        "",
+        None,
+    ]:
+        got = b.last_event_id(sid, raw)
+        assert got == (0, None) or (raw == f"{b.nonce}:3" and got == (3, None)), raw
+    assert b.last_event_id(uuid.uuid4(), f"{b.nonce}:1") == (0, None)  # no channel
 
 
 async def test_wait_wakes_on_publish_and_times_out_otherwise() -> None:

@@ -152,3 +152,14 @@ def test_undefined_variables_fail_loudly(tmp_path: Path) -> None:
     (t / "turn.j2").write_text("{{ nope }}", encoding="utf-8")
     with pytest.raises(jinja2.UndefinedError):
         PromptRenderer("x", t, s).turn_messages(_bundle(), (), "x", "it")
+
+
+def test_part_b_names_the_activity_kind() -> None:
+    """A quiz opening spoke of 'i passaggi del compito' (end-to-end test 2026-11-15)."""
+    from test_context_rendering_variants import _assign
+
+    quiz = PromptRenderer("x").part_b_messages(_bundle(), "it")[2].content
+    assert "la prova è un QUIZ" in quiz and "COMPITO" not in quiz
+    s = _assign()
+    assign = PromptRenderer("x").part_b_messages(assemble_context(s, _frozen(s)), "it")
+    assert "la prova è un COMPITO" in assign[2].content

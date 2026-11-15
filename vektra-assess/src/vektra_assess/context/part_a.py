@@ -111,14 +111,14 @@ def _quiz_line(item: QuizItem) -> str:
             label=item.label,
             mark=fmt_number(item.mark),
             max=fmt_number(item.max_mark),
-            state=S.state_label(item.status) if item.status else S.QUIZ_STATE_UNKNOWN,
+            state=item.status or S.QUIZ_STATE_UNKNOWN,
         )
     elif item.max_mark is not None and item.marks_hidden is None:
         # marks are visible but this question has none: it was not answered ("gaveup")
         line = S.QUIZ_ITEM_NO_MARK.format(
             label=item.label,
             max=fmt_number(item.max_mark),
-            state=S.state_label(item.status) if item.status else S.QUIZ_STATE_UNKNOWN,
+            state=item.status or S.QUIZ_STATE_UNKNOWN,
         )
     elif item.max_mark is not None:
         line = S.QUIZ_ITEM_MAX_ONLY.format(
@@ -160,15 +160,6 @@ def _notes(bundle: ContextBundle) -> list[str]:
     return notes
 
 
-def _example(bundle: ContextBundle) -> str:
-    """A label this activity really has: a quiz question, a criterion or the submission."""
-    if bundle.quiz_items:
-        return S.QUIZ_LABEL.format(label=bundle.quiz_items[0].label)
-    if bundle.criteria:
-        return S.CRITERION_LABEL.format(n=1)
-    return S.SUBMISSION_LABEL
-
-
 def render_part_a(bundle: ContextBundle, facts: SessionFacts) -> PartA:
     attempt = (
         S.ATTEMPT.format(
@@ -202,7 +193,10 @@ def render_part_a(bundle: ContextBundle, facts: SessionFacts) -> PartA:
             for f in bundle.files
         ],
         "no_files": S.NO_FILES,
-        "how_to": S.HOW_TO_PROCEED.format(example=_example(bundle)),
+        # the shipped example stays fixed: Part A is pinned by the RELEASED LMS provider's golden
+        # renderings (CI "released provider" job); a per-activity example and Italian state
+        # labels in Part A wait for the next provider release (follow-up, 2026-11-15)
+        "how_to": S.HOW_TO_PROCEED.format(example="Domanda 2"),
     }
     discussion_items = len(bundle.quiz_items) + len(bundle.criteria)
     return PartA(

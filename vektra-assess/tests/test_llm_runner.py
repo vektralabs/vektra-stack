@@ -605,3 +605,74 @@ async def test_a_part_b_stream_that_stalls_after_its_first_token_is_an_outage() 
     with pytest.raises(ProviderOutageError) as e:
         await r.run_part_b(_visible_bundle())
     assert e.value.record.error_class == "StreamStall" and llm.closed
+
+
+async def test_line_breaks_and_list_items_reach_the_student() -> None:
+    reply = "Ecco i punti.\n- Nella [Domanda 2] manca la conclusione.\n- Rivedi la definizione."
+    segs, result, _, _, _ = await _run(reply)
+    assert [(s.sep, s.text) for s in segs] == [
+        ("", "Ecco i punti."),
+        ("\n", "- Nella [Domanda 2] manca la conclusione."),
+        ("\n", "- Rivedi la definizione."),
+    ]
+    assert result.text == reply  # what was streamed, separators included
+
+
+async def test_a_contextual_sentence_restating_the_refusal_is_not_released() -> None:
+    reply = "[[CLASS R-GHOST]] Non posso scrivere al posto tuo l'elaborato perfetto da consegnare."
+    segs, result, _, _, _ = await _run(reply)
+    core = shipped_strings.get("it").refusal("R-GHOST")
+    assert [s.text for s in segs] == [core]
+    assert result.behaviour_class == "R-GHOST"
+
+
+async def test_a_dropped_sentence_keeps_the_paragraph_break_before_it() -> None:
+    # Domanda 3 has no feedback in the bundle: the quoting sentence is dropped, the paragraph
+    # break before it still separates what follows
+    reply = 'Intro.\n\n[Domanda 3] Commento del docente: "rivedi".\nSegue.'
+    segs, result, _, _, _ = await _run(reply)
+    assert [(s.sep, s.text) for s in segs] == [("", "Intro."), ("\n\n", "Segue.")]
+    assert "feedback_quote" in result.marks
+
+
+async def test_a_list_line_replaced_by_the_notice_stays_a_list_line() -> None:
+    reply = "Punti:\n- Hai ragione, meritavi di più.\n- Rivedi la definizione."
+    segs, _, _, _, _ = await _run(reply)
+    assert segs[1].sep == "\n" and segs[1].text.startswith("- Voto registrato:")
+    assert segs[2] == ReleasedSegment("- Rivedi la definizione.", False, "\n")
+
+
+async def test_a_restated_refusal_lead_is_cut_and_the_offer_kept() -> None:
+    reply = (
+        "[[CLASS R-GHOST]] Non posso scrivere per te il saggio modello, ma posso indicarti "
+        "cosa includere nella risposta."
+    )
+    segs, result, _, _, _ = await _run(reply)
+    core = shipped_strings.get("it").refusal("R-GHOST")
+    assert [s.text for s in segs] == [
+        core,
+        "Posso indicarti cosa includere nella risposta.",
+    ]
+    assert "refusal_repeat" in result.marks
+
+
+async def test_a_refusal_enumeration_is_not_kept_as_an_offer() -> None:
+    reply = "[[CLASS R-GHOST]] Non posso scrivere il saggio, né la relazione."
+    segs, _, _, _, _ = await _run(reply)
+    assert [s.text for s in segs] == [shipped_strings.get("it").refusal("R-GHOST")]
+
+
+async def test_a_reply_the_post_check_empties_still_says_something() -> None:
+    segs, result, _, _, _ = await _run('[Domanda 3] Commento del docente: "rivedi".')
+    assert [s.text for s in segs] == [
+        shipped_strings.get("it").missing["replaced_by_system"]
+    ]
+    assert result.text == segs[0].text
+
+
+async def test_a_list_after_the_language_notice_starts_on_its_own_paragraph() -> None:
+    segs, _, _, _, _ = await _run(
+        "- Prima voce.\n- Seconda voce.", text="Hola, ¿qué tal?"
+    )
+    assert segs[0].text == shipped_strings.get("it").unsupported_language
+    assert segs[1].sep == "\n\n" and segs[1].text == "- Prima voce."

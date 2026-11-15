@@ -20,7 +20,7 @@ from dataclasses import dataclass
 
 from vektra_assess.config import VektraAssessSettings
 from vektra_assess.jobs import JobKind
-from vektra_assess.worker import locks
+from vektra_assess.worker import locks, render
 from vektra_assess.worker.policy import WorkerPolicy
 from vektra_assess.worker.runner import Handler, HandlerSpec, TickBody, TickSpec
 
@@ -158,7 +158,13 @@ def _tick_table(s: VektraAssessSettings) -> list[TickSpec]:
         t("starting_reaper", 15, 20, locks.STARTING_REAPER, jitter_s=3),
         t("outage_probe", 5, 10, locks.OUTAGE_PROBE, jitter_s=4),  # 5-10 s per provider
         t("enrolment_recheck", 60, 40, locks.ENROLMENT_RECHECK, jitter_s=10),
-        t("gate_refresh", 300, 60, locks.GATE_REFRESH, jitter_s=30),  # design default
+        t(
+            "gate_refresh",
+            render.tick_period(s.render_fresh_s),
+            60,
+            locks.GATE_REFRESH,
+            jitter_s=render.tick_jitter(s.render_fresh_s),
+        ),  # the period follows render_fresh_s (gate_refresh_tick's early threshold)
         t("delivery_retry", 30, 30, locks.DELIVERY_RETRY, jitter_s=5),  # design default
         # INT-003 readiness of the relay for /health/assess; never sends (design default). The
         # timeout covers a whole probe (bounded slot wait + session + QUIT) plus the row write

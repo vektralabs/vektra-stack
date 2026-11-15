@@ -58,3 +58,15 @@ def test_empty_fails() -> None:
 
 def test_numbers_that_are_not_values_pass() -> None:
     assert part_b.check("Partiamo dalla [Domanda 2] e dal passaggio a pagina 3.").ok
+
+
+def test_running_text_words_are_not_labels_when_the_bundle_labels_are_known() -> None:
+    # end-to-end test 2026-11-15: an opening rejected for "la domanda che" and "la consegna" in a quiz
+    known = ("Domanda 1", "Domanda 2", "Domanda 3", "Valutazione complessiva")
+    text = (
+        "Possiamo partire dalla [Domanda 1] o dalla [Domanda 2]. Scegli la domanda che "
+        "preferisci, oppure rileggi la consegna."
+    )
+    assert part_b.check(text).labels == 4  # without the bundle: the old count
+    out = part_b.check(text, known)
+    assert out.ok and out.labels == 2

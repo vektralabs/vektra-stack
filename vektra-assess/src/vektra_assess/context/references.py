@@ -97,11 +97,32 @@ def _stem(word: str) -> str:
     return word[:-1] if len(word) > 4 and word[-1] in "aeio" else word
 
 
+#: "Criterio 2 - Memoria di lavoro (10 punti)": a criterion of the teacher's PASTED rubric and the
+#: points it is worth (student-visible by definition, BR-011)
+PASTED_CRITERION = re.compile(
+    r"\bCriteri(?:o|on)\s+(\d+)\b[^\n]*?\(\s*([-\u2212]?\d+(?:[.,]\d+)?)\s*(?:punt[io]|points?)\b",
+    re.IGNORECASE,
+)
+
+
+def pasted_criteria(bundle: ContextBundle) -> tuple[int, ...]:
+    """The criterion numbers of a pasted rubric, when the activity has no LMS criteria."""
+    if bundle.criteria or not bundle.pasted_rubric:
+        return ()
+    return tuple(
+        sorted(
+            {int(m.group(1)) for m in PASTED_CRITERION.finditer(bundle.pasted_rubric)}
+        )
+    )
+
+
 def canonical_labels(bundle: ContextBundle) -> tuple[str, ...]:
     out = [S.QUIZ_LABEL.format(label=i.label) for i in bundle.quiz_items]
     out += [
         S.CRITERION_LABEL.format(n=n) for n, _ in enumerate(bundle.criteria, start=1)
     ]
+    # a pasted rubric's criteria are citable too: the student reads them in the rubric
+    out += [S.CRITERION_LABEL.format(n=n) for n in pasted_criteria(bundle)]
     out.append(S.OVERALL_LABEL)
     if bundle.activity_kind is ActivityKind.ASSIGN:
         out.append(S.SUBMISSION_LABEL)

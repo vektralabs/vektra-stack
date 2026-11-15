@@ -25,6 +25,7 @@ from decimal import Decimal, InvalidOperation
 
 from vektra_assess.context import strings as S
 from vektra_assess.context.bundle import ContextBundle
+from vektra_assess.context.references import PASTED_CRITERION
 from vektra_assess.context.snapshot import GradeKind
 
 REPLACEMENT = "[valore non verificato: vedi la pagina di revisione]"
@@ -95,6 +96,9 @@ class ItemValues:
         frozenset()
     )  # (level, level count)
     levels: frozenset[Decimal] = frozenset()  # the level reached
+    #: a criterion known only from the teacher's PASTED rubric: it has maxima (the points each
+    #: criterion is worth, student-visible by definition, BR-011) and never an earned value
+    rubric_only: bool = False
 
 
 @dataclass(frozen=True)
@@ -141,9 +145,32 @@ def _values(
     )
 
 
+# words that present a value as obtained by the student: never confirmed for a rubric-only item
+_EARNED_CONTEXT = re.compile(
+    r"\b(?:ottenut\w*|pres[oaie]|preso|assegnat\w*|hai|guadagnat\w*|perso|persi|got|received|"
+    r"awarded|scored|earned|lost)\b",
+    re.IGNORECASE,
+)
+
+
+def _pasted_maxima(text: str) -> dict[str, ItemValues]:
+    out: dict[str, set[Decimal]] = {}
+    for m in PASTED_CRITERION.finditer(text):
+        d = _dec(m.group(2))
+        if d is not None:
+            out.setdefault(f"criterio {int(m.group(1))}", set()).add(d)
+    return {
+        k: ItemValues(frozenset(), frozenset(), frozenset(v), rubric_only=True)
+        for k, v in out.items()
+    }
+
+
 def value_index(bundle: ContextBundle) -> dict[str, ItemValues]:
     """Canonical label (lower case) -> the values the student may see for it."""
     out: dict[str, ItemValues] = {}
+    if not bundle.criteria and bundle.pasted_rubric:
+        # no LMS criteria: the pasted rubric's "Criterio N" labels and what each is worth
+        out.update(_pasted_maxima(bundle.pasted_rubric))
     for i in bundle.quiz_items:
         out[S.QUIZ_LABEL.format(label=i.label).lower()] = _values((i.mark, i.max_mark))
     for n, c in enumerate(bundle.criteria, start=1):
@@ -213,6 +240,15 @@ def check(
             return True
         if _IS_LEVEL.match(key):
             return da not in it.levels
+        if it.rubric_only:
+            # "Criterio 2 (Memoria di lavoro, 10 punti)": the value the rubric gives the criterion,
+            # never a score the student obtained (none exists per criterion). The clause that
+            # attributes the value is checked whole, earned wording before the citation included,
+            # and before the maximum shortcut ("hai ottenuto il massimo: 10 punti")
+            clause = max((sentence.rfind(c, 0, at) for c in ";\u2014"), default=-1) + 1
+            return da not in it.maxima or bool(
+                _EARNED_CONTEXT.search(sentence, clause, at)
+            )
         if _MAX_CONTEXT.search(before):
             return da not in it.maxima
         return da not in it.earned

@@ -15,6 +15,7 @@ from vektra_assess.context.bundle import ContextBundle
 from vektra_assess.context.part_a import fmt_number, grade_text
 from vektra_assess.context.snapshot import GradeKind, MarksHidden
 from vektra_assess.parser_protocol import label as file_label
+from vektra_shared.lms import QuestionKind
 from vektra_shared.types import Message
 
 #: The version of the model payload's vocabulary and layout. Bump it whenever what this module
@@ -56,11 +57,14 @@ def _lines(bundle: ContextBundle) -> list[str]:
         else:
             out.append("Punteggio: non visibile")
         if i.status:
-            out.append(f"Esito: {i.status}")
+            out.append(f"Esito: {S.state_label(i.status)}")
         if i.question_text:
             out += ["Testo della domanda:", i.question_text]
         if i.response_text:
-            out += ["Risposta dello studente:", i.response_text]
+            response = i.response_text
+            if i.qtype == QuestionKind.TRUE_FALSE.value:
+                response = S.TRUE_FALSE_IT.get(response.strip().casefold(), response)
+            out += ["Risposta dello studente:", response]
         if i.review_text:
             out += ["Revisione visibile allo studente:", i.review_text]
         if i.degraded and i.response_text:

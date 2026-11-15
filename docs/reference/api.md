@@ -493,6 +493,7 @@ once every input is readable.
 
 List: `students` (in user-id order, 50 per page; `next_cursor` or `null`), each
 `{userid, sessions[{session_id, session_no, state, close_reason, committed_at, closed_at,
+flagged_count (bot replies the student flagged with "Segnala un errore dell'assistente"),
 transcript_id, deliveries[{round, recipient_kind, status, attempts, smtp_code, error_class,
 sent_at}]}], resets[{reset_id, after_session_no, reason, reason_state, include_previous_turns,
 granted_by, granted_at, student_notice}], reset_count, extra_seconds}`; `student_notice` is always

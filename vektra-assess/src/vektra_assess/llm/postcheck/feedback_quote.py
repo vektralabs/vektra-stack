@@ -6,9 +6,13 @@ text, the criterion remark or the overall feedback. A sentence that cites an ite
 against that item's feedback only: a cited item that is not in the bundle, or has no feedback, can
 confirm no quote. Only a sentence with no item cited may match any feedback in the bundle.
 Otherwise the quote is replaced with ``MISSING`` and the turn is marked: a paraphrase or an invented
-comment must never be shown to the student as the teacher's words. A quotation opened after a lead
-and never closed in the sentence (cut by the splitter's hold limit or by the end of the stream) is
-replaced from its opener to the end of the sentence.
+comment must never be shown to the student as the teacher's words.
+
+When the cited item has NO feedback at all (a quiz whose review text never reaches the bundle),
+there is no comment the quote could have been, and a placeholder would say so in every sentence
+of a reply (end-to-end test 2026-11-15): the WHOLE sentence is dropped instead, since a sentence
+built around a comment that does not exist cannot be repaired by cutting the quote out of it. The
+turn is marked all the same.
 """
 
 from __future__ import annotations
@@ -82,4 +86,7 @@ def check(sentence: str, index: dict[str, str], missing: str = MISSING) -> Quote
 
     text = _QUOTE.sub(take, sentence)
     text = _OPEN_QUOTE.sub(cut, text)
+    if replaced and not pool:
+        # no feedback the quote could have been: the sentence goes, not a placeholder
+        return QuoteCheck("", replaced)
     return QuoteCheck(text, replaced)

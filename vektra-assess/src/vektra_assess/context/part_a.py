@@ -193,7 +193,10 @@ def render_part_a(bundle: ContextBundle, facts: SessionFacts) -> PartA:
             for f in bundle.files
         ],
         "no_files": S.NO_FILES,
-        "how_to": S.HOW_TO_PROCEED,
+        # the shipped example stays fixed: Part A is pinned by the RELEASED LMS provider's golden
+        # renderings (CI "released provider" job); a per-activity example and Italian state
+        # labels in Part A wait for the next provider release (follow-up, 2026-11-15)
+        "how_to": S.HOW_TO_PROCEED.format(example="Domanda 2"),
     }
     discussion_items = len(bundle.quiz_items) + len(bundle.criteria)
     return PartA(

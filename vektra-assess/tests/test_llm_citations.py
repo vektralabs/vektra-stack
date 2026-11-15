@@ -109,9 +109,16 @@ def test_teacher_comment_says_lead_is_a_quote_lead() -> None:
         'Nella Domanda 9 il Commento del docente: "Analisi corretta".',
     ],
 )
-def test_a_quote_citing_an_item_without_feedback_is_replaced(sentence: str) -> None:
+def test_a_sentence_quoting_an_item_without_feedback_is_dropped(sentence: str) -> None:
+    # no feedback the quote could have been: the whole sentence goes, never a placeholder or a
+    # fragment (end-to-end test 2026-11-15)
     out = feedback_quote.check(sentence, INDEX)
-    assert out.replaced == 1 and MISSING in out.text
+    assert out.replaced == 1 and out.text == ""
+
+
+def test_a_mid_sentence_quote_without_feedback_drops_the_sentence() -> None:
+    s = "Nella [Domanda 3] il Commento del docente dice «rivedi la formula», quindi controlla."
+    assert feedback_quote.check(s, INDEX) == feedback_quote.QuoteCheck("", 1)
 
 
 def test_running_text_question_word_is_not_a_citation() -> None:

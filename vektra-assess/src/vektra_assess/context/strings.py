@@ -61,9 +61,29 @@ FILE_ITEM = "{label} ({filename}): {status}"
 NO_FILES = "Nessun file consegnato."
 
 HOW_TO_PROCEED = (
-    "Come procedere: chiedi di un elemento usando la sua etichetta (per esempio «Domanda 2» o "
+    "Come procedere: chiedi di un elemento usando la sua etichetta (per esempio «{example}» o "
     "«Valutazione complessiva»). L'assistente spiega e discute, ma non cambia il voto."
 )
+
+# the LMS's English state labels and true/false answers, as an Italian discussion shows them
+# (end-to-end test 2026-11-15: "Correct", "False" in an Italian reply). Unknown labels pass unchanged.
+STATE_LABELS_IT = {
+    "correct": "Corretta",
+    "incorrect": "Errata",
+    "partially correct": "Parzialmente corretta",
+    "not answered": "Non risposta",
+    "requires grading": "Da valutare",
+    "complete": "Completata",
+    "not yet answered": "Non ancora risposta",
+    "answer saved": "Risposta salvata",
+    "graded": "Valutata",
+}
+TRUE_FALSE_IT = {"true": "Vero", "false": "Falso"}
+
+
+def state_label(status: str) -> str:
+    return STATE_LABELS_IT.get(" ".join(status.split()).casefold(), status)
+
 
 AT_SUMMARY = (
     "Discussione avviata: tentativo #{k}, {n} elementi, durata {minutes} minuti"

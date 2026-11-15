@@ -225,6 +225,8 @@ class ReleasedSegment:
 
     text: str
     marked: bool = False  # a replacement or a removal happened inside it
+    #: the separator before this segment in the reply: "" for the first, else " ", "\n" or "\n\n"
+    sep: str = " "
 
 
 @dataclass(frozen=True)

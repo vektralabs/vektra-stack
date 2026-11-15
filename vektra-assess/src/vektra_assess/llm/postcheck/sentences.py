@@ -14,13 +14,26 @@ whole, the check sees the lead and the quote together and replaces a quote it ca
 
 ``split`` is incremental: it returns the complete sentences and the unfinished rest, which the
 caller keeps in its buffer. With ``final=True`` the rest is returned as the last sentence.
+
+``split_with_breaks`` is the same split, with each sentence's BREAK: the separator the model put
+before it (``" "``, a line break ``"\n"`` or a paragraph ``"\n\n"``). A newline ends a sentence but
+is kept at the head of the rest, so the break survives a chunk boundary and the reply keeps the
+model's lines and "- " list items instead of being flattened into one paragraph.
 """
 
 from __future__ import annotations
 
 import re
+from typing import NamedTuple
 
 from vektra_assess.llm.postcheck.feedback_quote import LEAD
+
+
+class Sentence(NamedTuple):
+    text: str
+    #: the separator before the sentence: " ", "\n" (a line break) or "\n\n" (a paragraph)
+    brk: str
+
 
 _TERMINATORS = ".?!"
 _OPEN_CLOSE = {"“": "”", "«": "»"}
@@ -51,6 +64,14 @@ MAX_HOLD = 300
 
 def split(buffer: str, *, final: bool = False) -> tuple[list[str], str]:
     """``(complete sentences, rest)``; sentences keep their own text, stripped of outer spaces."""
+    done, rest = split_with_breaks(buffer, final=final)
+    return [s.text for s in done], rest
+
+
+def split_with_breaks(
+    buffer: str, *, final: bool = False
+) -> tuple[list[Sentence], str]:
+    """``split`` with the break before each sentence (see the module docstring)."""
     literal: set[int] = set()  # opener positions demoted to plain characters
     while True:
         done, rest, stuck = _scan(buffer, final, literal)
@@ -61,9 +82,9 @@ def split(buffer: str, *, final: bool = False) -> tuple[list[str], str]:
 
 def _scan(
     buffer: str, final: bool, literal: set[int]
-) -> tuple[list[str], str, int | None]:
+) -> tuple[list[Sentence], str, int | None]:
     """One pass. Returns the position of an opener to demote, or None when the pass is final."""
-    out: list[str] = []
+    out: list[Sentence] = []
     start = 0
     square = 0  # depth of [...] (a marker [[...]] counts twice)
     square_at: list[int] = []
@@ -108,8 +129,11 @@ def _scan(
         elif square:
             pass
         elif c == "\n":
-            _emit(out, buffer[start:i])
-            start = i + 1
+            # the newline ends the sentence but stays at the head of the next piece: it is that
+            # piece's break (a blank piece keeps start, so consecutive newlines accumulate)
+            if buffer[start:i].strip():
+                _emit(out, buffer[start:i])
+                start = i
         elif c in _TERMINATORS:
             j = i
             while j + 1 < n and buffer[j + 1] in _TERMINATORS:
@@ -147,7 +171,8 @@ def _scan(
     return out, rest, None
 
 
-def _emit(out: list[str], piece: str) -> None:
+def _emit(out: list[Sentence], piece: str) -> None:
     s = piece.strip()
     if s:
-        out.append(s)
+        lines = piece[: len(piece) - len(piece.lstrip())].count("\n")
+        out.append(Sentence(s, "\n\n" if lines >= 2 else "\n" if lines else " "))

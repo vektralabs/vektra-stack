@@ -301,12 +301,50 @@ def make_render_handler(deps: RenderDeps) -> Callable[[JobContext], Awaitable[No
     return handle
 
 
+#: the gate_refresh schedule's caps (design defaults): period, jitter and the margin a refresh
+#: job needs to finish. Below a 300 s render freshness all three shrink with it (``fresh_s`` may
+#: be as low as 10 s: VEKTRA_ASSESS_RENDER_FRESH_S)
+TICK_PERIOD_MAX_S = 300
+TICK_JITTER_MAX_S = 30
+REFRESH_MARGIN_MAX_S = 30
+
+
+def tick_period(fresh_s: int) -> int:
+    """The gate_refresh tick period: a third of the render freshness, between 5 and 300 s."""
+    return max(5, min(TICK_PERIOD_MAX_S, fresh_s // 3))
+
+
+def tick_jitter(fresh_s: int) -> int:
+    """The tick's jitter: always below its period (TickSpec), at most 30 s."""
+    return min(TICK_JITTER_MAX_S, tick_period(fresh_s) // 3)
+
+
+def _margin(fresh_s: int) -> int:
+    return min(REFRESH_MARGIN_MAX_S, tick_period(fresh_s) // 3)
+
+
+def early_threshold(fresh_s: int) -> int:
+    """Age at which a recently asked pair is refreshed: one tick (with its jitter and the
+    refresh margin) before it would go stale."""
+    return max(
+        fresh_s - tick_period(fresh_s) - tick_jitter(fresh_s) - _margin(fresh_s), 0
+    )
+
+
 _STALE_ASKED = text(
-    "SELECT DISTINCT rc.site_id, rc.student_userid, rc.cmid FROM assess_render_checks rc "
+    "SELECT rc.site_id, rc.student_userid, rc.cmid, min(rs.computed_at) AS computed_at "
+    "FROM assess_render_checks rc "
     "LEFT JOIN assess_render_state rs ON rs.site_id = rc.site_id "
     "AND rs.student_userid = rc.student_userid AND rs.cmid = rc.cmid "
     "WHERE rc.requested_at > now() - interval '1 day' "
-    "AND (rs.computed_at IS NULL OR rs.computed_at < now() - make_interval(secs => :fresh)) "
+    # a pair asked within the last hour is refreshed EARLY (``:early``), one tick before it would
+    # go stale, while the student is still around; older pairs keep the plain freshness rule
+    "AND (rs.computed_at IS NULL OR rs.computed_at < now() - make_interval(secs => "
+    "CASE WHEN rc.requested_at > now() - interval '1 hour' THEN CAST(:early AS double precision) "
+    "ELSE CAST(:fresh AS double precision) END)) "
+    # oldest (or never computed) first: past the batch, the rest are reached at the next ticks
+    "GROUP BY rc.site_id, rc.student_userid, rc.cmid "
+    "ORDER BY min(rs.computed_at) ASC NULLS FIRST "
     "LIMIT :n"
 )
 _CLEANUP = (
@@ -326,12 +364,20 @@ _CLEANUP = (
 async def gate_refresh_tick(
     acquire: AcquireDb, fresh_s: int, *, batch: int = 200
 ) -> dict[str, Any]:
-    """Re-queue stale render checks of recently asked pairs; delete week-old unused rows."""
+    """Re-queue stale render checks of recently asked pairs; delete week-old unused rows.
+
+    A pair asked within the last hour is refreshed early enough that its row is still fresh when
+    the NEXT tick runs (``early_threshold``; the tick period itself follows ``fresh_s``,
+    ``tick_period``): otherwise a returning student read "checking" for up to a whole period
+    (end-to-end test 2026-11-15)."""
     queued = deleted = 0
+    early = early_threshold(fresh_s)
     async with acquire() as conn:
         async with conn.begin():
             rows = (
-                await conn.execute(_STALE_ASKED, {"fresh": fresh_s, "n": batch})
+                await conn.execute(
+                    _STALE_ASKED, {"fresh": fresh_s, "early": early, "n": batch}
+                )
             ).all()
             for r in rows:
                 queued += await enqueue_job(

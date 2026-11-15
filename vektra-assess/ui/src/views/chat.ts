@@ -12,10 +12,19 @@ export interface Turn {
   flagged?: boolean;
 }
 
-/** Text with line breaks rendered by building elements; "- " lines become list items. */
-export function richText(text: string): HTMLElement {
+// a citation tag as the model writes it, "[Domanda 3]", "[Consegna p.2]": the brackets are for
+// the post-check, the student reads the label alone (end-to-end test 2026-11-15). Only the label
+// shapes the server resolves: a placeholder "[valore non verificato: ...]" or an interval "[0, 1]"
+// keeps its brackets
+const TAG =
+  /\[((?:Domanda|Question)\s+[\w.]{1,10}|(?:Criterio|Criterion)\s+\d{1,3}|Valutazione complessiva|Overall assessment|(?:Consegna|Submission)(?:\s+p\.\s?\d{1,4})?)\]/g;
+
+/** Text with line breaks rendered by building elements; "- " lines become list items. A bot
+ * reply (``tags``) is shown without the brackets of its citation tags. */
+export function richText(text: string, tags = false): HTMLElement {
   const box = h("div", { class: "turn-text" });
   let list: HTMLUListElement | null = null;
+  if (tags) text = text.replace(TAG, "$1");
   for (const line of text.split("\n")) {
     if (line.startsWith("- ")) {
       if (!list) {
@@ -42,7 +51,7 @@ export function turnElement(turn: Turn, hooks: TurnHooks = {}, lang = "it"): HTM
     "article",
     { class: `turn turn-${turn.role}`, "aria-label": label, lang, "data-turn": String(turn.turn_no) },
     h("h3", { class: "turn-role", text: label }),
-    richText(turn.text),
+    richText(turn.text, turn.role === "bot"),
   );
   const actions = h("div", { class: "turn-actions" });
   if (hooks.copy) {
@@ -138,7 +147,7 @@ export class ChatView {
         "article",
         { class: "turn turn-bot", "aria-label": M.assistant },
         h("h3", { class: "turn-role", text: M.assistant }),
-        richText(this.streaming.text),
+        richText(this.streaming.text, true),
       ),
     );
   }

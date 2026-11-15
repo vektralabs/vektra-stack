@@ -161,3 +161,77 @@ def test_part_b_catches_spelled_out_values(text: str) -> None:
 )
 def test_part_b_leaves_articles_and_plain_words_alone(text: str) -> None:
     assert not asserts_any_value(text)
+
+
+# --- pasted-rubric criteria (end-to-end test 2026-11-15) ----------------------------------------------
+
+_RUBRIC = (
+    "Criterio 1 - Modello modale (8 punti): tre stadi.\n"
+    "Criterio 2 - Memoria di lavoro (10 punti): componenti.\n"
+)
+
+
+def _pasted_index():  # type: ignore[no-untyped-def]
+    from test_context_rendering_variants import _assign
+
+    s = _assign(pasted_rubric=_RUBRIC, criteria=())
+    flags = s.header.flags.model_copy(update={"rubric_source": "pasted"})
+    s = s.model_copy(update={"header": s.header.model_copy(update={"flags": flags})})
+    return value_index(assemble_context(s, _frozen(s)))
+
+
+def test_what_a_pasted_criterion_is_worth_is_confirmed() -> None:
+    idx = _pasted_index()
+    for sentence in (
+        "Il commento punta sul Criterio 2 (Memoria di lavoro, 10 punti).",
+        "Il Criterio 1 vale 8 punti.",
+    ):
+        assert check(sentence, idx).replaced == 0, sentence
+
+
+def test_a_score_obtained_on_a_pasted_criterion_is_never_confirmed() -> None:
+    idx = _pasted_index()
+    for sentence in (
+        "Nel Criterio 2 hai ottenuto 10 punti.",
+        "Nel Criterio 2 hai 10 punti.",
+        "Il Criterio 2 vale 9 punti.",
+        "Il Criterio 3 vale 6 punti.",
+    ):
+        assert check(sentence, idx).replaced == 1, sentence
+
+
+def test_a_pasted_criterion_is_a_citable_label_through_the_gate() -> None:
+    from test_context_rendering_variants import _assign
+
+    from vektra_assess.llm import shipped as shipped_strings
+    from vektra_assess.llm.postcheck.gate import SentenceGate
+
+    s = _assign(pasted_rubric=_RUBRIC, criteria=())
+    flags = s.header.flags.model_copy(update={"rubric_source": "pasted"})
+    s = s.model_copy(update={"header": s.header.model_copy(update={"flags": flags})})
+    gate = SentenceGate(
+        assemble_context(s, _frozen(s)), shipped_strings.get("it"), "BR009"
+    )
+    sentence = "Il commento riguarda il [Criterio 2] (Memoria di lavoro, 10 punti)."
+    (unit,) = gate.feed(sentence)
+    assert unit.text == sentence and not unit.marked and gate.marks == []
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    [
+        "Nel [Criterio 2] hai ottenuto il massimo: 10 punti.",
+        "Hai ottenuto nel [Criterio 2] 10 punti.",
+        "Hai ottenuto nel [Criterio 2] (10 punti).",
+    ],
+)
+def test_earned_wording_anywhere_in_the_clause_is_never_confirmed(
+    sentence: str,
+) -> None:
+    assert check(sentence, _pasted_index()).replaced == 1
+
+
+def test_a_zero_padded_pasted_criterion_is_indexed_by_its_number() -> None:
+    from vektra_assess.llm.postcheck.values import _pasted_maxima
+
+    assert "criterio 2" in _pasted_maxima("Criterio 02 - Memoria (10 punti)")

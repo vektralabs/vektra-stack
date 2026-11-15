@@ -17,6 +17,7 @@ The safeguard's ``pre_response`` runs after the gate, in the runner (it is async
 
 from __future__ import annotations
 
+import re
 import time
 from collections import Counter
 from collections.abc import Mapping, Sequence
@@ -42,9 +43,11 @@ MARK_CITATIONS = "citations"
 MARK_QUOTE = "feedback_quote"
 MARK_SAFEGUARD = "safeguard"
 MARK_MARKER = "marker"
+MARK_REPEAT = "refusal_repeat"
 
 CLASS_LATE = "marker_class_late"
 CONTEST_UNRELEASED = "marker_contest_unreleased"
+REFUSAL_RESTATED = "refusal_restated"
 
 
 class Unit(NamedTuple):
@@ -74,6 +77,7 @@ class SentenceGate:
     audit: list[tuple[str, Mapping[str, Any]]] = field(default_factory=list)
     _first: bool = True
     _contextual_left: int | None = None
+    _refusal: str = ""
 
     def __post_init__(self) -> None:
         self._labels = canonical_labels(self.bundle)
@@ -104,13 +108,10 @@ class SentenceGate:
             if self._first and self.behaviour_class is None:
                 self.behaviour_class = m.behaviour_class
                 self._contextual_left = 1
-                out.append(
-                    Unit(
-                        self.shipped.refusal(m.behaviour_class, self.support_text),
-                        False,
-                        system=True,
-                    )
+                self._refusal = self.shipped.refusal(
+                    m.behaviour_class, self.support_text
                 )
+                out.append(Unit(self._refusal, False, system=True))
             else:  # a class only opens a reply; a late one is stripped and audited
                 self.audit.append(
                     ("assess_marker_dropped", {"reason_code": CLASS_LATE})
@@ -129,6 +130,22 @@ class SentenceGate:
             self.contest.extend(contest)
             return out
         if self._contextual_left is not None:
+            restated = _REFUSAL_START.match(text)
+            offer = _OFFER.search(text, restated.end()) if restated else None
+            # a refusal with no offer after it ("..., né la relazione.") is restatement only
+            rest = text[offer.end() :].strip() if offer else ""
+            if restated or _repeats(text, self._refusal):
+                # the model restating the refusal the system already released: said once only.
+                # "Non posso scrivere il saggio, ma posso...": the restated lead goes, the offer
+                # after it stays. Model text is removed, so the turn is marked and audited
+                self.audit.append(
+                    ("assess_marker_dropped", {"reason_code": REFUSAL_RESTATED})
+                )
+                self._mark(MARK_REPEAT)
+                if not restated or not rest:
+                    self._drop_contest(contest)
+                    return out
+                text = rest[0].upper() + rest[1:]
             self._contextual_left -= 1
         category = lexicon.scan(text)
         if category is not None:
@@ -144,7 +161,9 @@ class SentenceGate:
         if c.removed:
             self._mark(MARK_CITATIONS, c.removed)
         q = feedback_quote.check(
-            c.text, self._feedback, self.shipped.missing["quote_unverified"]
+            c.text,
+            self._feedback,
+            self.shipped.missing["quote_unverified"],
         )
         if q.replaced:
             self._mark(MARK_QUOTE, q.replaced)
@@ -166,3 +185,24 @@ class SentenceGate:
     def commit(self, unit: Unit) -> None:
         """Record the unit's contest points: called by the runner once the unit is released."""
         self.contest.extend(unit.contest)
+
+
+_WORD = re.compile(r"\w+", re.UNICODE)
+# a contextual sentence that opens by refusing again ("Non posso scrivere per te il saggio, ...")
+_REFUSAL_START = re.compile(
+    r"^\s*(?:non (?:posso|possiamo|è possibile)|i (?:cannot|can['\u2019]t|can not)|"
+    r"we (?:cannot|can['\u2019]t))\b",
+    re.IGNORECASE,
+)
+# the turn from that refusal to an offer: only what follows it is kept
+_OFFER = re.compile(r"[,;:]?\s*\b(?:ma|però|but|however)\b[\s,]*", re.IGNORECASE)
+
+
+def _repeats(sentence: str, refusal: str) -> bool:
+    """Whether a contextual sentence only restates the shipped refusal (end-to-end test 2026-11-15:
+    "Non posso scrivere al posto tuo..." twice): most of its meaningful words are the refusal's."""
+    words = {w for w in _WORD.findall(sentence.casefold()) if len(w) > 3}
+    if len(words) < 3:
+        return False  # too short to tell a restatement from a short legitimate sentence
+    ref = {w for w in _WORD.findall(refusal.casefold()) if len(w) > 3}
+    return len(words & ref) / len(words) >= 0.6

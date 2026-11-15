@@ -21,6 +21,27 @@ describe("chat view", () => {
     expect(el.querySelectorAll("p").length).toBe(2);
   });
 
+  it("shows a bot reply's citation tags without brackets, and its lines as a list", () => {
+    const bot = turnElement({
+      turn_no: 4, role: "bot", kind: "normal",
+      text: "Ecco i punti.\n- [Domanda 3]: ripetizione.\n- [Domanda 5]: retroattiva.",
+    });
+    expect([...bot.querySelectorAll("li li")].map((li) => li.textContent)).toEqual([
+      "Domanda 3: ripetizione.",
+      "Domanda 5: retroattiva.",
+    ]);
+    // a placeholder or an interval is not a tag: its brackets stay
+    const other = turnElement({
+      turn_no: 6, role: "bot", kind: "normal",
+      text: "Hai [valore non verificato: vedi la pagina di revisione] punti in [0, 1].",
+    });
+    expect(other.textContent).toContain("[valore non verificato: vedi la pagina di revisione]");
+    expect(other.textContent).toContain("[0, 1]");
+    // a student's own brackets are the student's text
+    const stu = turnElement({ turn_no: 5, role: "student", kind: "normal", text: "[x] y" });
+    expect(stu.textContent).toContain("[x] y");
+  });
+
   it("puts each turn in an article with its role label", () => {
     const li = turnElement({ turn_no: 3, role: "student", kind: "normal", text: "ciao" });
     const art = li.querySelector("article")!;

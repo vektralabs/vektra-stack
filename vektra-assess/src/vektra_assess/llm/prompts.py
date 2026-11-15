@@ -27,6 +27,7 @@ from jinja2.sandbox import SandboxedEnvironment
 from vektra_assess.context.bundle import ContextBundle
 from vektra_assess.context.payload import PAYLOAD_VERSION, bundle_to_model_payload
 from vektra_assess.context.references import canonical_labels
+from vektra_assess.context.snapshot import ActivityKind
 from vektra_assess.llm.types import PriorTurn
 from vektra_shared.types import Message
 
@@ -164,6 +165,7 @@ class PromptRenderer:
                 content=self._render(
                     "part_b",
                     reply_language_name=LANGUAGE_NAMES[language],
+                    is_quiz=bundle.activity_kind is ActivityKind.QUIZ,
                     max_words=PART_B_MAX_WORDS,
                     max_labels=PART_B_MAX_LABELS,
                 ),

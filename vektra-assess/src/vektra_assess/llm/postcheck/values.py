@@ -158,7 +158,7 @@ def _pasted_maxima(text: str) -> dict[str, ItemValues]:
     for m in PASTED_CRITERION.finditer(text):
         d = _dec(m.group(2))
         if d is not None:
-            out.setdefault(f"criterio {m.group(1)}", set()).add(d)
+            out.setdefault(f"criterio {int(m.group(1))}", set()).add(d)
     return {
         k: ItemValues(frozenset(), frozenset(), frozenset(v), rubric_only=True)
         for k, v in out.items()
@@ -240,15 +240,17 @@ def check(
             return True
         if _IS_LEVEL.match(key):
             return da not in it.levels
-        if _MAX_CONTEXT.search(before):
-            return da not in it.maxima
         if it.rubric_only:
             # "Criterio 2 (Memoria di lavoro, 10 punti)": the value the rubric gives the criterion,
-            # never a score the student obtained (none exists per criterion)
-            since = max((p for p, _ in cites if p < at), default=0)
+            # never a score the student obtained (none exists per criterion). The clause that
+            # attributes the value is checked whole, earned wording before the citation included,
+            # and before the maximum shortcut ("hai ottenuto il massimo: 10 punti")
+            clause = max((sentence.rfind(c, 0, at) for c in ";(\u2014"), default=-1) + 1
             return da not in it.maxima or bool(
-                _EARNED_CONTEXT.search(sentence, since, at)
+                _EARNED_CONTEXT.search(sentence, clause, at)
             )
+        if _MAX_CONTEXT.search(before):
+            return da not in it.maxima
         return da not in it.earned
 
     ratio_spans: list[tuple[int, int]] = []

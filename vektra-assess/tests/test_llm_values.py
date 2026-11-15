@@ -215,3 +215,22 @@ def test_a_pasted_criterion_is_a_citable_label_through_the_gate() -> None:
     sentence = "Il commento riguarda il [Criterio 2] (Memoria di lavoro, 10 punti)."
     (unit,) = gate.feed(sentence)
     assert unit.text == sentence and not unit.marked and gate.marks == []
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    [
+        "Nel [Criterio 2] hai ottenuto il massimo: 10 punti.",
+        "Hai ottenuto nel [Criterio 2] 10 punti.",
+    ],
+)
+def test_earned_wording_anywhere_in_the_clause_is_never_confirmed(
+    sentence: str,
+) -> None:
+    assert check(sentence, _pasted_index()).replaced == 1
+
+
+def test_a_zero_padded_pasted_criterion_is_indexed_by_its_number() -> None:
+    from vektra_assess.llm.postcheck.values import _pasted_maxima
+
+    assert "criterio 2" in _pasted_maxima("Criterio 02 - Memoria (10 punti)")

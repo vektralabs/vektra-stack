@@ -130,8 +130,10 @@ class SentenceGate:
             self.contest.extend(contest)
             return out
         if self._contextual_left is not None:
-            restated = _RESTATED_LEAD.match(text)
-            rest = text[restated.end() :].strip() if restated else text
+            restated = _REFUSAL_START.match(text)
+            offer = _OFFER.search(text, restated.end()) if restated else None
+            # a refusal with no offer after it ("..., né la relazione.") is restatement only
+            rest = text[offer.end() :].strip() if offer else ""
             if restated or _repeats(text, self._refusal):
                 # the model restating the refusal the system already released: said once only.
                 # "Non posso scrivere il saggio, ma posso...": the restated lead goes, the offer
@@ -186,12 +188,14 @@ class SentenceGate:
 
 
 _WORD = re.compile(r"\w+", re.UNICODE)
-# a contextual sentence that opens by refusing again: "Non posso scrivere per te il saggio, ma ..."
-_RESTATED_LEAD = re.compile(
+# a contextual sentence that opens by refusing again ("Non posso scrivere per te il saggio, ...")
+_REFUSAL_START = re.compile(
     r"^\s*(?:non (?:posso|possiamo|è possibile)|i (?:cannot|can['\u2019]t|can not)|"
-    r"we (?:cannot|can['\u2019]t))\b[^,;:.]*[,;:]\s*(?:(?:ma|però|but|however)\b[\s,]*)?",
+    r"we (?:cannot|can['\u2019]t))\b",
     re.IGNORECASE,
 )
+# the turn from that refusal to an offer: only what follows it is kept
+_OFFER = re.compile(r"[,;:]?\s*\b(?:ma|però|but|however)\b[\s,]*", re.IGNORECASE)
 
 
 def _repeats(sentence: str, refusal: str) -> bool:

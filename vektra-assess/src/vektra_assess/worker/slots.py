@@ -160,11 +160,11 @@ def _tick_table(s: VektraAssessSettings) -> list[TickSpec]:
         t("enrolment_recheck", 60, 40, locks.ENROLMENT_RECHECK, jitter_s=10),
         t(
             "gate_refresh",
-            render.TICK_PERIOD_S,
+            render.tick_period(s.render_fresh_s),
             60,
             locks.GATE_REFRESH,
             jitter_s=render.TICK_JITTER_S,
-        ),  # design default; gate_refresh_tick's early threshold depends on it
+        ),  # the period follows render_fresh_s (gate_refresh_tick's early threshold)
         t("delivery_retry", 30, 30, locks.DELIVERY_RETRY, jitter_s=5),  # design default
         # INT-003 readiness of the relay for /health/assess; never sends (design default). The
         # timeout covers a whole probe (bounded slot wait + session + QUIT) plus the row write

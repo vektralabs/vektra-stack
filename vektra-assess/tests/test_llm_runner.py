@@ -654,3 +654,25 @@ async def test_a_restated_refusal_lead_is_cut_and_the_offer_kept() -> None:
         "Posso indicarti cosa includere nella risposta.",
     ]
     assert "refusal_repeat" in result.marks
+
+
+async def test_a_refusal_enumeration_is_not_kept_as_an_offer() -> None:
+    reply = "[[CLASS R-GHOST]] Non posso scrivere il saggio, né la relazione."
+    segs, _, _, _, _ = await _run(reply)
+    assert [s.text for s in segs] == [shipped_strings.get("it").refusal("R-GHOST")]
+
+
+async def test_a_reply_the_post_check_empties_still_says_something() -> None:
+    segs, result, _, _, _ = await _run('[Domanda 3] Commento del docente: "rivedi".')
+    assert [s.text for s in segs] == [
+        shipped_strings.get("it").missing["replaced_by_system"]
+    ]
+    assert result.text == segs[0].text
+
+
+async def test_a_list_after_the_language_notice_starts_on_its_own_paragraph() -> None:
+    segs, _, _, _, _ = await _run(
+        "- Prima voce.\n- Seconda voce.", text="Hola, ¿qué tal?"
+    )
+    assert segs[0].text == shipped_strings.get("it").unsupported_language
+    assert segs[1].sep == "\n\n" and segs[1].text == "- Prima voce."

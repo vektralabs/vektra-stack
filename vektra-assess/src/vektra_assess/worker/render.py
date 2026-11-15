@@ -301,21 +301,40 @@ def make_render_handler(deps: RenderDeps) -> Callable[[JobContext], Awaitable[No
     return handle
 
 
-#: the gate_refresh tick's schedule (worker/slots.py): every TICK_PERIOD_S plus up to TICK_JITTER_S
-TICK_PERIOD_S = 300
+#: the gate_refresh tick's jitter and the margin a refresh job needs to finish (worker/slots.py)
 TICK_JITTER_S = 30
+REFRESH_MARGIN_S = 30
+TICK_PERIOD_MAX_S = 300
+
+
+def tick_period(fresh_s: int) -> int:
+    """The gate_refresh tick period for a render freshness of ``fresh_s``: short enough that a
+    pair refreshed early is refreshed again before it goes stale, at most the design 300 s."""
+    return max(
+        5, min(TICK_PERIOD_MAX_S, (fresh_s - TICK_JITTER_S - REFRESH_MARGIN_S) // 2)
+    )
+
+
+def early_threshold(fresh_s: int) -> int:
+    """Age at which a recently asked pair is refreshed: one tick (with jitter and margin) before
+    it would go stale."""
+    return max(fresh_s - tick_period(fresh_s) - TICK_JITTER_S - REFRESH_MARGIN_S, 0)
+
 
 _STALE_ASKED = text(
-    "SELECT DISTINCT rc.site_id, rc.student_userid, rc.cmid FROM assess_render_checks rc "
+    "SELECT rc.site_id, rc.student_userid, rc.cmid, min(rs.computed_at) AS computed_at "
+    "FROM assess_render_checks rc "
     "LEFT JOIN assess_render_state rs ON rs.site_id = rc.site_id "
     "AND rs.student_userid = rc.student_userid AND rs.cmid = rc.cmid "
     "WHERE rc.requested_at > now() - interval '1 day' "
-    # a pair asked within the last hour is refreshed EARLY (``:early``): the tick runs every
-    # TICK_PERIOD_S + jitter, so waiting until the row is stale left it stale for up to a whole
-    # period while the student is still around. Older pairs keep the plain freshness rule.
+    # a pair asked within the last hour is refreshed EARLY (``:early``), one tick before it would
+    # go stale, while the student is still around; older pairs keep the plain freshness rule
     "AND (rs.computed_at IS NULL OR rs.computed_at < now() - make_interval(secs => "
     "CASE WHEN rc.requested_at > now() - interval '1 hour' THEN CAST(:early AS double precision) "
     "ELSE CAST(:fresh AS double precision) END)) "
+    # oldest (or never computed) first: past the batch, the rest are reached at the next ticks
+    "GROUP BY rc.site_id, rc.student_userid, rc.cmid "
+    "ORDER BY min(rs.computed_at) ASC NULLS FIRST "
     "LIMIT :n"
 )
 _CLEANUP = (
@@ -338,10 +357,11 @@ async def gate_refresh_tick(
     """Re-queue stale render checks of recently asked pairs; delete week-old unused rows.
 
     A pair asked within the last hour is refreshed early enough that its row is still fresh when
-    the NEXT tick runs (``fresh_s`` minus one tick period and its jitter, at least 0): otherwise a
-    returning student read "checking" for up to a whole period (end-to-end test 2026-11-15)."""
+    the NEXT tick runs (``early_threshold``; the tick period itself follows ``fresh_s``,
+    ``tick_period``): otherwise a returning student read "checking" for up to a whole period
+    (end-to-end test 2026-11-15)."""
     queued = deleted = 0
-    early = max(fresh_s - TICK_PERIOD_S - TICK_JITTER_S, 0)
+    early = early_threshold(fresh_s)
     async with acquire() as conn:
         async with conn.begin():
             rows = (

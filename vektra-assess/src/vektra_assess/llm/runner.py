@@ -468,6 +468,10 @@ class DiscussionTurnRunner:
                 first_token_ms = int((time.monotonic() - t_llm) * 1000)
                 buf = ""
                 layout = _Layout()
+                if (
+                    released
+                ):  # the language notice: the reply starts on its own paragraph
+                    layout.carry("\n\n")
                 outcome: CallOutcome = "ok"
                 waiter = _StopWaiter(stop)
                 chunk: CompletionChunk | object | None = first
@@ -545,6 +549,13 @@ class DiscussionTurnRunner:
                         if brk is not None:
                             layout.carry(brk)
 
+        if not released and not interrupted:
+            # the post-check removed every sentence: the student still gets a reply, never an
+            # empty turn
+            gate._mark(MARK_SAFEGUARD)
+            seg = ReleasedSegment(sh.missing["replaced_by_system"], True, sep="")
+            released.append(seg)
+            yield seg
         # each segment carries its own separator: the delivered text is exactly what the student
         # saw streamed, with the model's line breaks and "- " list items
         delivered = "".join(s.sep + s.text for s in released)

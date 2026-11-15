@@ -17,6 +17,7 @@ The safeguard's ``pre_response`` runs after the gate, in the runner (it is async
 
 from __future__ import annotations
 
+import re
 import time
 from collections import Counter
 from collections.abc import Mapping, Sequence
@@ -74,11 +75,13 @@ class SentenceGate:
     audit: list[tuple[str, Mapping[str, Any]]] = field(default_factory=list)
     _first: bool = True
     _contextual_left: int | None = None
+    _refusal: str = ""
 
     def __post_init__(self) -> None:
         self._labels = canonical_labels(self.bundle)
         self._values = values.value_index(self.bundle)
         self._feedback = feedback_quote.feedback_index(self.bundle)
+        self._teacher = feedback_quote.teacher_texts(self.bundle)
 
     def _mark(self, code: str, n: int = 1) -> None:
         if code not in self.marks:
@@ -104,13 +107,10 @@ class SentenceGate:
             if self._first and self.behaviour_class is None:
                 self.behaviour_class = m.behaviour_class
                 self._contextual_left = 1
-                out.append(
-                    Unit(
-                        self.shipped.refusal(m.behaviour_class, self.support_text),
-                        False,
-                        system=True,
-                    )
+                self._refusal = self.shipped.refusal(
+                    m.behaviour_class, self.support_text
                 )
+                out.append(Unit(self._refusal, False, system=True))
             else:  # a class only opens a reply; a late one is stripped and audited
                 self.audit.append(
                     ("assess_marker_dropped", {"reason_code": CLASS_LATE})
@@ -129,6 +129,10 @@ class SentenceGate:
             self.contest.extend(contest)
             return out
         if self._contextual_left is not None:
+            if _repeats(text, self._refusal):
+                # the model restating the refusal the system already released: said once only
+                self._drop_contest(contest)
+                return out
             self._contextual_left -= 1
         category = lexicon.scan(text)
         if category is not None:
@@ -144,7 +148,10 @@ class SentenceGate:
         if c.removed:
             self._mark(MARK_CITATIONS, c.removed)
         q = feedback_quote.check(
-            c.text, self._feedback, self.shipped.missing["quote_unverified"]
+            c.text,
+            self._feedback,
+            self.shipped.missing["quote_unverified"],
+            self._teacher,
         )
         if q.replaced:
             self._mark(MARK_QUOTE, q.replaced)
@@ -166,3 +173,16 @@ class SentenceGate:
     def commit(self, unit: Unit) -> None:
         """Record the unit's contest points: called by the runner once the unit is released."""
         self.contest.extend(unit.contest)
+
+
+_WORD = re.compile(r"\w+", re.UNICODE)
+
+
+def _repeats(sentence: str, refusal: str) -> bool:
+    """Whether a contextual sentence only restates the shipped refusal (psico E2E 2026-11-15:
+    "Non posso scrivere al posto tuo..." twice): most of its meaningful words are the refusal's."""
+    words = {w for w in _WORD.findall(sentence.casefold()) if len(w) > 3}
+    if not words:
+        return False
+    ref = {w for w in _WORD.findall(refusal.casefold()) if len(w) > 3}
+    return len(words & ref) / len(words) >= 0.6

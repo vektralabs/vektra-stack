@@ -16,6 +16,7 @@ import contextlib
 import hashlib
 import time
 from collections.abc import AsyncIterator
+from dataclasses import replace
 from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID, uuid4
@@ -38,7 +39,7 @@ from vektra_assess.llm.postcheck import (
 )
 from vektra_assess.llm.postcheck.gate import MARK_SAFEGUARD, SentenceGate, Unit
 from vektra_assess.llm.postcheck.lexicon import LEXICON_VERSION
-from vektra_assess.llm.postcheck.sentences import split
+from vektra_assess.llm.postcheck.sentences import split_with_breaks
 from vektra_assess.llm.probe import Probe, make_llm_probe
 from vektra_assess.llm.prompts import PromptRenderer
 from vektra_assess.llm.shipped import Shipped
@@ -422,12 +423,12 @@ class DiscussionTurnRunner:
                 "assess_prequery_refused", {"turn_index": turn.turn_index}
             )
             gate._mark(MARK_SAFEGUARD)
-            seg = ReleasedSegment(sh.missing["replaced_by_system"], True)
+            seg = ReleasedSegment(sh.missing["replaced_by_system"], True, sep="")
             released.append(seg)
             yield seg
         else:
             if detected == "other":
-                seg = ReleasedSegment(sh.unsupported_language)
+                seg = ReleasedSegment(sh.unsupported_language, sep="")
                 released.append(seg)
                 yield seg
             # anonymised text, if any (an empty rewrite is a rewrite, not "no change")
@@ -478,14 +479,17 @@ class DiscussionTurnRunner:
                         finish = _finish_reason(chunk) or finish
                         completion += chunk.content
                         buf += chunk.content
-                        done, buf = split(buf)
+                        done, buf = split_with_breaks(buf)
                         for sentence in done:
                             if stop is not None and stop.is_set():
                                 break  # no sentence after the stop touches the gate
-                            for unit in gate.feed(sentence):
+                            brk = sentence.brk
+                            for unit in gate.feed(sentence.text):
                                 if stop is not None and stop.is_set():
                                     break
                                 seg = await self._release(unit, gate, turn.turn_index)
+                                seg = _with_sep(seg, brk, bool(released))
+                                brk = " "
                                 released.append(seg)
                                 yield seg
                         if stop is not None and stop.is_set():
@@ -524,14 +528,19 @@ class DiscussionTurnRunner:
                         True  # the unfinished sentence in the buffer is dropped
                     )
                 else:
-                    done, _ = split(buf, final=True)
+                    done, _ = split_with_breaks(buf, final=True)
                     for sentence in done:
-                        for unit in gate.feed(sentence):
+                        brk = sentence.brk
+                        for unit in gate.feed(sentence.text):
                             seg = await self._release(unit, gate, turn.turn_index)
+                            seg = _with_sep(seg, brk, bool(released))
+                            brk = " "
                             released.append(seg)
                             yield seg
 
-        delivered = " ".join(s.text for s in released)
+        # each segment carries its own separator: the delivered text is exactly what the student
+        # saw streamed, with the model's line breaks and "- " list items
+        delivered = "".join(s.sep + s.text for s in released)
         steps.add_measured(
             "postcheck",
             gate_ms=int(gate.elapsed_ms),
@@ -631,7 +640,7 @@ class DiscussionTurnRunner:
             violations.append(part_b.LEXICON)
         if feedback_quote.check(text, feedback_quote.feedback_index(bundle)).replaced:
             violations.append(part_b.QUOTE)
-        violations += part_b.check(text).violations
+        violations += part_b.check(text, canonical_labels(bundle)).violations
         res = await self._safeguard.pre_response(text, self._context(-1, partial=False))
         if not res.allowed or res.modified_content is not None:
             violations.append(part_b.SAFEGUARD)
@@ -880,6 +889,12 @@ def _finish_reason(chunk: object) -> str | None:
 
 
 _STOPPED = object()
+
+
+def _with_sep(seg: ReleasedSegment, brk: str, follows: bool) -> ReleasedSegment:
+    """The segment with the separator before it: none for the first segment of a reply, else the
+    model's own break (a space, a line or a paragraph)."""
+    return replace(seg, sep=brk if follows else "")
 
 
 class _Steps:

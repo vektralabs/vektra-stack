@@ -114,3 +114,32 @@ def test_a_teacher_quote_open_at_the_end_of_the_stream_is_one_replaced_sentence(
 def test_a_teacher_quote_closed_within_the_limit_is_unchanged() -> None:
     out, _ = split('Commento del docente: "Prima. Seconda." Poi altro.', final=True)
     assert out == ['Commento del docente: "Prima. Seconda."', "Poi altro."]
+
+
+# --- line breaks survive the split (psico E2E 2026-11-15: replies were flattened) --------------
+
+from vektra_assess.llm.postcheck.sentences import (  # noqa: E402
+    Sentence,
+    split_with_breaks,
+)
+
+
+def test_each_sentence_carries_the_break_before_it() -> None:
+    done, rest = split_with_breaks(
+        "Ecco le risposte.\n- Prima voce.\n- Seconda voce. Ancora.\n\nFine.", final=True
+    )
+    assert done == [
+        Sentence("Ecco le risposte.", " "),
+        Sentence("- Prima voce.", "\n"),
+        Sentence("- Seconda voce.", "\n"),
+        Sentence("Ancora.", " "),
+        Sentence("Fine.", "\n\n"),
+    ]
+    assert rest == ""
+
+
+def test_a_break_survives_a_chunk_boundary() -> None:
+    done, rest = split_with_breaks("Prima riga.\n")
+    assert done == [Sentence("Prima riga.", " ")] and rest.startswith("\n")
+    done, rest = split_with_breaks(rest + "- voce uno.\n- voce due", final=True)
+    assert done == [Sentence("- voce uno.", "\n"), Sentence("- voce due", "\n")]

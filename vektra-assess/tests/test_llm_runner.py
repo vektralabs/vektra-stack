@@ -605,3 +605,22 @@ async def test_a_part_b_stream_that_stalls_after_its_first_token_is_an_outage() 
     with pytest.raises(ProviderOutageError) as e:
         await r.run_part_b(_visible_bundle())
     assert e.value.record.error_class == "StreamStall" and llm.closed
+
+
+async def test_line_breaks_and_list_items_reach_the_student() -> None:
+    reply = "Ecco i punti.\n- Nella [Domanda 2] manca la conclusione.\n- Rivedi la definizione."
+    segs, result, _, _, _ = await _run(reply)
+    assert [(s.sep, s.text) for s in segs] == [
+        ("", "Ecco i punti."),
+        ("\n", "- Nella [Domanda 2] manca la conclusione."),
+        ("\n", "- Rivedi la definizione."),
+    ]
+    assert result.text == reply  # what was streamed, separators included
+
+
+async def test_a_contextual_sentence_restating_the_refusal_is_not_released() -> None:
+    reply = "[[CLASS R-GHOST]] Non posso scrivere al posto tuo l'elaborato perfetto da consegnare."
+    segs, result, _, _, _ = await _run(reply)
+    core = shipped_strings.get("it").refusal("R-GHOST")
+    assert [s.text for s in segs] == [core]
+    assert result.behaviour_class == "R-GHOST"

@@ -161,3 +161,40 @@ def test_part_b_catches_spelled_out_values(text: str) -> None:
 )
 def test_part_b_leaves_articles_and_plain_words_alone(text: str) -> None:
     assert not asserts_any_value(text)
+
+
+# --- pasted-rubric criteria (psico E2E 2026-11-15) ----------------------------------------------
+
+_RUBRIC = (
+    "Criterio 1 - Modello modale (8 punti): tre stadi.\n"
+    "Criterio 2 - Memoria di lavoro (10 punti): componenti.\n"
+)
+
+
+def _pasted_index():  # type: ignore[no-untyped-def]
+    from test_context_rendering_variants import _assign
+
+    s = _assign(pasted_rubric=_RUBRIC, criteria=())
+    flags = s.header.flags.model_copy(update={"rubric_source": "pasted"})
+    s = s.model_copy(update={"header": s.header.model_copy(update={"flags": flags})})
+    return value_index(assemble_context(s, _frozen(s)))
+
+
+def test_what_a_pasted_criterion_is_worth_is_confirmed() -> None:
+    idx = _pasted_index()
+    for sentence in (
+        "Il commento punta sul Criterio 2 (Memoria di lavoro, 10 punti).",
+        "Il Criterio 1 vale 8 punti.",
+    ):
+        assert check(sentence, idx).replaced == 0, sentence
+
+
+def test_a_score_obtained_on_a_pasted_criterion_is_never_confirmed() -> None:
+    idx = _pasted_index()
+    for sentence in (
+        "Nel Criterio 2 hai ottenuto 10 punti.",
+        "Nel Criterio 2 hai 10 punti.",
+        "Il Criterio 2 vale 9 punti.",
+        "Il Criterio 3 vale 6 punti.",
+    ):
+        assert check(sentence, idx).replaced == 1, sentence

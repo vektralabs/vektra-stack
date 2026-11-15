@@ -95,6 +95,9 @@ class ItemValues:
         frozenset()
     )  # (level, level count)
     levels: frozenset[Decimal] = frozenset()  # the level reached
+    #: a criterion known only from the teacher's PASTED rubric: it has maxima (the points each
+    #: criterion is worth, student-visible by definition, BR-011) and never an earned value
+    rubric_only: bool = False
 
 
 @dataclass(frozen=True)
@@ -141,9 +144,36 @@ def _values(
     )
 
 
+# "Criterio 2 - Memoria di lavoro (10 punti)": the maximum a pasted-rubric criterion is worth
+_PASTED_CRITERION = re.compile(
+    rf"\bCriteri(?:o|on)\s+(\d+)\b[^\n]*?\(\s*({_NUM})\s*{_PTS}\b", re.IGNORECASE
+)
+# words that present a value as obtained by the student: never confirmed for a rubric-only item
+_EARNED_CONTEXT = re.compile(
+    r"\b(?:ottenut\w*|pres[oaie]|preso|assegnat\w*|hai|guadagnat\w*|perso|persi|got|received|"
+    r"awarded|scored|earned|lost)\b",
+    re.IGNORECASE,
+)
+
+
+def _pasted_maxima(text: str) -> dict[str, ItemValues]:
+    out: dict[str, set[Decimal]] = {}
+    for m in _PASTED_CRITERION.finditer(text):
+        d = _dec(m.group(2))
+        if d is not None:
+            out.setdefault(f"criterio {m.group(1)}", set()).add(d)
+    return {
+        k: ItemValues(frozenset(), frozenset(), frozenset(v), rubric_only=True)
+        for k, v in out.items()
+    }
+
+
 def value_index(bundle: ContextBundle) -> dict[str, ItemValues]:
     """Canonical label (lower case) -> the values the student may see for it."""
     out: dict[str, ItemValues] = {}
+    if not bundle.criteria and bundle.pasted_rubric:
+        # no LMS criteria: the pasted rubric's "Criterio N" labels and what each is worth
+        out.update(_pasted_maxima(bundle.pasted_rubric))
     for i in bundle.quiz_items:
         out[S.QUIZ_LABEL.format(label=i.label).lower()] = _values((i.mark, i.max_mark))
     for n, c in enumerate(bundle.criteria, start=1):
@@ -215,6 +245,13 @@ def check(
             return da not in it.levels
         if _MAX_CONTEXT.search(before):
             return da not in it.maxima
+        if it.rubric_only:
+            # "Criterio 2 (Memoria di lavoro, 10 punti)": the value the rubric gives the criterion,
+            # never a score the student obtained (none exists per criterion)
+            since = max((p for p, _ in cites if p < at), default=0)
+            return da not in it.maxima or bool(
+                _EARNED_CONTEXT.search(sentence, since, at)
+            )
         return da not in it.earned
 
     ratio_spans: list[tuple[int, int]] = []

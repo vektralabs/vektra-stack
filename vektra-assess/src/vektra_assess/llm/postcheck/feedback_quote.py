@@ -6,7 +6,16 @@ text, the criterion remark or the overall feedback. A sentence that cites an ite
 against that item's feedback only: a cited item that is not in the bundle, or has no feedback, can
 confirm no quote. Only a sentence with no item cited may match any feedback in the bundle.
 Otherwise the quote is replaced with ``MISSING`` and the turn is marked: a paraphrase or an invented
-comment must never be shown to the student as the teacher's words. A quotation opened after a lead
+comment must never be shown to the student as the teacher's words.
+
+Two refinements from the psico end-to-end test (2026-11-15):
+- the teacher's OTHER student-visible texts (the solution, when the teacher lets the assistant show
+  it, and the pasted rubric: ``teacher_texts``) are the teacher's words too: a quote found verbatim
+  in one of them passes, whatever item is cited;
+- when the cited item has NO feedback at all (a quiz whose review text never reaches the bundle),
+  there is no comment the quote could have been, and a placeholder would only say so nine times in
+  one reply: the lead and the quote are REMOVED instead, and a sentence left with nothing but tags
+  and punctuation is dropped. The turn is marked all the same. A quotation opened after a lead
 and never closed in the sentence (cut by the splitter's hold limit or by the end of the stream) is
 replaced from its opener to the end of the sentence.
 """
@@ -54,32 +63,55 @@ def feedback_index(bundle: ContextBundle) -> dict[str, str]:
     return out
 
 
+def teacher_texts(bundle: ContextBundle) -> tuple[str, ...]:
+    """The teacher's other student-visible texts in the bundle: the solution (present only when
+    the teacher let the assistant show it) and the pasted rubric (student-visible by definition)."""
+    return tuple(t for t in (bundle.solution_text, bundle.pasted_rubric) if t)
+
+
 @dataclass(frozen=True)
 class QuoteCheck:
     text: str
     replaced: int
 
 
-def check(sentence: str, index: dict[str, str], missing: str = MISSING) -> QuoteCheck:
+# what is left of a sentence once a removed quote took its words: tags, markers and punctuation
+_RESIDUE = re.compile(r"^(?:\[[^\[\]]*\]|[\s.,;:!?()\-\u2013\u2014])*$")
+
+
+def check(
+    sentence: str,
+    index: dict[str, str],
+    missing: str = MISSING,
+    teacher: tuple[str, ...] = (),
+) -> QuoteCheck:
     keys = [k for _, k in cited_labels(sentence, index)]
     # a citation restricts the sources to the cited items, even when none of them has feedback
     pool = [index[k] for k in keys if k in index] if keys else list(index.values())
     sources = [_norm(t) for t in pool]
+    others = [_norm(t) for t in teacher]
+    # no feedback the quote could have been: remove it rather than show a placeholder
+    drop = not pool
     replaced = 0
 
     def take(m: re.Match[str]) -> str:
         nonlocal replaced
         inner = _norm(m.group("q")[1:-1])
-        if inner and any(inner in s for s in sources):
+        if inner and any(inner in s for s in sources + others):
             return m.group(0)
         replaced += 1
-        return m.group("lead") + missing
+        return "" if drop else m.group("lead") + missing
 
     def cut(m: re.Match[str]) -> str:
         nonlocal replaced
         replaced += 1
-        return m.group("lead") + missing
+        return "" if drop else m.group("lead") + missing
 
     text = _QUOTE.sub(take, sentence)
     text = _OPEN_QUOTE.sub(cut, text)
+    if replaced and drop:
+        text = " ".join(text.split())
+        text = re.sub(r"\s+([.,;:!?])", r"\1", text).strip()
+        if _RESIDUE.match(text):
+            text = ""
     return QuoteCheck(text, replaced)

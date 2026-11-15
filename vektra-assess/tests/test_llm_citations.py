@@ -109,9 +109,26 @@ def test_teacher_comment_says_lead_is_a_quote_lead() -> None:
         'Nella Domanda 9 il Commento del docente: "Analisi corretta".',
     ],
 )
-def test_a_quote_citing_an_item_without_feedback_is_replaced(sentence: str) -> None:
+def test_a_quote_citing_an_item_without_feedback_is_removed(sentence: str) -> None:
+    # no feedback the quote could have been: removed, never a placeholder (psico E2E 2026-11-15)
     out = feedback_quote.check(sentence, INDEX)
-    assert out.replaced == 1 and MISSING in out.text
+    assert out.replaced == 1 and MISSING not in out.text
+    assert "conclusione" not in out.text and "Analisi" not in out.text
+
+
+def test_a_sentence_left_with_only_a_tag_is_dropped() -> None:
+    out = feedback_quote.check(
+        '[Domanda 3] Commento del docente: "manca la conclusione".', INDEX
+    )
+    assert out.replaced == 1 and out.text == ""
+
+
+def test_a_quote_from_the_teachers_solution_or_rubric_passes() -> None:
+    teacher = ("Domanda 3: dovuto alla ripetizione mentale dei primi elementi.",)
+    ok = '[Domanda 3] Commento del docente: "ripetizione mentale dei primi elementi".'
+    assert feedback_quote.check(ok, INDEX, teacher=teacher).text == ok
+    bad = '[Domanda 3] Commento del docente: "dovuto alla memoria a breve termine".'
+    assert feedback_quote.check(bad, INDEX, teacher=teacher).replaced == 1
 
 
 def test_running_text_question_word_is_not_a_citation() -> None:

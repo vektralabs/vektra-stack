@@ -1608,6 +1608,9 @@ Modular open-source platform for Retrieval-Augmented Generation (RAG) with speci
   student may flag a bot turn. This adds exactly one marker "segnalato dallo studente" to that
   turn and a content-free audit event. After CLOSED no flag is possible, so copies stay
   hash-equal and the email is never invalidated.
+  Amendment 2026-11-15 (product owner, end-to-end test): the teacher's session list carries
+  the number of flagged replies per session (`flagged_count`), shown by the plugin next to the
+  session, so a teacher does not have to search every transcript for the marker.
 
 - **Acceptance Criteria**:
   - [ ] One flag -> exactly one marker; copies hash-equal

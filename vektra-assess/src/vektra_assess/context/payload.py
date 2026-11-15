@@ -56,11 +56,14 @@ def _lines(bundle: ContextBundle) -> list[str]:
         else:
             out.append("Punteggio: non visibile")
         if i.status:
-            out.append(f"Esito: {i.status}")
+            out.append(f"Esito: {S.state_label(i.status)}")
         if i.question_text:
             out += ["Testo della domanda:", i.question_text]
         if i.response_text:
-            out += ["Risposta dello studente:", i.response_text]
+            response = i.response_text
+            if i.qtype == "true_false":
+                response = S.TRUE_FALSE_IT.get(response.strip().casefold(), response)
+            out += ["Risposta dello studente:", response]
         if i.review_text:
             out += ["Revisione visibile allo studente:", i.review_text]
         if i.degraded and i.response_text:

@@ -281,3 +281,27 @@ def test_the_pasted_rubric_and_the_solution_are_labelled_sections() -> None:
     text = _payload(s)
     assert "## Rubrica fornita dal docente\nRubrica: chiarezza" in text
     assert "## Soluzione fornita dal docente\nLa soluzione" in text
+
+
+# --- Part A in Italian, with an example the activity has (end-to-end test 2026-11-15) ----------
+
+
+def test_part_a_shows_the_lms_english_state_labels_in_italian() -> None:
+    lines = _overview(_quiz(status="Incorrect", mark="0"))
+    assert "Domanda 1: 0/1 (Errata)" in lines
+
+
+def test_the_orientation_example_is_a_label_the_activity_has() -> None:
+    from vektra_assess.context.part_a import SessionFacts, render_part_a
+
+    facts = SessionFacts(
+        session_number=1,
+        previous_context=None,
+        duration_minutes=15,
+        course_material_used=False,
+    )
+    s = _assign()
+    assign = render_part_a(assemble_context(s, _frozen(s)), facts).text
+    assert "«Consegna»" in assign and "«Domanda 2»" not in assign
+    q = _quiz()
+    assert "«Domanda 1»" in render_part_a(assemble_context(q, _frozen(q)), facts).text

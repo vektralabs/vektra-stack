@@ -624,3 +624,33 @@ async def test_a_contextual_sentence_restating_the_refusal_is_not_released() -> 
     core = shipped_strings.get("it").refusal("R-GHOST")
     assert [s.text for s in segs] == [core]
     assert result.behaviour_class == "R-GHOST"
+
+
+async def test_a_dropped_sentence_keeps_the_paragraph_break_before_it() -> None:
+    # Domanda 3 has no feedback in the bundle: the quoting sentence is dropped, the paragraph
+    # break before it still separates what follows
+    reply = 'Intro.\n\n[Domanda 3] Commento del docente: "rivedi".\nSegue.'
+    segs, result, _, _, _ = await _run(reply)
+    assert [(s.sep, s.text) for s in segs] == [("", "Intro."), ("\n\n", "Segue.")]
+    assert "feedback_quote" in result.marks
+
+
+async def test_a_list_line_replaced_by_the_notice_stays_a_list_line() -> None:
+    reply = "Punti:\n- Hai ragione, meritavi di più.\n- Rivedi la definizione."
+    segs, _, _, _, _ = await _run(reply)
+    assert segs[1].sep == "\n" and segs[1].text.startswith("- Voto registrato:")
+    assert segs[2] == ReleasedSegment("- Rivedi la definizione.", False, "\n")
+
+
+async def test_a_restated_refusal_lead_is_cut_and_the_offer_kept() -> None:
+    reply = (
+        "[[CLASS R-GHOST]] Non posso scrivere per te il saggio modello, ma posso indicarti "
+        "cosa includere nella risposta."
+    )
+    segs, result, _, _, _ = await _run(reply)
+    core = shipped_strings.get("it").refusal("R-GHOST")
+    assert [s.text for s in segs] == [
+        core,
+        "Posso indicarti cosa includere nella risposta.",
+    ]
+    assert "refusal_repeat" in result.marks

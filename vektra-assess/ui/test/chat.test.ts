@@ -30,6 +30,13 @@ describe("chat view", () => {
       "Domanda 3: ripetizione.",
       "Domanda 5: retroattiva.",
     ]);
+    // a placeholder or an interval is not a tag: its brackets stay
+    const other = turnElement({
+      turn_no: 6, role: "bot", kind: "normal",
+      text: "Hai [valore non verificato: vedi la pagina di revisione] punti in [0, 1].",
+    });
+    expect(other.textContent).toContain("[valore non verificato: vedi la pagina di revisione]");
+    expect(other.textContent).toContain("[0, 1]");
     // a student's own brackets are the student's text
     const stu = turnElement({ turn_no: 5, role: "student", kind: "normal", text: "[x] y" });
     expect(stu.textContent).toContain("[x] y");

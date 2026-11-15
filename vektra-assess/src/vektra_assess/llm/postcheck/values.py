@@ -25,6 +25,7 @@ from decimal import Decimal, InvalidOperation
 
 from vektra_assess.context import strings as S
 from vektra_assess.context.bundle import ContextBundle
+from vektra_assess.context.references import PASTED_CRITERION
 from vektra_assess.context.snapshot import GradeKind
 
 REPLACEMENT = "[valore non verificato: vedi la pagina di revisione]"
@@ -144,10 +145,6 @@ def _values(
     )
 
 
-# "Criterio 2 - Memoria di lavoro (10 punti)": the maximum a pasted-rubric criterion is worth
-_PASTED_CRITERION = re.compile(
-    rf"\bCriteri(?:o|on)\s+(\d+)\b[^\n]*?\(\s*({_NUM})\s*{_PTS}\b", re.IGNORECASE
-)
 # words that present a value as obtained by the student: never confirmed for a rubric-only item
 _EARNED_CONTEXT = re.compile(
     r"\b(?:ottenut\w*|pres[oaie]|preso|assegnat\w*|hai|guadagnat\w*|perso|persi|got|received|"
@@ -158,7 +155,7 @@ _EARNED_CONTEXT = re.compile(
 
 def _pasted_maxima(text: str) -> dict[str, ItemValues]:
     out: dict[str, set[Decimal]] = {}
-    for m in _PASTED_CRITERION.finditer(text):
+    for m in PASTED_CRITERION.finditer(text):
         d = _dec(m.group(2))
         if d is not None:
             out.setdefault(f"criterio {m.group(1)}", set()).add(d)

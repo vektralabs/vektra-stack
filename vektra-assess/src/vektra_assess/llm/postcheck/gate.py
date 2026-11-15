@@ -43,9 +43,11 @@ MARK_CITATIONS = "citations"
 MARK_QUOTE = "feedback_quote"
 MARK_SAFEGUARD = "safeguard"
 MARK_MARKER = "marker"
+MARK_REPEAT = "refusal_repeat"
 
 CLASS_LATE = "marker_class_late"
 CONTEST_UNRELEASED = "marker_contest_unreleased"
+REFUSAL_RESTATED = "refusal_restated"
 
 
 class Unit(NamedTuple):
@@ -81,7 +83,6 @@ class SentenceGate:
         self._labels = canonical_labels(self.bundle)
         self._values = values.value_index(self.bundle)
         self._feedback = feedback_quote.feedback_index(self.bundle)
-        self._teacher = feedback_quote.teacher_texts(self.bundle)
 
     def _mark(self, code: str, n: int = 1) -> None:
         if code not in self.marks:
@@ -129,10 +130,20 @@ class SentenceGate:
             self.contest.extend(contest)
             return out
         if self._contextual_left is not None:
-            if _repeats(text, self._refusal):
-                # the model restating the refusal the system already released: said once only
-                self._drop_contest(contest)
-                return out
+            restated = _RESTATED_LEAD.match(text)
+            rest = text[restated.end() :].strip() if restated else text
+            if restated or _repeats(text, self._refusal):
+                # the model restating the refusal the system already released: said once only.
+                # "Non posso scrivere il saggio, ma posso...": the restated lead goes, the offer
+                # after it stays. Model text is removed, so the turn is marked and audited
+                self.audit.append(
+                    ("assess_marker_dropped", {"reason_code": REFUSAL_RESTATED})
+                )
+                self._mark(MARK_REPEAT)
+                if not restated or not rest:
+                    self._drop_contest(contest)
+                    return out
+                text = rest[0].upper() + rest[1:]
             self._contextual_left -= 1
         category = lexicon.scan(text)
         if category is not None:
@@ -151,7 +162,6 @@ class SentenceGate:
             c.text,
             self._feedback,
             self.shipped.missing["quote_unverified"],
-            self._teacher,
         )
         if q.replaced:
             self._mark(MARK_QUOTE, q.replaced)
@@ -176,13 +186,19 @@ class SentenceGate:
 
 
 _WORD = re.compile(r"\w+", re.UNICODE)
+# a contextual sentence that opens by refusing again: "Non posso scrivere per te il saggio, ma ..."
+_RESTATED_LEAD = re.compile(
+    r"^\s*(?:non (?:posso|possiamo|è possibile)|i (?:cannot|can['\u2019]t|can not)|"
+    r"we (?:cannot|can['\u2019]t))\b[^,;:.]*[,;:]\s*(?:(?:ma|però|but|however)\b[\s,]*)?",
+    re.IGNORECASE,
+)
 
 
 def _repeats(sentence: str, refusal: str) -> bool:
-    """Whether a contextual sentence only restates the shipped refusal (psico E2E 2026-11-15:
+    """Whether a contextual sentence only restates the shipped refusal (end-to-end test 2026-11-15:
     "Non posso scrivere al posto tuo..." twice): most of its meaningful words are the refusal's."""
     words = {w for w in _WORD.findall(sentence.casefold()) if len(w) > 3}
-    if not words:
-        return False
+    if len(words) < 3:
+        return False  # too short to tell a restatement from a short legitimate sentence
     ref = {w for w in _WORD.findall(refusal.casefold()) if len(w) > 3}
     return len(words & ref) / len(words) >= 0.6

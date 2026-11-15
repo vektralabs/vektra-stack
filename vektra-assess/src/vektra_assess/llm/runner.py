@@ -467,6 +467,7 @@ class DiscussionTurnRunner:
                 first_at = _now()
                 first_token_ms = int((time.monotonic() - t_llm) * 1000)
                 buf = ""
+                layout = _Layout()
                 outcome: CallOutcome = "ok"
                 waiter = _StopWaiter(stop)
                 chunk: CompletionChunk | object | None = first
@@ -483,15 +484,19 @@ class DiscussionTurnRunner:
                         for sentence in done:
                             if stop is not None and stop.is_set():
                                 break  # no sentence after the stop touches the gate
-                            brk = sentence.brk
+                            brk: str | None = layout.start(sentence.brk)
                             for unit in gate.feed(sentence.text):
                                 if stop is not None and stop.is_set():
                                     break
                                 seg = await self._release(unit, gate, turn.turn_index)
-                                seg = _with_sep(seg, brk, bool(released))
-                                brk = " "
+                                seg = _placed(
+                                    seg, unit, sentence.text, brk, bool(released)
+                                )
+                                brk = None
                                 released.append(seg)
                                 yield seg
+                            if brk is not None:
+                                layout.carry(brk)  # nothing released: the break goes on
                         if stop is not None and stop.is_set():
                             outcome = "cancelled"
                             break
@@ -530,13 +535,15 @@ class DiscussionTurnRunner:
                 else:
                     done, _ = split_with_breaks(buf, final=True)
                     for sentence in done:
-                        brk = sentence.brk
+                        brk = layout.start(sentence.brk)
                         for unit in gate.feed(sentence.text):
                             seg = await self._release(unit, gate, turn.turn_index)
-                            seg = _with_sep(seg, brk, bool(released))
-                            brk = " "
+                            seg = _placed(seg, unit, sentence.text, brk, bool(released))
+                            brk = None
                             released.append(seg)
                             yield seg
+                        if brk is not None:
+                            layout.carry(brk)
 
         # each segment carries its own separator: the delivered text is exactly what the student
         # saw streamed, with the model's line breaks and "- " list items
@@ -629,18 +636,22 @@ class DiscussionTurnRunner:
         records.append(ProviderCallRecord(started, first_at, _now(), "ok"))
         self._check_truncated(finish, "part_b")
         violations: list[str] = []
-        m = markers.extract(raw, canonical_labels(bundle))
+        labels = canonical_labels(bundle)
+        m = markers.extract(raw, labels)
         if m.behaviour_class or m.contest or m.dropped:
             violations.append(part_b.MARKER)
-        text = " ".join(m.text.split())
-        c = citations.check(text, canonical_labels(bundle))
+        # spaces normalised per line: the model's line breaks and "- " items reach the student
+        text = "\n".join(
+            " ".join(ln.split()) for ln in m.text.splitlines() if ln.strip()
+        )
+        c = citations.check(text, labels)
         if c.removed:
             violations.append(part_b.UNRESOLVED)
         if lexicon.scan(text) is not None:
             violations.append(part_b.LEXICON)
         if feedback_quote.check(text, feedback_quote.feedback_index(bundle)).replaced:
             violations.append(part_b.QUOTE)
-        violations += part_b.check(text, canonical_labels(bundle)).violations
+        violations += part_b.check(text, labels).violations
         res = await self._safeguard.pre_response(text, self._context(-1, partial=False))
         if not res.allowed or res.modified_content is not None:
             violations.append(part_b.SAFEGUARD)
@@ -891,10 +902,37 @@ def _finish_reason(chunk: object) -> str | None:
 _STOPPED = object()
 
 
-def _with_sep(seg: ReleasedSegment, brk: str, follows: bool) -> ReleasedSegment:
-    """The segment with the separator before it: none for the first segment of a reply, else the
-    model's own break (a space, a line or a paragraph)."""
-    return replace(seg, sep=brk if follows else "")
+_BREAK_RANK = {"": 0, " ": 1, "\n": 2, "\n\n": 3}
+
+
+class _Layout:
+    """The model's line breaks across sentences the gate drops: a paragraph break before a dropped
+    sentence still separates what comes after it."""
+
+    def __init__(self) -> None:
+        self._pending = ""
+
+    def start(self, brk: str) -> str:
+        out = max(self._pending, brk, key=lambda b: _BREAK_RANK.get(b, 1))
+        self._pending = ""
+        return out
+
+    def carry(self, brk: str) -> None:
+        self._pending = brk
+
+
+def _placed(
+    seg: ReleasedSegment, unit: Unit, sentence: str, brk: str | None, follows: bool
+) -> ReleasedSegment:
+    """The segment with the separator before it: the sentence's break for its first unit (none
+    for the first segment of a reply), a space for the others. A list line the system replaced as
+    a whole (the BR-009 notice) stays a list line."""
+    if brk is None:
+        return replace(seg, sep=" ")
+    text = seg.text
+    if unit.system and sentence.startswith("- ") and not text.startswith("- "):
+        text = "- " + text
+    return replace(seg, text=text, sep=brk if follows else "")
 
 
 class _Steps:

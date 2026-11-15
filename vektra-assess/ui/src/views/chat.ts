@@ -12,9 +12,12 @@ export interface Turn {
   flagged?: boolean;
 }
 
-// a citation tag as the model writes it, "[Domanda 3]": the brackets are for the post-check, the
-// student reads the label alone (psico E2E 2026-11-15)
-const TAG = /\[([^[\]\n]{1,80})\]/g;
+// a citation tag as the model writes it, "[Domanda 3]", "[Consegna p.2]": the brackets are for
+// the post-check, the student reads the label alone (end-to-end test 2026-11-15). Only the label
+// shapes the server resolves: a placeholder "[valore non verificato: ...]" or an interval "[0, 1]"
+// keeps its brackets
+const TAG =
+  /\[((?:Domanda|Question)\s+[\w.]{1,10}|(?:Criterio|Criterion)\s+\d{1,3}|Valutazione complessiva|Overall assessment|(?:Consegna|Submission)(?:\s+p\.\s?\d{1,4})?)\]/g;
 
 /** Text with line breaks rendered by building elements; "- " lines become list items. A bot
  * reply (``tags``) is shown without the brackets of its citation tags. */

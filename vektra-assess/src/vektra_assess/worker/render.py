@@ -301,12 +301,21 @@ def make_render_handler(deps: RenderDeps) -> Callable[[JobContext], Awaitable[No
     return handle
 
 
+#: the gate_refresh tick's schedule (worker/slots.py): every TICK_PERIOD_S plus up to TICK_JITTER_S
+TICK_PERIOD_S = 300
+TICK_JITTER_S = 30
+
 _STALE_ASKED = text(
     "SELECT DISTINCT rc.site_id, rc.student_userid, rc.cmid FROM assess_render_checks rc "
     "LEFT JOIN assess_render_state rs ON rs.site_id = rc.site_id "
     "AND rs.student_userid = rc.student_userid AND rs.cmid = rc.cmid "
     "WHERE rc.requested_at > now() - interval '1 day' "
-    "AND (rs.computed_at IS NULL OR rs.computed_at < now() - make_interval(secs => :fresh)) "
+    # a pair asked within the last hour is refreshed EARLY (``:early``): the tick runs every
+    # TICK_PERIOD_S + jitter, so waiting until the row is stale left it stale for up to a whole
+    # period while the student is still around. Older pairs keep the plain freshness rule.
+    "AND (rs.computed_at IS NULL OR rs.computed_at < now() - make_interval(secs => "
+    "CASE WHEN rc.requested_at > now() - interval '1 hour' THEN CAST(:early AS double precision) "
+    "ELSE CAST(:fresh AS double precision) END)) "
     "LIMIT :n"
 )
 _CLEANUP = (
@@ -326,18 +335,18 @@ _CLEANUP = (
 async def gate_refresh_tick(
     acquire: AcquireDb, fresh_s: int, *, batch: int = 200
 ) -> dict[str, Any]:
-    """Re-queue the render checks of recently asked pairs BEFORE they go stale; delete week-old
-    unused rows.
+    """Re-queue stale render checks of recently asked pairs; delete week-old unused rows.
 
-    A row is refreshed once it is half as old as ``fresh_s``: the tick runs about every
-    ``fresh_s`` seconds, so waiting for the row to be already stale left it stale for up to a
-    whole period, and a returning student read "checking" (psico E2E 2026-11-15)."""
+    A pair asked within the last hour is refreshed early enough that its row is still fresh when
+    the NEXT tick runs (``fresh_s`` minus one tick period and its jitter, at least 0): otherwise a
+    returning student read "checking" for up to a whole period (end-to-end test 2026-11-15)."""
     queued = deleted = 0
+    early = max(fresh_s - TICK_PERIOD_S - TICK_JITTER_S, 0)
     async with acquire() as conn:
         async with conn.begin():
             rows = (
                 await conn.execute(
-                    _STALE_ASKED, {"fresh": max(fresh_s // 2, 1), "n": batch}
+                    _STALE_ASKED, {"fresh": fresh_s, "early": early, "n": batch}
                 )
             ).all()
             for r in rows:

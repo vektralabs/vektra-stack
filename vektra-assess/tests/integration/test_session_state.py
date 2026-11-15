@@ -277,12 +277,20 @@ async def test_the_refresh_tick_requeues_stale_pairs_and_deletes_week_old_rows(
         await state(w, await w.presession(sub=STU1, cmid=cm))
         await render(w, worker, STU1, cm)
         await pg.run("super", "DELETE FROM assess_jobs")
-        assert (await gate_refresh_tick(worker.connect, 300))["queued"] == 0  # fresh
-        # half-way to stale (3 of 5 minutes): refreshed BEFORE a returning student reads
-        # "checking" (psico E2E 2026-11-15)
+        # asked within the hour: refreshed early, so the row is still fresh at the next tick
+        # and a returning student never reads "checking" (end-to-end test 2026-11-15)
+        assert (await gate_refresh_tick(worker.connect, 300))["queued"] == 1
+        assert (await gate_refresh_tick(worker.connect, 300))["queued"] == 0  # deduped
+        await pg.run("super", "DELETE FROM assess_jobs")
+        # asked long ago: the plain freshness rule
         await pg.run(
             "super",
-            "UPDATE assess_render_state SET computed_at = now() - interval '3 minutes'",
+            "UPDATE assess_render_checks SET requested_at = now() - interval '2 hours'",
+        )
+        assert (await gate_refresh_tick(worker.connect, 300))["queued"] == 0  # fresh
+        await pg.run(
+            "super",
+            "UPDATE assess_render_state SET computed_at = now() - interval '10 minutes'",
         )
         assert (await gate_refresh_tick(worker.connect, 300))["queued"] == 1
         assert (

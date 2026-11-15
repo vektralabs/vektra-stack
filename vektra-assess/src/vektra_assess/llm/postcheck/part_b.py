@@ -44,7 +44,7 @@ def word_count(text: str) -> int:
 def labels_named(text: str, known: Collection[str] | None = None) -> set[str]:
     """The distinct items the text names. With ``known`` (the bundle's canonical labels) only
     those count: "scegli la domanda che preferisci" or "rileggi la consegna" in a quiz name no
-    item, and counting them rolled starts back (psico E2E 2026-11-15, 2 of 27 starts)."""
+    item, and counting them rolled starts back (end-to-end test 2026-11-15, 2 of 27 starts)."""
     names = {" ".join(m.group(1).split()).lower() for m in _LABEL.finditer(text)}
     if known is None:
         return names

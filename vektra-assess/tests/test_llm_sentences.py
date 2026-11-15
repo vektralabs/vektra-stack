@@ -116,7 +116,7 @@ def test_a_teacher_quote_closed_within_the_limit_is_unchanged() -> None:
     assert out == ['Commento del docente: "Prima. Seconda."', "Poi altro."]
 
 
-# --- line breaks survive the split (psico E2E 2026-11-15: replies were flattened) --------------
+# --- line breaks survive the split (end-to-end test 2026-11-15: replies were flattened) --------------
 
 from vektra_assess.llm.postcheck.sentences import (  # noqa: E402
     Sentence,

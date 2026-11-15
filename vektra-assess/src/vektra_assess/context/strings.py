@@ -66,7 +66,7 @@ HOW_TO_PROCEED = (
 )
 
 # the LMS's English state labels and true/false answers, as an Italian discussion shows them
-# (psico E2E 2026-11-15: "Correct", "False" in an Italian reply). Unknown labels pass unchanged.
+# (end-to-end test 2026-11-15: "Correct", "False" in an Italian reply). Unknown labels pass unchanged.
 STATE_LABELS_IT = {
     "correct": "Corretta",
     "incorrect": "Errata",

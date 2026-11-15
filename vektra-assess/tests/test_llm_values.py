@@ -163,7 +163,7 @@ def test_part_b_leaves_articles_and_plain_words_alone(text: str) -> None:
     assert not asserts_any_value(text)
 
 
-# --- pasted-rubric criteria (psico E2E 2026-11-15) ----------------------------------------------
+# --- pasted-rubric criteria (end-to-end test 2026-11-15) ----------------------------------------------
 
 _RUBRIC = (
     "Criterio 1 - Modello modale (8 punti): tre stadi.\n"
@@ -198,3 +198,20 @@ def test_a_score_obtained_on_a_pasted_criterion_is_never_confirmed() -> None:
         "Il Criterio 3 vale 6 punti.",
     ):
         assert check(sentence, idx).replaced == 1, sentence
+
+
+def test_a_pasted_criterion_is_a_citable_label_through_the_gate() -> None:
+    from test_context_rendering_variants import _assign
+
+    from vektra_assess.llm import shipped as shipped_strings
+    from vektra_assess.llm.postcheck.gate import SentenceGate
+
+    s = _assign(pasted_rubric=_RUBRIC, criteria=())
+    flags = s.header.flags.model_copy(update={"rubric_source": "pasted"})
+    s = s.model_copy(update={"header": s.header.model_copy(update={"flags": flags})})
+    gate = SentenceGate(
+        assemble_context(s, _frozen(s)), shipped_strings.get("it"), "BR009"
+    )
+    sentence = "Il commento riguarda il [Criterio 2] (Memoria di lavoro, 10 punti)."
+    (unit,) = gate.feed(sentence)
+    assert unit.text == sentence and not unit.marked and gate.marks == []

@@ -245,7 +245,7 @@ def check(
             # never a score the student obtained (none exists per criterion). The clause that
             # attributes the value is checked whole, earned wording before the citation included,
             # and before the maximum shortcut ("hai ottenuto il massimo: 10 punti")
-            clause = max((sentence.rfind(c, 0, at) for c in ";(\u2014"), default=-1) + 1
+            clause = max((sentence.rfind(c, 0, at) for c in ";\u2014"), default=-1) + 1
             return da not in it.maxima or bool(
                 _EARNED_CONTEXT.search(sentence, clause, at)
             )

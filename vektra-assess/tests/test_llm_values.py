@@ -222,6 +222,7 @@ def test_a_pasted_criterion_is_a_citable_label_through_the_gate() -> None:
     [
         "Nel [Criterio 2] hai ottenuto il massimo: 10 punti.",
         "Hai ottenuto nel [Criterio 2] 10 punti.",
+        "Hai ottenuto nel [Criterio 2] (10 punti).",
     ],
 )
 def test_earned_wording_anywhere_in_the_clause_is_never_confirmed(

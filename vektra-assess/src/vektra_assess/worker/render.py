@@ -301,24 +301,34 @@ def make_render_handler(deps: RenderDeps) -> Callable[[JobContext], Awaitable[No
     return handle
 
 
-#: the gate_refresh tick's jitter and the margin a refresh job needs to finish (worker/slots.py)
-TICK_JITTER_S = 30
-REFRESH_MARGIN_S = 30
+#: the gate_refresh schedule's caps (design defaults): period, jitter and the margin a refresh
+#: job needs to finish. Below a 300 s render freshness all three shrink with it (``fresh_s`` may
+#: be as low as 10 s: VEKTRA_ASSESS_RENDER_FRESH_S)
 TICK_PERIOD_MAX_S = 300
+TICK_JITTER_MAX_S = 30
+REFRESH_MARGIN_MAX_S = 30
 
 
 def tick_period(fresh_s: int) -> int:
-    """The gate_refresh tick period for a render freshness of ``fresh_s``: short enough that a
-    pair refreshed early is refreshed again before it goes stale, at most the design 300 s."""
-    return max(
-        5, min(TICK_PERIOD_MAX_S, (fresh_s - TICK_JITTER_S - REFRESH_MARGIN_S) // 2)
-    )
+    """The gate_refresh tick period: a third of the render freshness, between 5 and 300 s."""
+    return max(5, min(TICK_PERIOD_MAX_S, fresh_s // 3))
+
+
+def tick_jitter(fresh_s: int) -> int:
+    """The tick's jitter: always below its period (TickSpec), at most 30 s."""
+    return min(TICK_JITTER_MAX_S, tick_period(fresh_s) // 3)
+
+
+def _margin(fresh_s: int) -> int:
+    return min(REFRESH_MARGIN_MAX_S, tick_period(fresh_s) // 3)
 
 
 def early_threshold(fresh_s: int) -> int:
-    """Age at which a recently asked pair is refreshed: one tick (with jitter and margin) before
-    it would go stale."""
-    return max(fresh_s - tick_period(fresh_s) - TICK_JITTER_S - REFRESH_MARGIN_S, 0)
+    """Age at which a recently asked pair is refreshed: one tick (with its jitter and the
+    refresh margin) before it would go stale."""
+    return max(
+        fresh_s - tick_period(fresh_s) - tick_jitter(fresh_s) - _margin(fresh_s), 0
+    )
 
 
 _STALE_ASKED = text(

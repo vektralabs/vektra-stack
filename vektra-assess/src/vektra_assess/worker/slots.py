@@ -163,7 +163,7 @@ def _tick_table(s: VektraAssessSettings) -> list[TickSpec]:
             render.tick_period(s.render_fresh_s),
             60,
             locks.GATE_REFRESH,
-            jitter_s=render.TICK_JITTER_S,
+            jitter_s=render.tick_jitter(s.render_fresh_s),
         ),  # the period follows render_fresh_s (gate_refresh_tick's early threshold)
         t("delivery_retry", 30, 30, locks.DELIVERY_RETRY, jitter_s=5),  # design default
         # INT-003 readiness of the relay for /health/assess; never sends (design default). The

@@ -326,12 +326,19 @@ _CLEANUP = (
 async def gate_refresh_tick(
     acquire: AcquireDb, fresh_s: int, *, batch: int = 200
 ) -> dict[str, Any]:
-    """Re-queue stale render checks of recently asked pairs; delete week-old unused rows."""
+    """Re-queue the render checks of recently asked pairs BEFORE they go stale; delete week-old
+    unused rows.
+
+    A row is refreshed once it is half as old as ``fresh_s``: the tick runs about every
+    ``fresh_s`` seconds, so waiting for the row to be already stale left it stale for up to a
+    whole period, and a returning student read "checking" (psico E2E 2026-11-15)."""
     queued = deleted = 0
     async with acquire() as conn:
         async with conn.begin():
             rows = (
-                await conn.execute(_STALE_ASKED, {"fresh": fresh_s, "n": batch})
+                await conn.execute(
+                    _STALE_ASKED, {"fresh": max(fresh_s // 2, 1), "n": batch}
+                )
             ).all()
             for r in rows:
                 queued += await enqueue_job(

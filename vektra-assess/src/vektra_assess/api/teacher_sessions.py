@@ -7,7 +7,8 @@ actor verified as a fresh GRADER of the activity.
 
 Per student (LMS user id only: the plugin resolves names), in user-id order, ``PAGE_SIZE``
 students per page (``next_cursor`` = the last user id of the page, or null): sessions #1..#N with
-state, close reason, the transcript id and its delivery status per recipient (``recipient_kind``
+state, close reason, the number of bot replies the student flagged (``flagged_count``, REQ-103
+extended 2026-11-15), the transcript id and its delivery status per recipient (``recipient_kind``
 and ``status``, ``smtp_code`` and the error class; never an address nor its ref), the resets
 with their reasons (decrypted here, for this grader view only), continuity choice and
 ``studente non avvisato via email`` (REQ-092 is out of v1), and the extra time. Activity level: the terminations with their reasons, and the gate panel: the
@@ -73,7 +74,10 @@ _STUDENTS = text(
 )
 _SESSIONS = text(
     "SELECT s.id, s.student_userid, s.session_no, s.state, s.close_reason, s.committed_at, "
-    "s.closed_at, t.id AS transcript_id FROM assess_sessions s "
+    "s.closed_at, t.id AS transcript_id, "
+    # REQ-103 extended (2026-11-15): how many bot replies the student flagged in the session
+    "(SELECT count(*) FROM assess_turn_flags f WHERE f.session_id = s.id) AS flagged_count "
+    "FROM assess_sessions s "
     "LEFT JOIN assess_transcripts t ON t.session_id = s.id AND t.shredded_at IS NULL "
     "WHERE s.site_id = :s AND s.cmid = :c AND s.student_userid = ANY(:us) "
     "ORDER BY s.student_userid, s.session_no"
@@ -208,6 +212,7 @@ async def _page(
                 "committed_at": iso_time(r.committed_at),
                 "closed_at": iso_time(r.closed_at),
                 "transcript_id": str(r.transcript_id) if r.transcript_id else None,
+                "flagged_count": int(r.flagged_count or 0),
                 "deliveries": deliveries.get(r.transcript_id, [])
                 if r.transcript_id
                 else [],

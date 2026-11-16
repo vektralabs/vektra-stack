@@ -2,7 +2,8 @@
 
 One namespace holds, besides the material of an eligible module, a canary chunk for every kind of
 module that is NOT eligible (hidden, stealth, group, date and completion restrictions, the opt-out
-tag, a section restricted by date) and a chunk with no ``cmid`` at all. Every chunk has the SAME
+tag, a section restricted by date), a module absent from the live read, and a chunk with no
+``cmid`` at all. Every chunk has the SAME
 embedding, so ranking alone would return the canaries: a control search without the filter
 proves they are reachable. Then, through the real runner, the real retriever and the real
 provider:
@@ -54,7 +55,7 @@ TAG = "[no-ai]"
 QUERIES = 60
 
 #: (cmid, kind, facts): R1 and LATER are eligible at first; every other one never is
-ELIGIBLE, LATER = 11, 18
+ELIGIBLE, LATER, ABSENT = 11, 18, 29
 MODULES = (
     M(ELIGIBLE, "Lezione 1", 1, True, True, False, True, True),
     M(21, "Hidden", 1, False, True, False, True, True),
@@ -76,6 +77,9 @@ CANARIES = {
     25: "CANARY-completion-7f3a",
     26: "CANARY-tagged-7f3a",
     27: "CANARY-section-7f3a",
+    # a module ABSENT from the live read (a hidden section does not arrive at all, a section
+    # restricted by date arrives with no modules): absent is excluded
+    ABSENT: "CANARY-absent-7f3a",
     None: "CANARY-nocmid-7f3a",
 }
 LATER_TEXT = "LATER-restricted-next-turn-7f3a"
@@ -409,4 +413,5 @@ def test_the_suite_covers_every_non_eligible_kind() -> None:
     """Each canary module is really NOT eligible by the rule, and the two others are."""
     eligible = {m.cmid for m in eligible_modules(MODULES, TAG)}
     assert eligible == {ELIGIBLE, LATER}
-    assert set(CANARIES) - {None} == {m.cmid for m in MODULES} - eligible
+    assert set(CANARIES) - {None, ABSENT} == {m.cmid for m in MODULES} - eligible
+    assert ABSENT not in {m.cmid for m in MODULES}

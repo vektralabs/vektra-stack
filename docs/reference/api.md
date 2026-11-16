@@ -385,8 +385,13 @@ Moodle-rubric source without a rubric, no recipients, no cap, privacy settings u
 always, until plan assess-privacy-retention lands) and a setup check that is not green.
 RAG ON (`rag_enabled: true`) is refused, as field errors on `rag_enabled`, with:
 `rag_unavailable` + `reason: operator_flag_off` when `VEKTRA_ASSESS_RAG_ENABLED` is off (the only
-error then: the field is locked); `rag_attestation_required` when the same body does not carry
-`rag_attested: true` (every save that sends `rag_enabled: true` must carry it);
+error then: the field is locked); `rag_attestation_required` when a body that switches RAG from
+OFF to ON does not carry `rag_attested: true`. Sending `rag_enabled: true` while RAG is already
+ON is idempotent: no attestation is needed, nothing is re-checked except the operator flag, and
+the attestation on record is kept. The RAG fields may travel in a PUT of their own (the plugin
+sends them after the PUT with the other fields, with the `expected_version` that one returned):
+a body with only the required fields plus `rag_enabled` (and `rag_attested`) is valid, and a
+refused one changes nothing;
 `rag_unavailable` + `reason: eligibility_unreadable` when the worker's latest read of the
 activity's facts (the `teacher_gate` job, at most `VEKTRA_ASSESS_TEACHER_GATE_MAX_AGE_S` old)
 could not read the course's module eligibility. The last one is an LMS-fact refusal: a refresh
@@ -406,7 +411,9 @@ the address), `reason`, `opening_at`. Codes: `out_of_range`, `too_long`, `empty`
 
 View (GET and PUT): `cmid`, `activity_type`, `version`, `configured`, `enabled`, `cap_minutes`,
 `rubric_source`, `show_solution`, `rag_enabled`, `rag_attested_at` (ISO 8601, or `null` when RAG
-is off), `available_until`,
+is off), `rag_available` (bool: whether RAG may be switched ON, from the operator flag only, never
+from the per-turn eligibility) with `rag_unavailable_reason` (`operator_flag_off` or `null`),
+`available_until`,
 `solution_state` / `pasted_rubric_state` / `transcript_recipients_state` (`impostata` or
 `non impostata`), `transcript_recipients_count`, `opening` (below), `warnings`
 (`available_until_not_after_opening`, `review_options_hide_content`), `active_sessions`

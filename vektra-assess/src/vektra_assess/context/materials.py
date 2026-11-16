@@ -14,7 +14,10 @@ A module is ELIGIBLE only when it is visible to every enrolled student by constr
   ``[no-ai]``), case-insensitively: the same rule as the course chatbot ingest.
 
 A module absent from the read is not eligible: the allowlist is built from what the read returned,
-never from what the index holds. An ``Unreadable`` read gives no allowlist at all (the caller does
+never from what the index holds (a hidden section does not arrive at all, a section restricted by
+date arrives with no modules: their modules are simply absent). The provider folds a module that
+is not ``uservisible`` and an unreadable availability tree into ``has_conditions``; an empty tree
+is no condition. An ``Unreadable`` read gives no allowlist at all (the caller does
 no retrieval for that turn).
 """
 

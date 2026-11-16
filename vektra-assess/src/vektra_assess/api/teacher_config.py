@@ -317,11 +317,16 @@ async def _save(
     if body.rag_enabled is not None:
         new["rag_enabled"] = body.rag_enabled
         readable = gate.facts.get("course_modules_readable")
+        # re-sending ON while it is already ON changes nothing: no new attestation, no new
+        # eligibility check (the attestation on record is kept); the operator flag still holds
+        unchanged_on = body.rag_enabled and old["rag_enabled"]
         errors += v.check_rag(
             body.rag_enabled,
             operator_flag=bool(settings.rag_enabled),
-            attested=body.rag_attested is True,
-            eligibility_readable=readable if isinstance(readable, bool) else None,
+            attested=unchanged_on or body.rag_attested is True,
+            eligibility_readable=True
+            if unchanged_on
+            else (readable if isinstance(readable, bool) else None),
         )
     if body.given("available_until"):
         end = body.available_until
@@ -504,10 +509,12 @@ async def _save(
             body.model_fields_set - {"actor_userid", "courseid", "activity_type"}
         ),
     )
-    return await _view(conn, site, cmid, gate)
+    return await _view(conn, site, cmid, gate, settings)
 
 
-async def _view(conn: Any, site: UUID, cmid: int, gate: TeacherGate) -> dict[str, Any]:
+async def _view(
+    conn: Any, site: UUID, cmid: int, gate: TeacherGate, settings: Any
+) -> dict[str, Any]:
     facts = _facts(gate)
     kind = facts.activity_type
     row = (await conn.execute(_CONFIG, {"s": site, "c": cmid})).first()
@@ -536,6 +543,10 @@ async def _view(conn: Any, site: UUID, cmid: int, gate: TeacherGate) -> dict[str
         "show_solution": flags.get("show_solution") is True,
         "rag_enabled": bool(row.rag_enabled) if row is not None else False,
         "rag_attested_at": iso_time(row.rag_attested_at) if row is not None else None,
+        # whether the field may be switched ON at all: the operator flag only (the per-turn
+        # eligibility is read live and is not a property of the form)
+        "rag_available": bool(settings.rag_enabled),
+        "rag_unavailable_reason": None if settings.rag_enabled else "operator_flag_off",
         "available_until": iso_time(end_at),
         "solution_state": state(sealed.get(SOLUTION, (False, None))[0]),
         "pasted_rubric_state": state(sealed.get(PASTED_RUBRIC, (False, None))[0]),
@@ -574,7 +585,7 @@ async def get_config(
             max_age_s=settings.teacher_gate_max_age_s, route="get_config", role="editor",
         )  # fmt: skip
         if refused is None:
-            view = await _view(conn, site, c, gate)
+            view = await _view(conn, site, c, gate, settings)
     if refused is not None:
         raise refused
     return JSONResponse(view, headers={"Cache-Control": "no-store"})

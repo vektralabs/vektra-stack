@@ -786,3 +786,78 @@ async def test_rag_on_with_an_unreadable_eligibility_is_refused_and_refreshed(
         assert await counts(pg, w.site) == before
     finally:
         await ctx.__aexit__(None, None, None)
+
+
+async def test_a_rag_only_put_follows_the_other_fields_put(pg, pair) -> None:  # type: ignore[no-untyped-def]
+    """Plugin contract (FEAT-028): the RAG field travels in its OWN PUT, after the PUT with the
+    other fields, on the version that one returned. A refusal changes nothing; a stale version
+    is the usual conflict."""
+    ctx, w = await _rag_ready(pg, pair)
+    try:
+        r = await w.client.put(
+            url(60),
+            json=body(cap_minutes=30, show_solution=False),
+            headers=auth("teacher"),
+        )
+        assert r.status_code == 200, r.text
+        v1 = r.json()["version"]
+        before = await counts(pg, w.site)
+        r = await w.client.put(
+            url(60),
+            json=body(expected_version=v1, rag_enabled=True),
+            headers=auth("teacher"),
+        )
+        assert r.status_code == 400, r.text
+        assert err(r)["details"]["fields"] == [
+            {"field": "rag_enabled", "code": "rag_attestation_required"}
+        ]
+        assert await counts(pg, w.site) == before  # nothing changed
+        stale = await w.client.put(
+            url(60),
+            json=body(expected_version=v1 - 1, rag_enabled=True, rag_attested=True),
+            headers=auth("teacher"),
+        )
+        assert stale.status_code == 409 and err(stale)["code"] == "ERR-ASSESS-023"
+        assert await counts(pg, w.site) == before
+        r = await w.client.put(
+            url(60),
+            json=body(expected_version=v1, rag_enabled=True, rag_attested=True),
+            headers=auth("teacher"),
+        )
+        assert r.status_code == 200, r.text
+        view = r.json()
+        assert view["version"] == v1 + 1 and view["rag_enabled"] is True
+        assert view["cap_minutes"] == 30  # the other fields are untouched
+        assert view["rag_available"] is True and view["rag_unavailable_reason"] is None
+        # rag_enabled=true again while ON, without rag_attested: idempotent, the record kept
+        again = await w.client.put(
+            url(60),
+            json=body(expected_version=v1 + 1, rag_enabled=True),
+            headers=auth("teacher"),
+        )
+        assert again.status_code == 200, again.text
+        assert again.json()["rag_attested_at"] == view["rag_attested_at"]
+        assert [c for c, _ in await audits(pg, w.site)].count("rag_attested") == 1
+    finally:
+        await ctx.__aexit__(None, None, None)
+
+
+async def test_the_view_says_whether_rag_is_available(pg, pair) -> None:  # type: ignore[no-untyped-def]
+    """GET config: ``rag_available`` / ``rag_unavailable_reason`` from the operator flag only."""
+    ctx, w = await ready(pg, pair)
+    try:
+        r = await w.client.get(url(60), headers=get_headers())
+        assert r.status_code == 200, r.text
+        got = r.json()
+        assert got["rag_available"] is False
+        assert got["rag_unavailable_reason"] == "operator_flag_off"
+        assert got["rag_enabled"] is False and got["rag_attested_at"] is None
+    finally:
+        await ctx.__aexit__(None, None, None)
+    ctx, w = await _rag_ready(pg, pair, readable=None)
+    try:
+        got = (await w.client.get(url(60), headers=get_headers())).json()
+        # the per-turn eligibility is not consulted: unreadable facts, still available
+        assert got["rag_available"] is True and got["rag_unavailable_reason"] is None
+    finally:
+        await ctx.__aexit__(None, None, None)

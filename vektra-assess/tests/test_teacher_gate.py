@@ -293,3 +293,27 @@ def test_the_automatic_close_is_the_start_gates_formula() -> None:
     assert _automatic_close(quiz(gone, grace)) is None  # overrides not readable
     assert _automatic_close(quiz(Readable(()), gone)) is None  # closed quiz: partial
     assert _automatic_close(quiz(Readable(()), grace, close=0)) is None  # BR-007
+
+
+# --- FEAT-028: whether the course's module eligibility is readable -----------------------------
+
+
+async def test_course_modules_are_read_only_with_the_operator_flag() -> None:
+    fake = FakeLmsProvider(_world())
+
+    @asynccontextmanager
+    async def acquire():  # type: ignore[no-untyped-def]
+        yield _Conn([])
+
+    off = LmsStartSource(fake, None, acquire)  # type: ignore[arg-type]
+    got = await off.teacher_facts(SITE, ASSIGN_ACTIVITY, COURSE, "assign")
+    assert "course_modules_readable" not in got
+    assert fake.count("course_modules") == 0
+    on = LmsStartSource(fake, None, acquire, rag_opt_out_tag="[no-ai]")  # type: ignore[arg-type]
+    got = await on.teacher_facts(SITE, ASSIGN_ACTIVITY, COURSE, "assign")
+    assert got["course_modules_readable"] is True
+    # a flag only: no module, no title in the facts
+    assert "Lesson" not in json.dumps(got)
+    fake.world.course_module_facts.pop(COURSE)
+    got = await on.teacher_facts(SITE, ASSIGN_ACTIVITY, COURSE, "assign")
+    assert got["course_modules_readable"] is False

@@ -146,14 +146,50 @@ def test_rubric_source_per_activity_type() -> None:
 
 
 def test_rag_on_is_a_field_error_with_its_reason() -> None:
+    """Operator flag OFF: the field is locked, the one error says so (REQ-077 amendment)."""
     assert v.check_rag(False) == []
-    assert field_errors(v.check_rag(True)) == [
+    assert field_errors(
+        v.check_rag(True, attested=True, eligibility_readable=True)
+    ) == [
         {
             "field": "rag_enabled",
             "code": "rag_unavailable",
             "reason": "operator_flag_off",
         }
     ]
+
+
+def test_rag_on_with_the_flag_needs_the_attestation_and_a_readable_eligibility() -> (
+    None
+):
+    on = {"operator_flag": True}
+    assert v.check_rag(True, **on, attested=True, eligibility_readable=True) == []
+    assert v.check_rag(False, **on) == []  # OFF needs nothing
+    assert field_errors(v.check_rag(True, **on, eligibility_readable=True)) == [
+        {"field": "rag_enabled", "code": "rag_attestation_required"}
+    ]
+    for readable in (False, None):
+        assert field_errors(
+            v.check_rag(True, **on, attested=True, eligibility_readable=readable)
+        ) == [
+            {
+                "field": "rag_enabled",
+                "code": "rag_unavailable",
+                "reason": "eligibility_unreadable",
+            }
+        ]
+    assert len(v.check_rag(True, **on)) == 2  # both at once
+
+
+def test_only_the_unreadable_eligibility_is_an_lms_fact() -> None:
+    flag_off, attest, unreadable = (
+        v.check_rag(True)[0],
+        v.check_rag(True, operator_flag=True, eligibility_readable=True)[0],
+        v.check_rag(True, operator_flag=True, attested=True)[0],
+    )
+    assert not v.is_lms_fact_error(flag_off, None)
+    assert not v.is_lms_fact_error(attest, None)
+    assert v.is_lms_fact_error(unreadable, None)
 
 
 # --- end date after the effective opening -----------------------------------------------------

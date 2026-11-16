@@ -114,7 +114,8 @@ NOT_NULLABLE = ("enabled", "rubric_source", "show_solution", "rag_enabled")
 _CONFIG = text(
     "SELECT activity_type, enabled, flags, rag_enabled, cap_minutes, version, "
     "extract(epoch FROM end_at)::bigint AS end_at, "
-    "extract(epoch FROM attested_opening_at)::bigint AS attested_at, updated_at "
+    "extract(epoch FROM attested_opening_at)::bigint AS attested_at, updated_at, "
+    "extract(epoch FROM rag_attested_at)::bigint AS rag_attested_at, rag_attested_by "
     "FROM assess_activity_config WHERE site_id = :s AND cmid = :c"
 )
 _CONFIG_LOCK = text(str(_CONFIG) + " FOR UPDATE")
@@ -124,8 +125,11 @@ _SEALED = text(
 )
 _INSERT = text(
     "INSERT INTO assess_activity_config (site_id, cmid, activity_type, enabled, flags, "
-    "rag_enabled, end_at, cap_minutes, version, updated_by, updated_at) VALUES (:s, :c, :t, :e, "
-    "CAST(:f AS jsonb), false, :end, :cap, 1, :u, now()) "
+    "rag_enabled, rag_attested_at, rag_attested_by, end_at, cap_minutes, version, updated_by, "
+    "updated_at) VALUES (:s, :c, :t, :e, CAST(:f AS jsonb), :rag, "
+    "CASE WHEN CAST(:ram AS text) = 'set' THEN now() END, "
+    "CASE WHEN CAST(:ram AS text) = 'set' THEN CAST(:rab AS text) END, "
+    ":end, :cap, 1, :u, now()) "
     # a first save has no row to lock: a concurrent first save that committed meanwhile makes
     # this a version conflict (409), never a unique violation (500)
     "ON CONFLICT (site_id, cmid) DO NOTHING"
@@ -135,7 +139,14 @@ _VERSION = text(
 )
 _UPDATE = text(
     "UPDATE assess_activity_config SET enabled = :e, flags = CAST(:f AS jsonb), end_at = :end, "
-    "cap_minutes = :cap, version = version + 1, updated_by = :u, updated_at = now() "
+    "cap_minutes = :cap, rag_enabled = :rag, "
+    # the RAG attestation (REQ-077 amendment): recorded when RAG is turned ON, kept while it
+    # stays ON, cleared when it is turned OFF
+    "rag_attested_at = CASE CAST(:ram AS text) WHEN 'set' THEN now() WHEN 'clear' THEN NULL "
+    "ELSE rag_attested_at END, "
+    "rag_attested_by = CASE CAST(:ram AS text) WHEN 'set' THEN CAST(:rab AS text) "
+    "WHEN 'clear' THEN NULL ELSE rag_attested_by END, "
+    "version = version + 1, updated_by = :u, updated_at = now() "
     "WHERE site_id = :s AND cmid = :c AND version = :v"
 )
 _SETUP = text(
@@ -278,7 +289,9 @@ async def _save(
         "rubric_source": v.rubric_source_of(flags, kind),
         "show_solution": flags.get("show_solution") is True,
         "available_until": row.end_at if row is not None else None,
+        "rag_enabled": bool(row.rag_enabled) if row is not None else False,
     }
+    old_attested_at = row.rag_attested_at if row is not None else None
     new: dict[str, Any] = dict(old)
     errors: list[FieldError] = []
     opening_source: str | None = None
@@ -302,7 +315,14 @@ async def _save(
     if body.show_solution is not None:
         new["show_solution"] = body.show_solution
     if body.rag_enabled is not None:
-        errors += v.check_rag(body.rag_enabled)
+        new["rag_enabled"] = body.rag_enabled
+        readable = gate.facts.get("course_modules_readable")
+        errors += v.check_rag(
+            body.rag_enabled,
+            operator_flag=bool(settings.rag_enabled),
+            attested=body.rag_attested is True,
+            eligibility_readable=readable if isinstance(readable, bool) else None,
+        )
     if body.given("available_until"):
         end = body.available_until
         new["available_until"] = None
@@ -384,9 +404,19 @@ async def _save(
         if new["available_until"] is not None
         else None
     )
+    # the attestation: recorded when RAG turns ON, kept while it stays ON, cleared when OFF
+    if new["rag_enabled"] and not old["rag_enabled"]:
+        attestation = "set"
+    elif new["rag_enabled"]:
+        attestation = "keep"
+    else:
+        attestation = "clear"
     params = {
         "s": site,
         "c": cmid,
+        "rag": bool(new["rag_enabled"]),
+        "ram": attestation,
+        "rab": str(body.actor_userid),
         "e": bool(new["enabled"]),
         "f": json.dumps(flags, sort_keys=True),
         "end": end_at,
@@ -410,6 +440,7 @@ async def _save(
         "rubric_source",
         "show_solution",
         "available_until",
+        "rag_enabled",
     ):
         if old[name] != new[name] or (row is None and body.given(name)):
             await write_event(
@@ -427,6 +458,25 @@ async def _save(
                     "version": version,
                 },
             )
+    if attestation != "keep" and (old["rag_enabled"] or new["rag_enabled"]):
+        # the attestation audited old/new on its own (REQ-077 amendment): when, and by whom
+        now_row = (await conn.execute(_CONFIG, {"s": site, "c": cmid})).first()
+        await write_event(
+            conn,
+            AssessAuditEvent.TEACHER_CONFIG_CHANGED,
+            actor="api",
+            site_id=site,
+            reason_code="rag_attested",
+            data={
+                "field": "rag_attested",
+                "old": iso_time(old_attested_at),
+                "new": iso_time(now_row.rag_attested_at) if now_row else None,
+                "attested_by": now_row.rag_attested_by if now_row else None,
+                "cmid": cmid,
+                "actor": body.actor_userid,
+                "version": version,
+            },
+        )
     if public is not None:
         for fld, value in texts.items():
             await store_sealed_field(
@@ -484,7 +534,8 @@ async def _view(conn: Any, site: UUID, cmid: int, gate: TeacherGate) -> dict[str
         "cap_minutes": row.cap_minutes if row is not None else None,
         "rubric_source": v.rubric_source_of(flags, kind),
         "show_solution": flags.get("show_solution") is True,
-        "rag_enabled": False,
+        "rag_enabled": bool(row.rag_enabled) if row is not None else False,
+        "rag_attested_at": iso_time(row.rag_attested_at) if row is not None else None,
         "available_until": iso_time(end_at),
         "solution_state": state(sealed.get(SOLUTION, (False, None))[0]),
         "pasted_rubric_state": state(sealed.get(PASTED_RUBRIC, (False, None))[0]),

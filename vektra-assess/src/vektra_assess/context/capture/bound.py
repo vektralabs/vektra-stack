@@ -17,6 +17,7 @@ from vektra_shared.lms import (
     AssignmentSettings,
     AttemptReview,
     AttemptSummary,
+    CourseModuleVisibility,
     Enrolment,
     GradeItem,
     GradingDefinition,
@@ -139,3 +140,10 @@ class SiteReaders:
         return await self._p.submission_file(
             self._s, assignment_id, ref, owner_user_id, submission_id
         )
+
+    # --- course material (FEAT-028) -------------------------------------------------------
+
+    async def course_modules(
+        self, course_id: int
+    ) -> Reading[tuple[CourseModuleVisibility, ...]]:
+        return await self._p.course_modules(self._s, course_id)

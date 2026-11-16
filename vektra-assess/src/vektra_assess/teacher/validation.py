@@ -83,16 +83,44 @@ def check_not_null(names: Iterable[str]) -> list[FieldError]:
     return [FieldError(name, "null_not_allowed") for name in names]
 
 
-def check_rag(value: bool) -> list[FieldError]:
-    """ARCH-072: RAG ships locked OFF; ON is refused with the reason (the operator flag is off,
-    and refused at startup when set)."""
-    if value:
+def check_rag(
+    value: bool,
+    *,
+    operator_flag: bool = False,
+    attested: bool = False,
+    eligibility_readable: bool | None = None,
+) -> list[FieldError]:
+    """REQ-077 as amended 2026-11-16 (FEAT-028, ARCH-072 amendment): saving RAG ON needs
+
+    - the operator flag ON (``VEKTRA_ASSESS_RAG_ENABLED``): OFF locks the field, the one error is
+      ``rag_unavailable`` / ``operator_flag_off``;
+    - the teacher's attestation in the same request (``rag_attested: true``):
+      ``rag_attestation_required`` otherwise;
+    - the course's module eligibility READABLE in the worker's latest read of the activity facts
+      (``course_modules_readable``; None = not read or unreadable): ``rag_unavailable`` /
+      ``eligibility_unreadable`` otherwise, an LMS-fact refusal (a refresh is queued).
+
+    RAG OFF is always accepted."""
+    if not value:
+        return []
+    if not operator_flag:
         return [
             FieldError(
                 "rag_enabled", "rag_unavailable", extra={"reason": "operator_flag_off"}
             )
         ]
-    return []
+    errors: list[FieldError] = []
+    if not attested:
+        errors.append(FieldError("rag_enabled", "rag_attestation_required"))
+    if eligibility_readable is not True:
+        errors.append(
+            FieldError(
+                "rag_enabled",
+                "rag_unavailable",
+                extra={"reason": "eligibility_unreadable"},
+            )
+        )
+    return errors
 
 
 def default_rubric_source(activity_type: str) -> str:
@@ -468,6 +496,9 @@ def is_lms_fact_error(error: FieldError, opening_source: str | None) -> bool:
     was not checked."""
     if error.code in LMS_FACT_CODES:
         return True
+    if error.code == "rag_unavailable":
+        # the eligibility read is an LMS fact; the operator flag is not
+        return error.extra.get("reason") == "eligibility_unreadable"
     if error.code in ("opening_unknown", "not_after_opening"):
         return opening_source is not None and opening_source != "attested"
     return False

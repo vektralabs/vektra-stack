@@ -477,6 +477,8 @@ def _session_handlers(
         ParserClient.from_settings(settings),
         engine.connect,
         teacher_private=checked.keys["assess_teacher_config_private"],
+        # FEAT-028: the course-module eligibility reads exist only with the operator flag ON
+        rag_opt_out_tag=settings.rag_opt_out_tag if settings.rag_enabled else None,
     )
     preflight = make_preflight_handler(
         PreflightDeps(

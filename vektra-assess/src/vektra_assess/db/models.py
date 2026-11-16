@@ -121,6 +121,10 @@ class ActivityConfigOrm(Base):
         JSONB, server_default=text("'{}'::jsonb")
     )
     rag_enabled: Mapped[bool] = mapped_column(Boolean, server_default=text("false"))
+    # revision a0006 (FEAT-028): the REQ-077 attestation of RAG ON, when and by whom (the LMS
+    # user id, as text like ``attested_by``); RAG ON without it is refused by a CHECK
+    rag_attested_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+    rag_attested_by: Mapped[str | None] = mapped_column(TEXT)
     end_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
     attested_opening_at: Mapped[datetime | None] = mapped_column(
         TIMESTAMP(timezone=True)

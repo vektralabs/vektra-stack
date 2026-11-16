@@ -129,15 +129,28 @@ async def test_every_sealed_write_is_audited_old_new_without_content(pg) -> None
     assert len(await _audits(pg, site)) == len(rows)
 
 
-async def test_rag_on_is_unrepresentable(pg) -> None:  # type: ignore[no-untyped-def]
+async def test_rag_on_without_the_attestation_is_unrepresentable(pg) -> None:  # type: ignore[no-untyped-def]
+    """FEAT-028 (a0006): RAG ON needs ``rag_attested_at``, whatever writes the row."""
     site = await make_site(pg)
     await configure_activity(pg, site, 41)
-    with pytest.raises(IntegrityError, match="ck_assess_activity_config_rag_off"):
+    with pytest.raises(IntegrityError, match="ck_assess_activity_config_rag_attested"):
         await pg.run(
             "super",
             "UPDATE assess_activity_config SET rag_enabled = true WHERE site_id = :s",
             {"s": site},
         )
+    await pg.run(
+        "super",
+        "UPDATE assess_activity_config SET rag_enabled = true, rag_attested_at = now(), "
+        "rag_attested_by = '7' WHERE site_id = :s",
+        {"s": site},
+    )
+    rows = await pg.run(
+        "super",
+        "SELECT rag_enabled, rag_attested_by FROM assess_activity_config WHERE site_id = :s",
+        {"s": site},
+    )
+    assert tuple(rows[0]) == (True, "7")
 
 
 async def test_the_recipient_count_matches_the_refs(pg) -> None:  # type: ignore[no-untyped-def]

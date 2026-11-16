@@ -712,8 +712,10 @@ CREATE TABLE public.assess_activity_config (
     cap_minutes integer,
     version integer DEFAULT 0 NOT NULL,
     updated_by bigint,
+    rag_attested_at timestamp with time zone,
+    rag_attested_by text,
     CONSTRAINT ck_assess_activity_config_cap CHECK (((cap_minutes IS NULL) OR ((cap_minutes >= 5) AND (cap_minutes <= 120)))),
-    CONSTRAINT ck_assess_activity_config_rag_off CHECK ((rag_enabled = false)),
+    CONSTRAINT ck_assess_activity_config_rag_attested CHECK (((rag_enabled = false) OR (rag_attested_at IS NOT NULL))),
     CONSTRAINT ck_assess_activity_config_type CHECK ((activity_type = ANY (ARRAY['quiz'::text, 'assign'::text]))),
     CONSTRAINT ck_assess_activity_config_version CHECK ((version >= 0))
 );
@@ -2297,6 +2299,10 @@ GRANT SELECT(cap_minutes),INSERT(cap_minutes),UPDATE(cap_minutes) ON TABLE publi
 GRANT SELECT(version),INSERT(version),UPDATE(version) ON TABLE public.assess_activity_config TO vektra_assess_api;
 
 GRANT SELECT(updated_by),INSERT(updated_by),UPDATE(updated_by) ON TABLE public.assess_activity_config TO vektra_assess_api;
+
+GRANT SELECT(rag_attested_at),INSERT(rag_attested_at),UPDATE(rag_attested_at) ON TABLE public.assess_activity_config TO vektra_assess_api;
+
+GRANT SELECT(rag_attested_by),INSERT(rag_attested_by),UPDATE(rag_attested_by) ON TABLE public.assess_activity_config TO vektra_assess_api;
 
 GRANT SELECT ON TABLE public.assess_activity_config_sealed TO vektra_assess_worker;
 

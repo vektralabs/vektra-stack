@@ -97,6 +97,9 @@ _CONFIG_READ = (
     "cap_minutes",
     "version",
     "updated_by",
+    # revision a0006 (FEAT-028): the teacher's RAG attestation, when and by whom
+    "rag_attested_at",
+    "rag_attested_by",
 )
 _CONFIG_WRITE = _CONFIG_READ
 #: columns the API may UPDATE on an existing config row (never its identity columns)

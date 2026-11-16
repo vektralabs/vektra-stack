@@ -61,6 +61,9 @@ class ConfigPut(BaseModel):
     rubric_source: RubricSource | None = None
     show_solution: StrictBool | None = None
     rag_enabled: StrictBool | None = None
+    #: REQ-077 amendment 2026-11-16: the teacher ticked the RAG attestation. Required (true) on
+    #: every save that sets ``rag_enabled`` true; ignored otherwise (RAG OFF clears it)
+    rag_attested: StrictBool | None = None
     #: "Discussione disponibile fino al": null = no limit (until retention)
     available_until: datetime | None = None
 

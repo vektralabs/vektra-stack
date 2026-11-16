@@ -683,3 +683,106 @@ async def test_a_secret_without_the_sealing_key_is_refused_and_saves_nothing(
         assert r.status_code == 200, r.text
     finally:
         await ctx.__aexit__(None, None, None)
+
+
+# --- FEAT-028: RAG ON with the teacher's attestation (REQ-077 amendment 2026-11-16) ----------
+
+
+async def _rag_ready(pg, pair, readable: Any = True):  # type: ignore[no-untyped-def]
+    ctx = world(pg, default_settings(
+        VEKTRA_ASSESS_RECIPIENT_DOMAINS="uni.example", VEKTRA_ASSESS_RAG_ENABLED=True
+    ))  # fmt: skip
+    w = await ctx.__aenter__()
+    w.app.state.assess_keys[route.PUBLIC_KEY] = pair[0]
+    facts = {} if readable is None else {"course_modules_readable": readable}
+    await seed_gate(pg, w.site, 60, **facts)
+    return ctx, w
+
+
+async def test_rag_on_needs_the_attestation_then_is_saved_and_audited(pg, pair) -> None:  # type: ignore[no-untyped-def]
+    ctx, w = await _rag_ready(pg, pair)
+    try:
+        before = await counts(pg, w.site)
+        r = await w.client.put(
+            url(60), json=body(rag_enabled=True), headers=auth("teacher")
+        )
+        assert r.status_code == 400, r.text
+        assert err(r)["details"]["fields"] == [
+            {"field": "rag_enabled", "code": "rag_attestation_required"}
+        ]
+        r = await w.client.put(
+            url(60),
+            json=body(rag_enabled=True, rag_attested=False),
+            headers=auth("teacher"),
+        )
+        assert r.status_code == 400, r.text
+        assert await counts(pg, w.site) == before
+        r = await w.client.put(
+            url(60),
+            json=body(rag_enabled=True, rag_attested=True),
+            headers=auth("teacher"),
+        )
+        assert r.status_code == 200, r.text
+        view = r.json()
+        assert view["rag_enabled"] is True and view["rag_attested_at"] is not None
+        rows = await pg.run(
+            "super",
+            "SELECT rag_enabled, rag_attested_at IS NOT NULL, rag_attested_by "
+            "FROM assess_activity_config WHERE site_id = :s AND cmid = 60",
+            {"s": w.site},
+        )
+        assert tuple(rows[0]) == (True, True, str(EDITOR))
+        got = {code: data for code, data in await audits(pg, w.site)}
+        assert got["rag_enabled"]["old"] is False and got["rag_enabled"]["new"] is True
+        assert got["rag_attested"]["old"] is None
+        assert got["rag_attested"]["new"] == view["rag_attested_at"]
+        assert got["rag_attested"]["attested_by"] == str(EDITOR)
+        # staying ON keeps the attestation (a save of another field re-checks nothing of it)
+        r = await w.client.put(
+            url(60),
+            json=body(expected_version=1, cap_minutes=30),
+            headers=auth("teacher"),
+        )
+        assert r.status_code == 200, r.text
+        assert r.json()["rag_attested_at"] == view["rag_attested_at"]
+        # turning it OFF clears the attestation, audited
+        r = await w.client.put(
+            url(60),
+            json=body(expected_version=2, rag_enabled=False),
+            headers=auth("teacher"),
+        )
+        assert r.status_code == 200, r.text
+        assert r.json()["rag_enabled"] is False
+        assert r.json()["rag_attested_at"] is None
+        last = [d for c, d in await audits(pg, w.site) if c == "rag_attested"][-1]
+        assert last["old"] == view["rag_attested_at"] and last["new"] is None
+    finally:
+        await ctx.__aexit__(None, None, None)
+
+
+@pytest.mark.parametrize("readable", [False, None])
+async def test_rag_on_with_an_unreadable_eligibility_is_refused_and_refreshed(
+    pg, pair, readable: Any
+) -> None:  # type: ignore[no-untyped-def]
+    ctx, w = await _rag_ready(pg, pair, readable)
+    try:
+        before = await counts(pg, w.site)
+        r = await w.client.put(
+            url(60),
+            json=body(rag_enabled=True, rag_attested=True),
+            headers=auth("teacher"),
+        )
+        assert r.status_code == 400, r.text
+        e = err(r)
+        assert e["details"]["fields"] == [
+            {
+                "field": "rag_enabled",
+                "code": "rag_unavailable",
+                "reason": "eligibility_unreadable",
+            }
+        ]
+        # an LMS fact: the refresh is queued and the retry hinted
+        assert e["details"]["retry_after_s"] > 0
+        assert await counts(pg, w.site) == before
+    finally:
+        await ctx.__aexit__(None, None, None)

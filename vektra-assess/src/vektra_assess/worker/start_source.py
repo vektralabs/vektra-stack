@@ -154,6 +154,7 @@ class LmsStartSource:
         acquire: Callable[[], AbstractAsyncContextManager[AsyncConnection]],
         *,
         teacher_private: AssessKeyring | None = None,
+        rag_opt_out_tag: str | None = None,
         resolved_max: int = 256,
         resolved_ttl_s: float = 300.0,
         clock: Callable[[], float] = time.monotonic,
@@ -162,6 +163,9 @@ class LmsStartSource:
         self._parser = parser
         self._acquire = acquire
         self._teacher_private = teacher_private
+        # FEAT-028: set (the opt-out tag) only when the operator flag is ON; None reads no
+        # course module at all, so RAG OFF makes no eligibility call
+        self._rag_tag = rag_opt_out_tag
         # the course and instance resolved by ``gate_facts``, reused by ``capture`` (same Start).
         # Bounded: a render check, or a Start a gate refused, never reaches ``capture``.
         self._resolved = _BoundedCache(resolved_max, resolved_ttl_s, clock)
@@ -314,6 +318,11 @@ class LmsStartSource:
             out["editors"] = _ids(editors.value)
         if isinstance(graders, Readable):
             out["graders"] = _ids(graders.value)
+        if self._rag_tag is not None:
+            # REQ-077 amendment: RAG ON is saved only while the course's module eligibility is
+            # READABLE (a flag, never the modules: those are read live on every RAG turn)
+            modules = await lms.course_modules(ref.course_id)
+            out["course_modules_readable"] = isinstance(modules, Readable)
         return out
 
     async def close_facts(

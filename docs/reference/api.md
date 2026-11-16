@@ -367,8 +367,9 @@ what can be empty: the write-only fields below, `cap_minutes` and `available_unt
 `enabled`, `show_solution`, `rag_enabled` or `rubric_source` is the field error `null_not_allowed`
 (never a silent `false`).
 `enabled` (bool), `cap_minutes` (5-120), `rubric_source` (`none`/`pasted`, plus `lms` for an
-assignment), `show_solution` (bool, default off), `rag_enabled` (only `false` is accepted: `true`
-is the field error `rag_unavailable` with `reason: operator_flag_off`), `available_until`
+assignment), `show_solution` (bool, default off), `rag_enabled` (bool, default off: course-material
+retrieval in the discussion, FEAT-028), `rag_attested` (bool: the teacher ticked the RAG
+attestation of REQ-077; read only together with `rag_enabled: true`), `available_until`
 (ISO 8601 with a time zone, or `null` for no limit; strictly after the opening floor below:
 `not_after_opening` with `opening_at`, or `opening_unknown` when no opening can exist).
 Write-only fields (OQ-034): `solution` and `pasted_rubric` (text, at most 20,000 code points after
@@ -382,17 +383,30 @@ Enable (`enabled: true`) is refused, as field errors, for: a quiz without a clos
 assignment without a cut-off (BR-007), team submission, marking-guide grading (EX-023), the
 Moodle-rubric source without a rubric, no recipients, no cap, privacy settings unset (REQ-089:
 always, until plan assess-privacy-retention lands) and a setup check that is not green.
+RAG ON (`rag_enabled: true`) is refused, as field errors on `rag_enabled`, with:
+`rag_unavailable` + `reason: operator_flag_off` when `VEKTRA_ASSESS_RAG_ENABLED` is off (the only
+error then: the field is locked); `rag_attestation_required` when the same body does not carry
+`rag_attested: true` (every save that sends `rag_enabled: true` must carry it);
+`rag_unavailable` + `reason: eligibility_unreadable` when the worker's latest read of the
+activity's facts (the `teacher_gate` job, at most `VEKTRA_ASSESS_TEACHER_GATE_MAX_AGE_S` old)
+could not read the course's module eligibility. The last one is an LMS-fact refusal: a refresh
+is queued and, when it is the only kind of error, `retry_after_s` is set. The attestation is
+recorded (`rag_attested_at`, and the actor) when RAG turns ON, kept while it stays ON and cleared
+when RAG turns OFF; both `rag_enabled` and the attestation are audited old/new
+(`assess_teacher_config_changed`, `reason_code` `rag_enabled` / `rag_attested`). A change applies
+to sessions not yet started: a session keeps the RAG setting it started with.
 
 `details.fields` items: `{"field", "code"}` plus the rule's bounds: `range` (`"5-120"`,
 `"0-20000"`, `"1-20000"`, `"1-3"`), `allowed_domains`, `index` (the recipient's position, never
 the address), `reason`, `opening_at`. Codes: `out_of_range`, `too_long`, `empty`, `required`,
-`invalid_address`, `domain_not_allowed`, `too_many`, `null_not_allowed`, `rag_unavailable`, `not_for_activity_type`,
+`invalid_address`, `domain_not_allowed`, `too_many`, `null_not_allowed`, `rag_unavailable`, `rag_attestation_required`, `not_for_activity_type`,
 `timezone_required`, `out_of_range` (also on `available_until`), `opening_unknown`, `not_after_opening`, `lms_rubric_missing`, and on
 `enabled`: `quiz_without_close_date`, `assignment_without_cutoff`, `team_submission`,
 `marking_guide`, `lms_facts_unreadable`, `privacy_unset`, `setup_check_red`.
 
 View (GET and PUT): `cmid`, `activity_type`, `version`, `configured`, `enabled`, `cap_minutes`,
-`rubric_source`, `show_solution`, `rag_enabled` (always `false`), `available_until`,
+`rubric_source`, `show_solution`, `rag_enabled`, `rag_attested_at` (ISO 8601, or `null` when RAG
+is off), `available_until`,
 `solution_state` / `pasted_rubric_state` / `transcript_recipients_state` (`impostata` or
 `non impostata`), `transcript_recipients_count`, `opening` (below), `warnings`
 (`available_until_not_after_opening`, `review_options_hide_content`), `active_sessions`

@@ -4,9 +4,15 @@ Not a QueryPipeline and not in the ProviderRegistry (ARCH-074): the composition 
 inject the LLM provider, the safeguard, the trace writer and the audit sink, so this module imports
 no other component. Its only input type is ``ContextBundle`` (ARCH-069).
 
-RAG is OFF in v1 and there is no retrieval branch here at all: a bundle frozen with
-``course_material`` set is refused with ``RagNotAvailableError`` (NFR-015), never answered without
-the material the session was promised.
+Course material (FEAT-028, ARCH-072 amendment 2026-11-16): a bundle frozen with
+``course_material`` (operator flag ON, the activity's RAG ON and attested, at Start) asks, on every
+turn, for the course's LIVE module eligibility (``EligibilityReader``: the worker reads the LMS)
+and retrieves only from eligible modules (``llm.retrieval``: the eligible cmids are the search
+filter, before ranking). An unreadable eligibility, no eligible module or a failed search means no
+material for that turn, audited; the turn goes on. A runner that cannot honour a course-material
+bundle at all (flag off, nothing wired) refuses it with ``RagNotAvailableError`` (NFR-015), never
+answers it without the material the session was promised. A bundle without course material makes
+no eligibility read and no retrieval call.
 """
 
 from __future__ import annotations
@@ -42,10 +48,13 @@ from vektra_assess.llm.postcheck.lexicon import LEXICON_VERSION
 from vektra_assess.llm.postcheck.sentences import split_with_breaks
 from vektra_assess.llm.probe import Probe, make_llm_probe
 from vektra_assess.llm.prompts import PromptRenderer
+from vektra_assess.llm.retrieval import CourseMaterialRetriever, Retrieval
 from vektra_assess.llm.shipped import Shipped
 from vektra_assess.llm.types import (
     AuditSink,
     CallOutcome,
+    EligibilityRead,
+    EligibilityReader,
     PartBRejectedError,
     PriorTurn,
     ProviderCallRecord,
@@ -61,6 +70,7 @@ from vektra_assess.llm.types import (
 )
 from vektra_shared.protocols import LLMProvider, SafeguardHook
 from vektra_shared.types import (
+    ChunkRef,
     CompletionChunk,
     Message,
     QueryTrace,
@@ -85,6 +95,8 @@ class DiscussionTurnRunner:
         audit: AuditSink,
         renderer: PromptRenderer | None = None,
         metrics: RunnerMetrics | None = None,
+        retriever: CourseMaterialRetriever | None = None,
+        eligibility: EligibilityReader | None = None,
     ) -> None:
         if not settings.llm_model:
             raise ValueError("VEKTRA_ASSESS_LLM_MODEL is not set")
@@ -95,6 +107,19 @@ class DiscussionTurnRunner:
         self._audit = audit
         self._renderer = renderer or PromptRenderer(LEXICON_VERSION)
         self._metrics = metrics
+        # FEAT-028: both only with the operator flag ON (the composition root decides)
+        self._retriever = retriever
+        self._eligibility = eligibility
+
+    @property
+    def rag_ready(self) -> bool:
+        """Whether a turn of a course-material session can be honoured: the operator flag ON
+        and both the retriever and the eligibility reader wired."""
+        return bool(
+            self._settings.rag_enabled
+            and self._retriever is not None
+            and self._eligibility is not None
+        )
 
     @property
     def model(self) -> str:
@@ -145,7 +170,11 @@ class DiscussionTurnRunner:
         return TurnUsage(prompt_tokens, completion_tokens, estimated=True, cost=cost)
 
     async def _write_trace(
-        self, response_id: UUID, steps: _Steps, t_all: float
+        self,
+        response_id: UUID,
+        steps: _Steps,
+        t_all: float,
+        material: Retrieval | None = None,
     ) -> QueryTrace | None:
         """Build the content-free trace and hand it to the writer; a writer failure never fails
         the turn (the student already has the reply), it is audited instead."""
@@ -155,7 +184,11 @@ class DiscussionTurnRunner:
             response_id=response_id,
             steps=steps.items,
             total_duration_ms=int((time.monotonic() - t_all) * 1000),
-            chunks_retrieved=[],  # RAG is OFF in v1
+            # the chunk ids of THIS turn's course material (content-free; NFR-015 evidence)
+            chunks_retrieved=[
+                ChunkRef(chunk_id=c.chunk_id, score=c.score)
+                for c in (material.chunks if material is not None else ())
+            ],
             llm_model=self.model,
             prompt_version=self.prompt_version,
             created_at=_now(),
@@ -178,13 +211,18 @@ class DiscussionTurnRunner:
         return trace
 
     async def _finish_failed(
-        self, gate: SentenceGate, turn: StudentTurn, steps: _Steps, t_all: float
+        self,
+        gate: SentenceGate,
+        turn: StudentTurn,
+        steps: _Steps,
+        t_all: float,
+        material: Retrieval | None = None,
     ) -> None:
         """A turn that ends in an outage after the post-check already ran: its buffered audits
         and its content-free trace are still written before the outage propagates."""
         for event, data in gate.audit:
             await self._audit(event, data)
-        await self._write_trace(turn.turn_id, steps, t_all)
+        await self._write_trace(turn.turn_id, steps, t_all, material)
 
     async def _student_history(
         self, turn: StudentTurn, sh: Shipped
@@ -242,11 +280,71 @@ class DiscussionTurnRunner:
         for rec in records:
             self._metrics.call_outcome(rec.outcome)
 
-    @staticmethod
-    def _admit(bundle: ContextBundle) -> None:
-        """Fail closed on anything v1 cannot honour before a byte is rendered."""
-        if bundle.course_material:
-            raise RagNotAvailableError("course material (RAG) is not available in v1")
+    def _admit(self, bundle: ContextBundle, *, part_b: bool = False) -> None:
+        """Fail closed, before a byte is rendered, on a course-material bundle this runner cannot
+        honour: the operator flag off, or (for a turn) no retriever or eligibility reader. Part B
+        retrieves nothing (there is no student question yet): it needs the flag only."""
+        if not bundle.course_material:
+            return
+        if not self._settings.rag_enabled:
+            raise RagNotAvailableError("course material: the operator flag is off")
+        if not part_b and not self.rag_ready:
+            raise RagNotAvailableError("course material: no retriever is wired")
+
+    async def _course_material(
+        self, bundle: ContextBundle, turn: StudentTurn, query: str, steps: _Steps
+    ) -> Retrieval | None:
+        """This turn's course material (FEAT-028): the LIVE eligibility read, then the search
+        among the eligible modules only. None for a bundle without course material (no read, no
+        call). Every way of ending without material is audited with a closed code; none of them
+        fails the turn."""
+        if not bundle.course_material:
+            return None
+        assert self._retriever is not None and self._eligibility is not None  # _admit
+        t = time.monotonic()
+        read: EligibilityRead
+        if turn.session_id is None or turn.site_id is None:
+            read = EligibilityRead(False, reason="no_session")
+        else:
+            try:
+                read = await self._eligibility(turn.session_id, turn.site_id)
+            except Exception as exc:
+                log.warning(
+                    "assess_material_read_failed", error_type=type(exc).__name__
+                )
+                read = EligibilityRead(False, reason="error")
+        if not read.readable or not read.namespace:
+            reason = read.reason or "unreadable"
+            # NO retrieval call for this turn (NFR-015 amendment: fail closed)
+            await self._audit(
+                "assess_material_unavailable",
+                {"turn_index": turn.turn_index, "reason_code": reason},
+            )
+            steps.add("retrieval", t, searched=False, reason=reason, eligible=0)
+            return Retrieval((), searched=False, reason=reason)
+        try:
+            got = await self._retriever.retrieve(read.namespace, query, read.modules)
+        except (
+            Exception
+        ) as exc:  # the store or the embedder failed: no material, never a guess
+            log.warning("assess_material_search_failed", error_type=type(exc).__name__)
+            got = Retrieval((), searched=True, reason="retrieval_error")
+        if got.reason is not None:
+            await self._audit(
+                "assess_material_unavailable",
+                {"turn_index": turn.turn_index, "reason_code": got.reason},
+            )
+        steps.add(
+            "retrieval",
+            t,
+            searched=got.searched,
+            reason=got.reason,
+            eligible=len(read.modules),
+            # ids only (content-free): what NFR-015 is verified against
+            chunk_ids=[c.chunk_id for c in got.chunks],
+            cmids=list(got.cmids),
+        )
+        return got
 
     # --- turns --------------------------------------------------------------------------------
 
@@ -406,6 +504,7 @@ class DiscussionTurnRunner:
         prompt_tokens = completion_tokens = 0
         completion = ""
         interrupted = False
+        material: Retrieval | None = None  # this turn's course material (FEAT-028)
         steps = _Steps()
         t_all = time.monotonic()
 
@@ -437,8 +536,16 @@ class DiscussionTurnRunner:
             )
             t = time.monotonic()
             history, history_changed = await self._student_history(turn, sh)
+            material = await self._course_material(bundle, turn, student_text, steps)
+            if material is not None:
+                # [Materiale: <titolo>] resolves only for a module retrieved in THIS turn
+                gate.material_titles = material.titles
             head, past, tail = self._renderer.turn_parts(
-                bundle, history, student_text, language
+                bundle,
+                history,
+                student_text,
+                language,
+                material=material.chunks if material is not None else (),
             )
             prompt = fit(
                 head,
@@ -514,7 +621,9 @@ class DiscussionTurnRunner:
                         except Exception as exc:
                             rec = _failed_record(started, first_at, exc)
                             records.append(rec)
-                            await self._finish_failed(gate, turn, steps, t_all)
+                            await self._finish_failed(
+                                gate, turn, steps, t_all, material
+                            )
                             raise self._outage(rec) from None
                         if chunk is _STOPPED:
                             outcome = "cancelled"
@@ -580,7 +689,7 @@ class DiscussionTurnRunner:
         )
         for event, data in gate.audit:
             await self._audit(event, data)
-        trace = await self._write_trace(turn.turn_id, steps, t_all)
+        trace = await self._write_trace(turn.turn_id, steps, t_all, material)
         self._emit_turn(gate, records)
         yield TurnResult(
             text=delivered,
@@ -682,7 +791,7 @@ class DiscussionTurnRunner:
         content-free code, and the caller (worker pre-flight) rolls the start back. Nothing is
         ever truncated into an accepted Part B.
         """
-        self._admit(bundle)
+        self._admit(bundle, part_b=True)
         language = language if language in ("it", "en") else "it"
         loop = asyncio.get_running_loop()
         t0 = loop.time()

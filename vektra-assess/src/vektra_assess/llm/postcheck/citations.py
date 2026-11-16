@@ -2,9 +2,13 @@
 
 A citation tag names one of the bundle's canonical labels: ``[Domanda n]``, ``[Criterio n]``,
 ``[Valutazione complessiva]``, ``[Consegna]`` or ``[Consegna p.X]``. A tag that does not resolve in
-the label index is removed and the turn is marked. ``[Materiale: ...]`` is always removed in v1: RAG
-is OFF, so there is no material it could cite. Square brackets that are not citation tags (an
-interval ``[0.5, 1.5]``, a matrix) are text and left alone.
+the label index is removed and the turn is marked. ``[Materiale: <titolo>]`` (REQ-096 (b),
+FEAT-028) resolves only to the title of a course module whose material was retrieved in THIS
+turn (``materials``, from the live eligibility read; whitespace and case are not significant):
+any other one, a bare ``[Materiale]`` included, is removed and marks the turn, like an unresolved
+label. Without course material ``materials`` is empty, so every such tag is removed. Square
+brackets that are not citation tags (an interval ``[0.5, 1.5]``, a matrix) are text and left
+alone.
 """
 
 from __future__ import annotations
@@ -18,6 +22,12 @@ _TAG = re.compile(
     re.IGNORECASE,
 )
 _PAGE = re.compile(r"^Consegna\s+p\.\s*(\d+)$", re.IGNORECASE)
+_MATERIAL = re.compile(r"^Materiale\s*:\s*(?P<title>.+)$", re.IGNORECASE)
+MATERIAL_PREFIX = "Materiale: "
+
+
+def _norm(title: str) -> str:
+    return " ".join(title.split()).casefold()
 
 
 @dataclass(frozen=True)
@@ -27,19 +37,30 @@ class CitationCheck:
     resolved: tuple[str, ...]  # canonical labels cited, in order
 
 
-def check(sentence: str, labels: Collection[str]) -> CitationCheck:
+def check(
+    sentence: str, labels: Collection[str], materials: Collection[str] = ()
+) -> CitationCheck:
     by_lower = {label.lower(): label for label in labels}
+    by_title = {_norm(t): t for t in materials}
     removed = 0
     resolved: list[str] = []
 
     def take(m: re.Match[str]) -> str:
         nonlocal removed
         body = " ".join(m.group("body").split())
+        if body.lower().startswith("materiale"):
+            found = _MATERIAL.match(body)
+            title = by_title.get(_norm(found.group("title"))) if found else None
+            if title is None:
+                removed += 1
+                return ""
+            resolved.append(MATERIAL_PREFIX + title)
+            return m.group(0)
         label = by_lower.get(body.lower())
         page = _PAGE.match(body)
         if label is None and page and int(page.group(1)) > 0:
             label = by_lower.get("consegna")
-        if label is None or body.lower().startswith("materiale"):
+        if label is None:
             removed += 1
             return ""
         resolved.append(label)

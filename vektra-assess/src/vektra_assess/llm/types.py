@@ -14,6 +14,7 @@ from datetime import datetime
 from typing import Any, Literal, Protocol, get_args
 from uuid import UUID, uuid4
 
+from vektra_assess.context.materials import EligibleModule
 from vektra_shared.types import QueryTrace
 
 Role = Literal["student", "assistant"]
@@ -22,7 +23,28 @@ ContestStatus = Literal["proposed", "confirmed", "corrected"]
 
 
 class RagNotAvailableError(RuntimeError):
-    """A discussion asked for retrieval: RAG is OFF in v1 and the runner fails closed (NFR-015)."""
+    """A bundle frozen with course material reached a runner that cannot honour it (the operator
+    flag is off, or no retriever or eligibility reader is wired): it fails closed (NFR-015)
+    instead of answering without the material the session was promised."""
+
+
+@dataclass(frozen=True)
+class EligibilityRead:
+    """The live course-module eligibility of one RAG turn (FEAT-028), as the worker read it.
+
+    ``readable`` False carries a closed ``reason`` code (the worker's, or the API's own
+    ``timeout`` / ``enqueue_failed``); the turn then makes no retrieval call at all."""
+
+    readable: bool
+    namespace: str | None = None
+    modules: tuple[EligibleModule, ...] = ()
+    reason: str | None = None
+
+
+class EligibilityReader(Protocol):
+    """Asks the worker for one turn's eligibility and waits a bounded time (the API adapter)."""
+
+    async def __call__(self, session_id: UUID, site_id: UUID) -> EligibilityRead: ...
 
 
 #: why a provider call ended in an outage: a CLOSED set of codes, safe to log and to audit. Derived
@@ -182,6 +204,10 @@ class StudentTurn:
     ui_language: str = "it"
     #: the turn's id, also the QueryTrace ``response_id``; plan 8 passes the persisted one
     turn_id: UUID = field(default_factory=uuid4)
+    #: the session and its site: the course-material eligibility read is asked for them
+    #: (FEAT-028); None outside a live session (a test, a probe): no material can be read
+    session_id: UUID | None = None
+    site_id: UUID | None = None
 
 
 @dataclass(frozen=True)

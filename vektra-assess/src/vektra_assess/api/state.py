@@ -187,7 +187,8 @@ _CLOSED_AT = text(
     "AND student_userid = :u AND state = 'CLOSED'"
 )
 _PRE = text(
-    "SELECT c.cap_minutes, c.rag_enabled, c.end_at, coalesce(x.extra_seconds, 0) AS extra_s "
+    "SELECT c.cap_minutes, c.rag_enabled, (c.rag_attested_at IS NOT NULL) AS rag_attested, "
+    "c.end_at, coalesce(x.extra_seconds, 0) AS extra_s "
     "FROM assess_activity_config c LEFT JOIN assess_extra_time x ON x.site_id = c.site_id "
     "AND x.cmid = c.cmid AND x.student_userid = :u WHERE c.site_id = :s AND c.cmid = :c"
 )
@@ -294,7 +295,11 @@ async def enrich(
                     int(pre.cap_minutes or 0), int(pre.extra_s)
                 )
                 // 60,
-                "course_material_used": bool(pre.rag_enabled),
+                # what a Start would freeze (FEAT-028): the operator flag and the attested
+                # activity setting, the same rule as the pre-flight
+                "course_material_used": bool(
+                    settings.rag_enabled and pre.rag_enabled and pre.rag_attested
+                ),
                 "limits": {
                     "max_message_chars": settings.max_message_chars,
                     "messages_per_min": settings.messages_per_min,

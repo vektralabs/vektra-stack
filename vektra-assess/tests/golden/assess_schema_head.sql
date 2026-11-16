@@ -905,7 +905,7 @@ CREATE TABLE public.assess_jobs (
     done_at timestamp with time zone,
     last_error_code text,
     CONSTRAINT ck_assess_jobs_args_small CHECK ((pg_column_size(args) < 1024)),
-    CONSTRAINT ck_assess_jobs_kind CHECK ((kind = ANY (ARRAY['setup_check'::text, 'gate_refresh'::text, 'render_check'::text, 'transcript_generate'::text, 'transcript_deliver'::text, 'enrolment_recheck'::text, 'purge'::text, 'erasure'::text, 'preflight'::text, 'reconcile_reply'::text, 'teacher_notify'::text, 'operator_notify'::text, 'teacher_gate'::text, 'smtp_test_send'::text]))),
+    CONSTRAINT ck_assess_jobs_kind CHECK ((kind = ANY (ARRAY['setup_check'::text, 'gate_refresh'::text, 'render_check'::text, 'transcript_generate'::text, 'transcript_deliver'::text, 'enrolment_recheck'::text, 'purge'::text, 'erasure'::text, 'preflight'::text, 'reconcile_reply'::text, 'teacher_notify'::text, 'operator_notify'::text, 'teacher_gate'::text, 'smtp_test_send'::text, 'material_eligibility'::text]))),
     CONSTRAINT ck_assess_jobs_state CHECK ((state = ANY (ARRAY['ready'::text, 'leased'::text, 'done'::text, 'failed'::text, 'dead'::text])))
 )
 WITH (autovacuum_vacuum_cost_delay='0', fillfactor='70', autovacuum_vacuum_scale_factor='0.01', autovacuum_vacuum_threshold='200', autovacuum_analyze_scale_factor='0.02');
@@ -922,6 +922,21 @@ CREATE SEQUENCE public.assess_jobs_id_seq
 ALTER SEQUENCE public.assess_jobs_id_seq OWNER TO <owner>;
 
 ALTER SEQUENCE public.assess_jobs_id_seq OWNED BY public.assess_jobs.id;
+
+CREATE TABLE public.assess_material_reads (
+    id uuid NOT NULL,
+    session_id uuid NOT NULL,
+    site_id uuid NOT NULL,
+    readable boolean NOT NULL,
+    reason text,
+    namespace text,
+    modules jsonb,
+    read_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT ck_assess_material_reads_reason CHECK (((reason IS NULL) OR (reason ~ '^[a-z_]{1,64}$'::text))),
+    CONSTRAINT ck_assess_material_reads_shape CHECK (((readable AND (namespace IS NOT NULL) AND (modules IS NOT NULL) AND (reason IS NULL)) OR ((NOT readable) AND (namespace IS NULL) AND (modules IS NULL) AND (reason IS NOT NULL))))
+);
+
+ALTER TABLE public.assess_material_reads OWNER TO <owner>;
 
 CREATE TABLE public.assess_model_activations (
     id bigint NOT NULL,
@@ -1647,6 +1662,9 @@ ALTER TABLE ONLY public.assess_heartbeat
 ALTER TABLE ONLY public.assess_jobs
     ADD CONSTRAINT assess_jobs_pkey PRIMARY KEY (id);
 
+ALTER TABLE ONLY public.assess_material_reads
+    ADD CONSTRAINT assess_material_reads_pkey PRIMARY KEY (id);
+
 ALTER TABLE ONLY public.assess_model_activations
     ADD CONSTRAINT assess_model_activations_pkey PRIMARY KEY (id);
 
@@ -1815,6 +1833,10 @@ CREATE INDEX ix_assess_jobs_kind_claim ON public.assess_jobs USING btree (kind, 
 
 CREATE INDEX ix_assess_jobs_root ON public.assess_jobs USING btree (((args ->> 'root_job_id'::text))) WHERE ((args ->> 'root_job_id'::text) IS NOT NULL);
 
+CREATE INDEX ix_assess_material_reads_read_at ON public.assess_material_reads USING btree (read_at);
+
+CREATE INDEX ix_assess_material_reads_session ON public.assess_material_reads USING btree (session_id);
+
 CREATE INDEX ix_assess_model_activations_triple ON public.assess_model_activations USING btree (model, prompt_version) WHERE hard_pass;
 
 CREATE INDEX ix_assess_outage_incidents_session ON public.assess_outage_incidents USING btree (session_id);
@@ -1935,6 +1957,12 @@ ALTER TABLE ONLY public.assess_extra_time
 
 ALTER TABLE ONLY public.assess_gate_inputs
     ADD CONSTRAINT assess_gate_inputs_site_id_fkey FOREIGN KEY (site_id) REFERENCES public.assess_sites(id);
+
+ALTER TABLE ONLY public.assess_material_reads
+    ADD CONSTRAINT assess_material_reads_session_id_fkey FOREIGN KEY (session_id) REFERENCES public.assess_sessions(id) ON DELETE CASCADE;
+
+ALTER TABLE ONLY public.assess_material_reads
+    ADD CONSTRAINT assess_material_reads_site_id_fkey FOREIGN KEY (site_id) REFERENCES public.assess_sites(id) ON DELETE CASCADE;
 
 ALTER TABLE ONLY public.assess_outage_incidents
     ADD CONSTRAINT assess_outage_incidents_session_id_fkey FOREIGN KEY (session_id) REFERENCES public.assess_sessions(id) ON DELETE CASCADE;
@@ -2073,6 +2101,8 @@ CREATE POLICY assess_api_site_bound ON public.assess_extra_time TO vektra_assess
 
 CREATE POLICY assess_api_site_bound ON public.assess_gate_inputs TO vektra_assess_api USING ((site_id = (NULLIF(current_setting('app.assess_site_id'::text, true), ''::text))::uuid)) WITH CHECK ((site_id = (NULLIF(current_setting('app.assess_site_id'::text, true), ''::text))::uuid));
 
+CREATE POLICY assess_api_site_bound ON public.assess_material_reads TO vektra_assess_api USING ((site_id = (NULLIF(current_setting('app.assess_site_id'::text, true), ''::text))::uuid)) WITH CHECK ((site_id = (NULLIF(current_setting('app.assess_site_id'::text, true), ''::text))::uuid));
+
 CREATE POLICY assess_api_site_bound ON public.assess_privacy_config TO vektra_assess_api USING ((site_id = (NULLIF(current_setting('app.assess_site_id'::text, true), ''::text))::uuid)) WITH CHECK ((site_id = (NULLIF(current_setting('app.assess_site_id'::text, true), ''::text))::uuid));
 
 CREATE POLICY assess_api_site_bound ON public.assess_purge_records TO vektra_assess_api USING ((site_id = (NULLIF(current_setting('app.assess_site_id'::text, true), ''::text))::uuid)) WITH CHECK ((site_id = (NULLIF(current_setting('app.assess_site_id'::text, true), ''::text))::uuid));
@@ -2108,6 +2138,8 @@ ALTER TABLE public.assess_erasure_records ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.assess_extra_time ENABLE ROW LEVEL SECURITY;
 
 ALTER TABLE public.assess_gate_inputs ENABLE ROW LEVEL SECURITY;
+
+ALTER TABLE public.assess_material_reads ENABLE ROW LEVEL SECURITY;
 
 ALTER TABLE public.assess_privacy_config ENABLE ROW LEVEL SECURITY;
 
@@ -2148,6 +2180,8 @@ CREATE POLICY assess_unbound_roles ON public.assess_erasure_records TO vektra_as
 CREATE POLICY assess_unbound_roles ON public.assess_extra_time TO vektra_assess_worker, vektra_assess_definer USING (true) WITH CHECK (true);
 
 CREATE POLICY assess_unbound_roles ON public.assess_gate_inputs TO vektra_assess_worker, vektra_assess_definer USING (true) WITH CHECK (true);
+
+CREATE POLICY assess_unbound_roles ON public.assess_material_reads TO vektra_assess_worker, vektra_assess_definer USING (true) WITH CHECK (true);
 
 CREATE POLICY assess_unbound_roles ON public.assess_privacy_config TO vektra_assess_worker, vektra_assess_definer USING (true) WITH CHECK (true);
 
@@ -2400,6 +2434,9 @@ GRANT SELECT,INSERT ON TABLE public.assess_jobs TO vektra_assess_definer;
 GRANT USAGE ON SEQUENCE public.assess_jobs_id_seq TO vektra_assess_api;
 GRANT USAGE ON SEQUENCE public.assess_jobs_id_seq TO vektra_assess_worker;
 GRANT USAGE ON SEQUENCE public.assess_jobs_id_seq TO vektra_assess_definer;
+
+GRANT SELECT,DELETE ON TABLE public.assess_material_reads TO vektra_assess_api;
+GRANT SELECT,INSERT,DELETE ON TABLE public.assess_material_reads TO vektra_assess_worker;
 
 GRANT SELECT,INSERT ON TABLE public.assess_model_activations TO vektra_assess_api;
 GRANT SELECT ON TABLE public.assess_model_activations TO vektra_assess_worker;

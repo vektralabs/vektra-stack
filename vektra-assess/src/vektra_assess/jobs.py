@@ -68,6 +68,8 @@ class JobKind(enum.StrEnum):
     TEACHER_GATE = "teacher_gate"
     # the operator's SMTP test send (revision 0042, plan assess-privacy-retention 12b)
     SMTP_TEST_SEND = "smtp_test_send"
+    # the live course-module eligibility read of one RAG turn (revision a0007, FEAT-028)
+    MATERIAL_ELIGIBILITY = "material_eligibility"
 
 
 def teacher_gate_dedupe_key(

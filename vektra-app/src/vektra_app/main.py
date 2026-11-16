@@ -569,7 +569,7 @@ async def _run_startup(app: FastAPI) -> None:
             "assess_check",
             lambda: step_12_assess_check(app, settings.database_url, registry),
         ),
-        ("assess_llm_check", lambda: step_13_assess_llm_check(app)),
+        ("assess_llm_check", lambda: step_13_assess_llm_check(app, registry)),
     ]
 
     step_1_ms = int((time.monotonic() - start_time) * 1000)

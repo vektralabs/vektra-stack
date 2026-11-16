@@ -67,6 +67,9 @@ class SentenceGate:
     shipped: Shipped
     br009: str
     support_text: str | None = None
+    #: the module titles of the course material retrieved in THIS turn (FEAT-028): the only
+    #: titles a ``[Materiale: <titolo>]`` tag may cite; empty without material
+    material_titles: frozenset[str] = frozenset()
     behaviour_class: str | None = None
     contest: list[ContestEntry] = field(default_factory=list)
     marks: list[str] = field(default_factory=list)
@@ -157,7 +160,7 @@ class SentenceGate:
         v = values.check(text, self._values, self.shipped.missing["value_unverified"])
         if v.replaced:
             self._mark(MARK_VALUES, v.replaced)
-        c = citations.check(v.text, self._labels)
+        c = citations.check(v.text, self._labels, self.material_titles)
         if c.removed:
             self._mark(MARK_CITATIONS, c.removed)
         q = feedback_quote.check(

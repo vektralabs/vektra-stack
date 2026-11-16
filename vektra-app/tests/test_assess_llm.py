@@ -741,3 +741,38 @@ async def test_the_worker_refuses_to_start_with_no_model_key(
     with pytest.raises(StartupValidationError) as e:
         await assess_worker._checks()
     assert "VEKTRA_LLM_API_KEY" in e.value.remediation and "worker" in e.value.detail
+
+
+# --- FEAT-028: the course-material parts exist only with the operator flag --------------------
+
+
+def test_course_material_parts_exist_only_with_the_operator_flag() -> None:
+    from types import SimpleNamespace
+
+    from vektra_app.assess_llm import build_course_material
+    from vektra_assess.api.material_reads import ApiEligibilityReader
+    from vektra_assess.config import VektraAssessSettings
+    from vektra_assess.llm.retrieval import CourseMaterialRetriever
+
+    class _Registry:
+        def __init__(self) -> None:
+            self.asked: list[tuple[str, str]] = []
+
+        def get(self, category: str, name: str) -> object:
+            self.asked.append((category, name))
+            return object()
+
+    app = SimpleNamespace(state=SimpleNamespace(assess_engine=None))
+    reg = _Registry()
+    off = VektraAssessSettings()
+    assert build_course_material(app, off, None, reg) == (None, None)
+    assert reg.asked == []
+    on = VektraAssessSettings.model_validate(
+        {"VEKTRA_ASSESS_RAG_ENABLED": True, "VEKTRA_ASSESS_RAG_TOP_K": 3}
+    )
+    retriever, reader = build_course_material(app, on, None, reg)
+    assert isinstance(retriever, CourseMaterialRetriever) and retriever.top_k == 3
+    assert isinstance(reader, ApiEligibilityReader)
+    assert reg.asked == [("vector_store", "default"), ("embedding", "default")]
+    with pytest.raises(StartupValidationError, match="registry"):
+        build_course_material(app, on, None, None)

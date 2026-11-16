@@ -220,9 +220,9 @@ async def test_c_pre_created_roles_and_the_membership_are_enough_for_head(
     current = _alembic(url, "current")
     assert heads.returncode == 0 and current.returncode == 0, current.stderr
     want = sorted(line.split()[0] for line in heads.stdout.splitlines() if line.strip())
-    assert want == ["0009", "a0006"], heads.stdout
+    assert want == ["0009", "a0007"], heads.stdout
     # the assess head is recorded; the base and the 0009 it depends on are implied
-    assert "a0006" in current.stdout, current.stdout
+    assert "a0007" in current.stdout, current.stdout
     # the definer functions really are owned by the definer
     owners = await _admin(
         server,
@@ -252,4 +252,4 @@ async def test_c_pre_created_roles_and_the_membership_are_enough_for_head(
         "count(*) FILTER (WHERE relforcerowsecurity) FROM pg_class "
         "WHERE relnamespace = 'public'::regnamespace AND relname LIKE 'assess\\_%'",
     )
-    assert tuple(forced[0]) == (20, 0)
+    assert tuple(forced[0]) == (21, 0)

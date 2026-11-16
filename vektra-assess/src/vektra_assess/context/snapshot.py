@@ -211,7 +211,8 @@ class FrozenFlags(_Frozen):
 
     show_solution: bool
     rubric_source: Literal["none", "pasted", "lms"]
-    course_material: bool = False  # RAG: locked OFF in v1 (NFR-015)
+    # RAG (FEAT-028): operator flag ON, the activity's RAG ON and attested, at Start (NFR-015)
+    course_material: bool = False
 
 
 class SnapshotHeader(_Frozen):

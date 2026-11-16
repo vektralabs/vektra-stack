@@ -162,6 +162,8 @@ class PendingTurnDriver:
                 text=material.text_of(last),
                 turn_index=sum(1 for t in material.turns if t.role == "student"),
                 history=history,
+                session_id=sid,
+                site_id=row.site_id,
             )
             return row.epoch, bundle_of(material, row), turn, cut_after_s(row)
 

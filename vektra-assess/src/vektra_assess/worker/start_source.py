@@ -62,6 +62,7 @@ from vektra_shared.lms import (
     ActivityKind,
     ActivityRef,
     AttemptState,
+    CourseModuleVisibility,
     LmsProvider,
     LmsSite,
     OverdueMode,
@@ -127,6 +128,8 @@ def teacher_view(
     kind: str,
     solution_text: str | None,
     pasted_rubric: str | None = None,
+    *,
+    course_material: bool = False,
 ) -> TeacherConfigView:
     show = flags.get("show_solution") is True
     source = rubric_source_of(flags, kind)
@@ -135,6 +138,7 @@ def teacher_view(
         rubric_source=source,
         solution_text=solution_text if show else None,
         pasted_rubric=pasted_rubric if source == "pasted" else None,
+        course_material=course_material,
     )
 
 
@@ -324,6 +328,29 @@ class LmsStartSource:
             modules = await lms.course_modules(ref.course_id)
             out["course_modules_readable"] = isinstance(modules, Readable)
         return out
+
+    async def course_material(
+        self, target: StartTarget
+    ) -> (
+        tuple[ActivityRef, Readable[tuple[CourseModuleVisibility, ...]] | Unreadable]
+        | None
+    ):
+        """FEAT-028: the activity's course, resolved inside the STUDENT's courses (the same
+        authority as the Start gates), and its modules' course-wide visibility facts read NOW
+        (never cached: only the course resolution is). None when the site or the course cannot
+        be resolved."""
+        lms = await self._site(target.site_id)
+        if lms is None:
+            return None
+        ref, _not_found = await self._resolve(lms, target)
+        if ref is None:
+            return None
+        return ref, await lms.course_modules(ref.course_id)
+
+    @property
+    def rag_opt_out_tag(self) -> str | None:
+        """The opt-out tag; None when the operator flag is off (no eligibility read at all)."""
+        return self._rag_tag
 
     async def close_facts(
         self,
@@ -570,7 +597,9 @@ class LmsStartSource:
         self._resolved.pop(target.session_id)
         if ref is None:
             return Failed(FailReason.POLICY_INPUT_UNREADABLE, "activity_unresolved")
-        teacher = teacher_view(target.flags, kind, solution, pasted)
+        teacher = teacher_view(
+            target.flags, kind, solution, pasted, course_material=target.course_material
+        )
         release = str(lms.site.release)
         if kind == "quiz":
             return await capture_quiz(

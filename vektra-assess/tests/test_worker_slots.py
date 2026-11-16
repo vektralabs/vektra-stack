@@ -26,6 +26,7 @@ PRODUCTION_KINDS = {
     "reconcile_reply", "render_check",
     "setup_check", "teacher_notify", "operator_notify", "transcript_deliver",
     "transcript_generate", "teacher_gate", "smtp_test_send",
+    "material_eligibility",  # FEAT-028: one RAG turn's live eligibility read
 }  # fmt: skip
 PRODUCTION_TICKS = [
     "heartbeat", "job_cleanup", "lease_reaper", "sweeper", "starting_reaper", "outage_probe",

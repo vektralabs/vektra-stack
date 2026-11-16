@@ -44,6 +44,7 @@ def test_one_base_revision_on_the_assess_branch() -> None:
         "a0004_assess_subject_indexes.py",  # the subject export's per-subject reads
         "a0005_assess_outage_session_index.py",  # the stream's per-poll outage reads
         "a0006_assess_rag_attestation.py",  # FEAT-028: the teacher's RAG attestation
+        "a0007_assess_material_reads.py",  # FEAT-028: the per-turn eligibility read
     ]
     mod = _load(revs[0], "assess_base")
     assert mod.revision == "a0001"

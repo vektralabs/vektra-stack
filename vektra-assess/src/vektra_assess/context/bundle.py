@@ -7,8 +7,9 @@ hatch that could build or widen one without that path is closed: ``model_constru
 deepcopy and pickling all raise. import-linter cannot see call sites, so an AST guard test scans
 the repository for constructions outside this package (allowlist: empty).
 
-Fields are a strict subset of the snapshot: no LMS id, no free-form dict, no retrieval field (RAG
-is OFF in v1, NFR-015: a future retrieval field comes with its own canary cells).
+Fields are a strict subset of the snapshot: no LMS id, no free-form dict, no retrieved material
+(FEAT-028: only the frozen ``course_material`` flag; the material of a turn is retrieved by the
+runner, NFR-015, and never stored in the bundle).
 """
 
 from __future__ import annotations
@@ -55,8 +56,9 @@ class ContextBundle(BaseModel):
     pasted_rubric: str | None
     solution_shown: bool
     html_structured_only: bool
-    # RAG for the discussion, frozen at Start. Locked OFF in v1: the runner refuses a bundle with it
-    # set (RagNotAvailableError) instead of answering without the material it was promised
+    # RAG for the discussion, frozen at Start (FEAT-028). The bundle carries the FLAG only, never
+    # material: the runner retrieves per turn, among the modules eligible at that turn; a runner
+    # that cannot honour it refuses the bundle (RagNotAvailableError)
     course_material: bool = False
     content_hash: str  # of the snapshot it was assembled from
 

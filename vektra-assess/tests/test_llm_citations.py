@@ -46,6 +46,40 @@ def test_material_is_removed_even_if_a_label_had_that_name() -> None:
     assert citations.check("[Materiale: x]", (*LABELS, "Materiale: x")).removed == 1
 
 
+# --- [Materiale: <titolo>] with course material (FEAT-028, REQ-096 (b)) ------------------------
+
+TITLES = frozenset({"Lezione 3 - Fotosintesi", "Dispensa"})
+
+
+def test_a_material_tag_resolves_only_to_a_title_retrieved_in_this_turn() -> None:
+    out = citations.check(
+        "Lo spiega [Materiale: lezione 3 -  Fotosintesi] e [Materiale:Dispensa].",
+        LABELS,
+        TITLES,
+    )
+    assert out.removed == 0
+    assert out.resolved == ("Materiale: Lezione 3 - Fotosintesi", "Materiale: Dispensa")
+    assert "[Materiale: lezione 3 -  Fotosintesi]" in out.text
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    [
+        "Vedi [Materiale: Lezione 4].",  # not retrieved in this turn
+        "Vedi [Materiale].",  # no title
+        "Vedi [Materiale: ].",
+        "Vedi [Materiale Dispensa].",  # no colon: not the tag's form
+    ],
+)
+def test_any_other_material_tag_is_removed_and_marks(sentence: str) -> None:
+    out = citations.check(sentence, LABELS, TITLES)
+    assert out.removed == 1 and out.text == "Vedi."
+
+
+def test_without_material_every_material_tag_is_removed() -> None:
+    assert citations.check("[Materiale: Dispensa]", LABELS).removed == 1
+
+
 def test_brackets_that_are_not_tags_are_text() -> None:
     s = "L'intervallo [0.5, 1.5] e la matrice [[1, 2], [3, 4]] restano."
     assert citations.check(s, LABELS).text == s

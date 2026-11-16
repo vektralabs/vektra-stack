@@ -897,6 +897,8 @@ async def post_turn(
             text=body.text,
             turn_index=sum(1 for t in material.turns if t.role == "student") + 1,
             history=history_of(material),
+            session_id=sid,
+            site_id=row.site_id,
         )
     # committed: the reply runs detached from this request from here on
     driver.broker.publish(sid, "turn_accepted", {"turn_no": turn_no})

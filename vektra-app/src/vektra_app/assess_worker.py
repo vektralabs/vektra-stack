@@ -454,6 +454,7 @@ def _session_handlers(
     from vektra_assess.delivery.recipients import ConfigRecipients
     from vektra_assess.jobs import JobKind
     from vektra_assess.worker.enrolment import make_recheck_handler
+    from vektra_assess.worker.material import make_material_handler
     from vektra_assess.worker.parser_client import ParserClient
     from vektra_assess.worker.preflight import PreflightDeps, make_preflight_handler
     from vektra_assess.worker.render import RenderDeps, make_render_handler
@@ -519,6 +520,8 @@ def _session_handlers(
         ),
         # plan assess-teacher-ops: the editors / graders / enable facts of one activity
         JobKind.TEACHER_GATE: make_teacher_gate_handler(source),
+        # FEAT-028: one RAG turn's live course-module eligibility (the API cannot ask the LMS)
+        JobKind.MATERIAL_ELIGIBILITY: make_material_handler(source),
     }
 
 
@@ -865,6 +868,7 @@ def make_outage_probe(settings: Any) -> Any:
 def _session_ticks(checked: Checked) -> dict[str, Any]:
     """The plan assess-session-lifecycle tick bodies (they need no key)."""
     from vektra_assess.worker.enrolment import queue_rechecks
+    from vektra_assess.worker.material import sweep_material_reads
     from vektra_assess.worker.outage_probe import outage_tick
     from vektra_assess.worker.reaper import reap_starting
     from vektra_assess.worker.render import gate_refresh_tick
@@ -887,6 +891,8 @@ def _session_ticks(checked: Checked) -> dict[str, Any]:
     async def sweeper() -> None:
         await sweep_timed_out(engine.connect)
         await queue_reconciles(engine.connect, settings.outage_timeout_s)
+        # FEAT-028: eligibility rows no turn picked up (it timed out, or its API died)
+        await sweep_material_reads(engine.connect)
 
     async def enrolment_recheck() -> None:
         await queue_rechecks(engine.connect)

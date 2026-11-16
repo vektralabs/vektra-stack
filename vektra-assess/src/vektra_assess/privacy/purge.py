@@ -82,6 +82,8 @@ SESSION_TABLES: tuple[str, ...] = (
     "assess_outage_incidents",
     "assess_enrolment_checks",
     "assess_session_keys",
+    # FEAT-028: a turn's eligibility read not yet picked up (module ids and titles, no content)
+    "assess_material_reads",
 )
 #: tables keyed on the transcript id
 TRANSCRIPT_TABLES: tuple[str, ...] = (

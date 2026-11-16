@@ -694,6 +694,8 @@ table vektra_assess_api assess_extra_time UPDATE
 table vektra_assess_api assess_gate_inputs SELECT
 table vektra_assess_api assess_heartbeat SELECT
 table vektra_assess_api assess_jobs INSERT
+table vektra_assess_api assess_material_reads DELETE
+table vektra_assess_api assess_material_reads SELECT
 table vektra_assess_api assess_model_activations INSERT
 table vektra_assess_api assess_model_activations SELECT
 table vektra_assess_api assess_outage_incidents SELECT
@@ -772,6 +774,9 @@ table vektra_assess_worker assess_jobs DELETE
 table vektra_assess_worker assess_jobs INSERT
 table vektra_assess_worker assess_jobs SELECT
 table vektra_assess_worker assess_jobs UPDATE
+table vektra_assess_worker assess_material_reads DELETE
+table vektra_assess_worker assess_material_reads INSERT
+table vektra_assess_worker assess_material_reads SELECT
 table vektra_assess_worker assess_model_activations SELECT
 table vektra_assess_worker assess_outage_incidents DELETE
 table vektra_assess_worker assess_outage_incidents INSERT

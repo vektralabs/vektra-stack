@@ -217,7 +217,7 @@ class PrometheusRunnerMetrics:
     _counters: dict[str, Any] = {}
 
     def __init__(self) -> None:
-        from prometheus_client import Counter
+        from prometheus_client import Counter, Histogram
 
         c = PrometheusRunnerMetrics._counters
         if (
@@ -243,6 +243,13 @@ class PrometheusRunnerMetrics:
                 "Part B generations rejected, by content-free rejection code",
                 ["code"],
             )
+            c["eligibility"] = Histogram(
+                "vektra_assess_material_eligibility_seconds",
+                "Round trip of a RAG turn's live course-module eligibility read (API -> "
+                "worker job -> API), by outcome (readable, unreadable, timeout, enqueue_failed)",
+                ["outcome"],
+                buckets=(0.1, 0.25, 0.5, 1.0, 2.0, 3.0, 5.0, 7.5, 10.0, 20.0, 30.0),
+            )
         self._c = c
 
     def replacement(self, stage: str, count: int) -> None:
@@ -257,6 +264,10 @@ class PrometheusRunnerMetrics:
     def part_b_rejected(self, code: str) -> None:
         self._c["part_b"].labels(code=code).inc()
 
+    def eligibility_read(self, outcome: str, seconds: float) -> None:
+        """FEAT-028: one RAG turn's eligibility round trip to the worker, by closed outcome."""
+        self._c["eligibility"].labels(outcome=outcome).observe(seconds)
+
 
 def build_assess_runner(
     settings: VektraAssessSettings,
@@ -266,6 +277,8 @@ def build_assess_runner(
     audit: AuditSink,
     llm: LLMProvider | None = None,
     metrics: RunnerMetrics | None = None,
+    retriever: Any = None,
+    eligibility: Any = None,
 ) -> DiscussionTurnRunner:
     return DiscussionTurnRunner(
         llm=llm or build_assess_llm(settings),
@@ -274,7 +287,44 @@ def build_assess_runner(
         settings=settings,
         audit=audit,
         metrics=metrics,
+        retriever=retriever,
+        eligibility=eligibility,
     )
+
+
+def build_course_material(
+    app: Any,
+    settings: VektraAssessSettings,
+    metrics: PrometheusRunnerMetrics | None,
+    registry: Any,
+) -> tuple[Any, Any]:
+    """FEAT-028: the discussion's course-material parts, only with the operator flag ON:
+    the retriever over the platform's registered vector store and embedding provider (the
+    Protocols only; vektra_assess imports no implementation), and the API's eligibility reader
+    (a ``material_eligibility`` job round trip: the API cannot ask the LMS). Flag OFF: neither
+    exists, so no discussion can make an eligibility read or a retrieval call."""
+    if not settings.rag_enabled:
+        return None, None
+    from vektra_assess.api.material_reads import ApiEligibilityReader
+    from vektra_assess.llm.retrieval import CourseMaterialRetriever
+
+    if registry is None:
+        raise StartupValidationError(
+            step=STEP,
+            detail="VEKTRA_ASSESS_RAG_ENABLED=true but no provider registry was passed",
+            remediation="Start the API through create_app (the registry is built there).",
+        )
+    retriever = CourseMaterialRetriever(
+        registry.get("vector_store", "default"),
+        registry.get("embedding", "default"),
+        top_k=settings.rag_top_k,
+    )
+    eligibility = ApiEligibilityReader(
+        lambda: app.state.assess_engine,
+        timeout_s=settings.rag_eligibility_timeout_s,
+        observe=metrics.eligibility_read if metrics is not None else None,
+    )
+    return retriever, eligibility
 
 
 # --- worker (Part B) ----------------------------------------------------------------------------
@@ -404,7 +454,10 @@ async def _check_activation(
 
 
 async def step_13_assess_llm_check(
-    app: Any, *, safeguard_factory: Callable[[str], SafeguardHook] | None = None
+    app: Any,
+    registry: Any = None,
+    *,
+    safeguard_factory: Callable[[str], SafeguardHook] | None = None,
 ) -> None:
     """ARCH-057 step 13 (plan assess-llm-runner): the discussion runner's parts, fail closed.
 
@@ -451,8 +504,13 @@ async def step_13_assess_llm_check(
     from vektra_assess.api.turns import ApiAuditSink
     from vektra_shared.db import get_session_factory
 
+    retriever, eligibility = build_course_material(
+        app, settings, app.state.assess_metrics, registry
+    )
     app.state.assess_runner = build_assess_runner(
         settings,
+        retriever=retriever,
+        eligibility=eligibility,
         safeguard=app.state.assess_safeguard,
         # resolved per write: the main database is initialised by an earlier startup step
         trace_writer=AnalyticsTraceWriter(lambda: get_session_factory()()),

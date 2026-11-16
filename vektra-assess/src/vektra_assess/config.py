@@ -864,6 +864,26 @@ class VektraAssessSettings(BaseSettings):
             "empty value is refused at startup (it would match every title)."
         ),
     )
+    rag_eligibility_timeout_s: float = Field(
+        5.0,
+        ge=0.5,
+        le=30.0,
+        alias="VEKTRA_ASSESS_RAG_ELIGIBILITY_TIMEOUT_S",
+        description=(
+            "How long a RAG turn waits for the worker's live course-module eligibility read "
+            "(the material_eligibility job; the API cannot ask the LMS). No answer in time: "
+            "the turn goes on without course material, audited (fail closed)."
+        ),
+    )
+    rag_top_k: int = Field(
+        4,
+        ge=1,
+        le=20,
+        alias="VEKTRA_ASSESS_RAG_TOP_K",
+        description=(
+            "Course-material chunks retrieved per RAG turn, among the eligible modules only."
+        ),
+    )
     reset_notice_enabled: bool = Field(
         False,
         alias="VEKTRA_ASSESS_RESET_NOTICE_ENABLED",

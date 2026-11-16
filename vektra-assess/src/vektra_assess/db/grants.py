@@ -37,6 +37,9 @@ TABLES: tuple[str, ...] = (
     "assess_gate_inputs",
     "assess_heartbeat",
     "assess_jobs",
+    # revision a0007 (FEAT-028): the worker's live course-module eligibility read of one RAG
+    # turn, picked up and deleted by the API (the API cannot ask the LMS)
+    "assess_material_reads",
     "assess_model_activations",
     "assess_outage_incidents",
     "assess_privacy_config",  # revision 0040 (plan 12): the REQ-089 settings of a site
@@ -224,11 +227,17 @@ MATRIX: Mapping[str, Mapping[str, Privs]] = {
         # revision 0034 (plan 10): the post-check marks and contest entries of a bot turn,
         # written in the turn's own transaction, never updated
         "assess_turn_notes": {"INSERT": _ALL},
+        # revision a0007 (FEAT-028): the turn reads the worker's eligibility row for its own
+        # request and deletes it at once
+        "assess_material_reads": {"SELECT": _ALL, "DELETE": _ALL},
         # snapshots, turns, session_keys, session_handoff: no privilege at all
     },
     WORKER: {
         # plumbing and status
         "assess_jobs": {"SELECT": _ALL, "INSERT": _ALL, "UPDATE": _ALL, "DELETE": _ALL},
+        # revision a0007: the material_eligibility job writes one row; the sweeper deletes the
+        # rows nobody picked up
+        "assess_material_reads": {"SELECT": _ALL, "INSERT": _ALL, "DELETE": _ALL},
         # the Part B pre-flight refuses an unactivated triple (plan 8): read only
         "assess_model_activations": {"SELECT": _ALL},
         "assess_render_checks": {

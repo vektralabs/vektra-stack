@@ -63,7 +63,7 @@ _T_HTML = _HTML.from_string(_TEMPLATE)
 class SessionFacts:
     session_number: int  # "Sessione #N"
     duration_minutes: int
-    course_material_used: bool = False  # RAG locked OFF in v1
+    course_material_used: bool = False  # FEAT-028: the bundle's frozen course_material
     #: the previous-context line of REQ-094; its wording belongs to plan 8 (session lifecycle)
     previous_context: str | None = None
 

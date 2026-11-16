@@ -28,12 +28,13 @@ from vektra_assess.context.bundle import ContextBundle
 from vektra_assess.context.payload import PAYLOAD_VERSION, bundle_to_model_payload
 from vektra_assess.context.references import canonical_labels
 from vektra_assess.context.snapshot import ActivityKind
+from vektra_assess.llm.retrieval import MaterialChunk
 from vektra_assess.llm.types import PriorTurn
 from vektra_shared.types import Message
 
 TEMPLATES_DIR = Path(__file__).parent / "templates"
 STRINGS_DIR = Path(__file__).parent / "strings"
-TEMPLATE_NAMES = ("system", "bundle", "history", "turn", "part_b")
+TEMPLATE_NAMES = ("system", "bundle", "material", "history", "turn", "part_b")
 LANGUAGE_NAMES = {"it": "italiano", "en": "inglese"}
 WORD_TARGET = 150  # REQ-100: about 150 words unless asked
 PART_B_MAX_WORDS = 120  # REQ-094
@@ -80,6 +81,17 @@ def compute_prompt_version(
     return h.hexdigest()[:8]
 
 
+#: the material block's own delimiters (``templates/material.j2``): a chunk or a title that
+#: carries them is defused, so retrieved text can never close its block and speak outside it
+_FENCES = ("<<<", ">>>")
+
+
+def _defuse(text: str) -> str:
+    for fence in _FENCES:
+        text = text.replace(fence, " ".join(fence))
+    return text
+
+
 class PromptRenderer:
     """Renders the turn and Part B prompts. Templates are loaded once; rendering is stateless."""
 
@@ -120,6 +132,23 @@ class PromptRenderer:
             ),
         )
 
+    def _material(self, chunks: Sequence[MaterialChunk]) -> Message:
+        """The turn's course material, one delimited block per chunk with its module's title
+        (FEAT-028): a user-role DATA message after the context, like the context itself."""
+        return Message(
+            role="user",
+            content=self._render(
+                "material",
+                chunks=[
+                    {
+                        "title": _defuse(c.title).replace('"', "'"),
+                        "text": _defuse(c.text),
+                    }
+                    for c in chunks
+                ],
+            ),
+        )
+
     def _bundle(self, bundle: ContextBundle) -> Message:
         (payload,) = bundle_to_model_payload(bundle)  # one user-role context message
         return Message(
@@ -132,9 +161,11 @@ class PromptRenderer:
         history: Sequence[PriorTurn],
         text: str,
         language: str,
+        material: Sequence[MaterialChunk] = (),
     ) -> list[Message]:
-        """System, context, the history (oldest first) and the student's message."""
-        head, past, tail = self.turn_parts(bundle, history, text, language)
+        """System, context, the course material (if any), the history (oldest first) and the
+        student's message."""
+        head, past, tail = self.turn_parts(bundle, history, text, language, material)
         return [*head, *past, *tail]
 
     def turn_parts(
@@ -143,9 +174,13 @@ class PromptRenderer:
         history: Sequence[PriorTurn],
         text: str,
         language: str,
+        material: Sequence[MaterialChunk] = (),
     ) -> tuple[list[Message], list[Message], list[Message]]:
-        """(system + context, history, current message): the budget trims the middle only."""
+        """(system + context [+ material], history, current message): the budget trims the
+        middle only."""
         head = [self._system(bundle, language), self._bundle(bundle)]
+        if material:
+            head.append(self._material(material))
         past = [
             Message(
                 role="user" if prior.role == "student" else "assistant",

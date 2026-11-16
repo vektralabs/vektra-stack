@@ -118,6 +118,9 @@ class StartTarget:
     activity_type: str  # quiz | assign
     session_no: int
     flags: dict[str, Any]
+    #: FEAT-028: the session's course-material flag, decided at Start: the operator flag ON and
+    #: the activity's RAG ON with its attestation (frozen into the snapshot, BR-008)
+    course_material: bool = False
 
 
 @dataclass(frozen=True)
@@ -252,7 +255,8 @@ _LIVE = text(
 )
 _ADMIT = text("UPDATE assess_sessions SET preflight_started_at = now() WHERE id = :sid")
 _ACTIVITY = text(
-    "SELECT c.activity_type, c.enabled, c.cap_minutes, c.flags, "
+    "SELECT c.activity_type, c.enabled, c.cap_minutes, c.flags, c.rag_enabled, "
+    "(c.rag_attested_at IS NOT NULL) AS rag_attested, "
     "extract(epoch FROM c.end_at)::bigint AS end_at, "
     "extract(epoch FROM c.attested_opening_at)::bigint AS attested_at, "
     "extract(epoch FROM now())::bigint AS db_now, "
@@ -531,6 +535,9 @@ async def _admit(
         activity_type=str(act.activity_type),
         session_no=int(row.session_no),
         flags=dict(act.flags or {}),
+        course_material=bool(
+            settings.rag_enabled and act.rag_enabled and act.rag_attested
+        ),
     )
     duration = session_duration_s(int(act.cap_minutes), int(act.extra_s))
     return target, duration, elapsed, db, int(act.cap_minutes) * 60
@@ -802,6 +809,7 @@ async def _run(deps: PreflightDeps, acquire: AcquireDb, sid: UUID) -> None:
         session_facts = SessionFacts(
             session_number=target.session_no,
             duration_minutes=duration_s // 60,
+            course_material_used=bundle.course_material,
             previous_context=PREVIOUS_CONTEXT if target.session_no > 1 else None,
         )
         part_a = render_part_a(bundle, session_facts).text

@@ -107,6 +107,9 @@ KIND_DEFAULTS: dict[JobKind, KindPolicy] = {
     JobKind.ERASURE: _MAINT,
     # unwrap the DEK, append one marked turn: short, its own budget in the maintenance pool
     JobKind.RECONCILE_REPLY: KindPolicy("maintenance", 20, 40, 3),
+    # one RAG turn's eligibility read (FEAT-028): the course resolution and course_modules.
+    # One attempt: the turn waits a few seconds for it, a retry would answer nobody
+    JobKind.MATERIAL_ELIGIBILITY: KindPolicy("ws", 20, 40, 1),
 }
 
 _POOL_PREFIX = "VEKTRA_ASSESS_POOL_"

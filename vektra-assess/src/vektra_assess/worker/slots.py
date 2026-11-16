@@ -29,6 +29,8 @@ TRANSCRIPT = "20261101-154950-assess-transcript-delivery"
 PRIVACY = "20261101-154950-assess-privacy-retention"
 JOB_LOOP = "20261101-154950-assess-job-loop"
 TEACHER = "20261101-154950-assess-teacher-ops"
+#: course-material retrieval in discussions (BACKLOG FEAT-028, branch feat/assess-rag-exclusion)
+MATERIAL = "FEAT-028"
 
 # job kind -> plan that binds its handler
 HANDLER_OWNERS: dict[JobKind, str] = {
@@ -47,6 +49,7 @@ HANDLER_OWNERS: dict[JobKind, str] = {
     JobKind.SETUP_CHECK: JOB_LOOP,
     JobKind.TEACHER_GATE: TEACHER,
     JobKind.SMTP_TEST_SEND: PRIVACY,
+    JobKind.MATERIAL_ELIGIBILITY: MATERIAL,
 }
 
 # tick name -> plan that binds its body

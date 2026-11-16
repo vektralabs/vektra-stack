@@ -167,6 +167,9 @@ class TeacherConfigView:
     rubric_source: str  # none | pasted | lms (the LMS's rubric)
     solution_text: str | None = None
     pasted_rubric: str | None = None
+    #: FEAT-028: course-material retrieval for this session (operator flag ON, the activity's RAG
+    #: ON and attested, read at Start); frozen into the snapshot's flags (BR-008)
+    course_material: bool = False
 
     def __post_init__(self) -> None:
         if self.solution_text is not None and not self.show_solution:
@@ -286,6 +289,7 @@ def _flags(teacher: TeacherConfigView) -> FrozenFlags:
     return FrozenFlags(
         show_solution=teacher.show_solution,
         rubric_source=teacher.rubric_source,
+        course_material=teacher.course_material,
     )
 
 

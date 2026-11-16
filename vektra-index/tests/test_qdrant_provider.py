@@ -297,6 +297,21 @@ class TestQdrantParentChunks:
         assert "metadata.chunk_level" in condition_keys
 
     @pytest.mark.asyncio
+    async def test_an_int_list_filter_is_a_match_any_pre_filter(self):
+        """FEAT-028: a cmid allowlist is ``MatchAny`` on ``metadata.cmid`` with the ints as
+        given, inside the query filter (exclusion before ranking), not a post-filter."""
+        provider, _client = _make_provider()
+        _mock_qdrant_models.FieldCondition.reset_mock()
+        _mock_qdrant_models.MatchAny.reset_mock()
+        provider._build_filter("default", filters={"cmid": [7, 3]})
+        keys = [
+            c.kwargs.get("key")
+            for c in _mock_qdrant_models.FieldCondition.call_args_list
+        ]
+        assert "metadata.cmid" in keys
+        assert _mock_qdrant_models.MatchAny.call_args.kwargs == {"any": [7, 3]}
+
+    @pytest.mark.asyncio
     async def test_search_results_carry_parent_id(self):
         provider, client = _make_provider()
         doc_id = str(uuid4())

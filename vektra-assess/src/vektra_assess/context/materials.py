@@ -20,12 +20,17 @@ no retrieval for that turn).
 
 from __future__ import annotations
 
+import re
+import unicodedata
 from collections.abc import Iterable
 from dataclasses import dataclass
 
 from vektra_shared.lms import CourseModuleVisibility
 
 DEFAULT_OPT_OUT_TAG = "[no-ai]"
+NAMESPACE_MAX = 50
+_OUTSIDE = re.compile(r"[^0-9a-z_-]+")
+_DASHES = re.compile(r"-{2,}")
 
 
 @dataclass(frozen=True)
@@ -65,3 +70,15 @@ def eligible_modules(
             continue
         seen[m.cmid] = EligibleModule(int(m.cmid), m.title) if ok else None
     return tuple(v for _k, v in sorted(seen.items()) if v is not None)
+
+
+def course_namespace(shortname: str | None, course_id: int) -> str:
+    """The Vektra namespace of a course: its short name slugified exactly as the ingest pipeline
+    does (vektra-moodle n8n README, "Namespace Convention"), so the discussion searches the
+    namespace the course's material was ingested into: NFD with combining marks stripped,
+    lowercase, every character outside ``[0-9a-z_-]`` -> ``-``, runs of ``-`` collapsed, leading
+    and trailing ``-`` trimmed, at most 50 characters; an empty result is ``course-<id>``."""
+    raw = unicodedata.normalize("NFD", shortname or "")
+    raw = "".join(ch for ch in raw if not unicodedata.category(ch).startswith("M"))
+    slug = _DASHES.sub("-", _OUTSIDE.sub("-", raw.lower())).strip("-")[:NAMESPACE_MAX]
+    return slug or f"course-{int(course_id)}"

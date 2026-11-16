@@ -370,8 +370,13 @@ class PgvectorProvider:
 
         for key, value in filters.items():
             if isinstance(value, list):
+                # ``->>`` yields text: compare with text, as the scalar branch does. An int
+                # list (a cmid allowlist, FEAT-028) would otherwise be ``text IN (integer)``,
+                # which Postgres refuses
                 stmt = stmt.where(
-                    DocumentChunkOrm.chunk_metadata[key].as_string().in_(value)
+                    DocumentChunkOrm.chunk_metadata[key]
+                    .as_string()
+                    .in_([_jsonb_text(v) for v in value])
                 )
             else:
                 stmt = stmt.where(
@@ -590,3 +595,10 @@ class PgvectorProvider:
             return HealthStatus(status="healthy", latency_ms=latency_ms)
         except Exception as exc:
             return HealthStatus(status="unhealthy", message=str(exc))
+
+
+def _jsonb_text(value: Any) -> str:
+    """A filter value as ``->>`` renders the JSON scalar: ``true``/``false`` for a bool."""
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    return str(value)

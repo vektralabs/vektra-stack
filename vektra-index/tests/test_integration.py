@@ -290,3 +290,57 @@ async def test_delete_removes_chunks(provider, embedding_provider, session):
     assert len(results) == 0, (
         "Soft-deleted document should not appear in search results"
     )
+
+
+@pytest.mark.asyncio
+async def test_an_int_list_filter_selects_before_ranking(
+    provider, embedding_provider, session
+):
+    """FEAT-028: a cmid allowlist (JSON integers in the chunk metadata, ints in the filter) is
+    an IN inside the search query: chunks of other cmids, and chunks without one, never come
+    back, however close they are to the query. Before the fix this raised (text IN integer)."""
+    from sqlalchemy import text
+
+    from vektra_shared.types import ChunkEmbedding, QueryEmbedding
+
+    namespace = f"ns-cmid-{uuid4().hex[:8]}"
+    doc_id = uuid4()
+    rows = [
+        ("Photosynthesis in plants, allowed.", {"cmid": 11}),
+        ("Photosynthesis in plants, other module.", {"cmid": 12}),
+        ("Photosynthesis in plants, no binding.", {}),
+        ("Photosynthesis in plants, string binding.", {"cmid": "13"}),
+    ]
+    embeddings = await embedding_provider.embed_documents([t for t, _ in rows])
+    chunks = [
+        ChunkEmbedding(chunk_id="", text=t, dense=e, metadata=m)
+        for (t, m), e in zip(rows, embeddings)
+    ]
+    async with session.begin():
+        await session.execute(
+            text(
+                "INSERT INTO namespaces (id, display_name) VALUES (:ns, :ns) "
+                "ON CONFLICT (id) DO NOTHING"
+            ),
+            {"ns": namespace},
+        )
+        await session.execute(
+            text(
+                "INSERT INTO source_documents (id, namespace_id, filename, content_hash, "
+                "content_type, file_size_bytes) VALUES (:id, :ns, 'm.pdf', 'h', "
+                "'application/pdf', 1)"
+            ),
+            {"id": str(doc_id), "ns": namespace},
+        )
+        await provider.store(session, namespace, doc_id, chunks)
+    q = QueryEmbedding(dense=await embedding_provider.embed_query("photosynthesis"))
+    async with session.begin():
+        got = await provider.search(
+            session, namespace, q, top_k=10, filters={"cmid": [11, 13]}
+        )
+    assert sorted(str(r.metadata.get("cmid")) for r in got) == ["11", "13"]
+    async with session.begin():
+        none = await provider.search(
+            session, namespace, q, top_k=10, filters={"cmid": [99]}
+        )
+    assert none == []

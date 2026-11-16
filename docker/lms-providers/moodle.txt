@@ -19,4 +19,4 @@
 # -f docker-compose.assess.yml build vektra`) and run `make test` (the static guard) and
 # `VEKTRA_ASSESS_STACK=1 uv run pytest tests/assess/test_lms_provider_image.py` (the image check).
 # See CONTRIBUTING.md, "The Moodle LMS provider".
-vektra-lms-moodle @ https://github.com/vektralabs/vektra-moodle-discuss/releases/download/provider-v0.9.0.dev3/vektra_lms_moodle-0.9.0.dev3-py3-none-any.whl --hash=sha256:5d4482ffc392b821c49e9e0f6e629c5c930d6d41e76f3e49f7f500831ccdb3ac
+vektra-lms-moodle @ https://github.com/vektralabs/vektra-moodle-discuss/releases/download/provider-v0.9.0.dev4/vektra_lms_moodle-0.9.0.dev4-py3-none-any.whl --hash=sha256:81a7fae95f6563964d2bf40816a8733107f0c2ea5821d7fc78794094ff15704f

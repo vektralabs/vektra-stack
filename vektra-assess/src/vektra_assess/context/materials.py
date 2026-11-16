@@ -83,7 +83,7 @@ def lms_site_key(base_url: str | None) -> str | None:
     """The site a course chunk belongs to (metadata ``lms_site``, FEAT-028 review 1): a
     namespace and a cmid are unique within ONE LMS site only, so retrieval also filters on this.
 
-    The site's registered ``base_url`` (its LMS root, e.g. Moodle's wwwroot), normalised:
+    The site's registered ``base_url`` (the LMS root URL the ingest also knows), normalised:
     ``scheme://host[:port][/path]``, scheme and host lowercased, a default port (80 / 443)
     dropped, no trailing ``/``, no query, no fragment, no credentials. None when it is not an
     absolute http(s) URL (the turn then has no material)."""

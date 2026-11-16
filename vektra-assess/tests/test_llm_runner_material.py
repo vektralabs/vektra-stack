@@ -254,3 +254,37 @@ async def test_a_search_that_finds_nothing_is_audited_and_counted() -> None:
     r2._metrics = m2  # type: ignore[assignment]
     await r2.run(_bundle(), _turn())
     assert m2.material == ["retrieved"]
+
+
+async def test_material_that_does_not_fit_is_trimmed_lowest_rank_first() -> None:
+    """Review 4: the material is part of the fixed head; one that does not fit is cut chunk by
+    chunk from the lowest rank, down to none, audited, never a ContextOverflowError."""
+    big = " ".join(["fotosintesi"] * 200)
+    store = FilteringStore([(1, "A " + big), (2, "B " + big), (1, "C " + big)])
+    r, llm, audit, traces = _runner(
+        Reader(READABLE), store, "Ecco.", VEKTRA_ASSESS_LLM_CONTEXT_WINDOW=2048
+    )
+    result = await r.run(_bundle(), _turn())
+    assert result.text == "Ecco."
+    (sent,) = llm.all_request_bytes
+    assert b"A fotosintesi" in sent and b"C fotosintesi" not in sent
+    (event,) = [d for e, d in audit.rows if e == "assess_material_trimmed"]
+    assert event["reason_code"] == "material_trimmed" and event["dropped"] >= 1
+    kept = [c.chunk_id for c in traces.rows[0][0].chunks_retrieved]
+    assert kept and kept[0] == "c0" and "c2" not in kept
+
+
+async def test_material_that_never_fits_is_dropped_whole_and_the_turn_goes_on() -> None:
+    huge = " ".join(["x"] * 5000)
+    store = FilteringStore([(1, huge)])
+    r, llm, audit, traces = _runner(
+        Reader(READABLE), store, "Ecco [Materiale: Lezione 1].",
+        VEKTRA_ASSESS_LLM_CONTEXT_WINDOW=2048,
+    )  # fmt: skip
+    result = await r.run(_bundle(), _turn())
+    assert b"<<<MATERIALE" not in llm.all_request_bytes[0]
+    assert "[Materiale" not in result.text  # nothing left to cite
+    assert traces.rows[0][0].chunks_retrieved == []
+    assert [d["dropped"] for e, d in audit.rows if e == "assess_material_trimmed"] == [
+        1
+    ]

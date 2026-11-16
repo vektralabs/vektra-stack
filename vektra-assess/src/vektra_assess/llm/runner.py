@@ -34,7 +34,7 @@ from vektra_assess.context.bundle import ContextBundle
 from vektra_assess.context.part_a import fmt_date, grade_text
 from vektra_assess.context.references import canonical_labels
 from vektra_assess.llm import shipped
-from vektra_assess.llm.budget import MESSAGE_OVERHEAD, fit
+from vektra_assess.llm.budget import MESSAGE_OVERHEAD, ContextOverflowError, fit
 from vektra_assess.llm.language import detect
 from vektra_assess.llm.postcheck import (
     citations,
@@ -279,6 +279,55 @@ class DiscussionTurnRunner:
             self._metrics.behaviour_class(gate.behaviour_class)
         for rec in records:
             self._metrics.call_outcome(rec.outcome)
+
+    async def _fit_with_material(
+        self,
+        bundle: ContextBundle,
+        history: tuple[PriorTurn, ...],
+        text: str,
+        language: str,
+        material: Retrieval | None,
+        turn: StudentTurn,
+        steps: _Steps,
+    ) -> tuple[Any, Retrieval | None]:
+        """The budgeted prompt. The material sits in the fixed head with the context bundle; a
+        material block that makes the head overflow is cut chunk by chunk, lowest rank first,
+        down to none (audited ``material_trimmed``), so course material never turns a turn into
+        a context overflow. Without material, an overflow is the bundle's and propagates."""
+        chunks = list(material.chunks) if material is not None else []
+        dropped = 0
+        while True:
+            head, past, tail = self._renderer.turn_parts(
+                bundle, history, text, language, material=tuple(chunks)
+            )
+            try:
+                prompt = fit(
+                    head,
+                    past,
+                    tail,
+                    count=lambda t: self._llm.count_tokens(t, self.model),
+                    context_window=self._settings.llm_context_window,
+                    max_tokens=self._settings.llm_max_tokens,
+                )
+                break
+            except ContextOverflowError:
+                if not chunks:
+                    raise
+                chunks.pop()  # the search returns best first: the last is the lowest rank
+                dropped += 1
+        if dropped and material is not None:
+            material = replace(material, chunks=tuple(chunks))
+            await self._audit(
+                "assess_material_trimmed",
+                {
+                    "turn_index": turn.turn_index,
+                    "reason_code": "material_trimmed",
+                    "dropped": dropped,
+                    "kept": len(chunks),
+                },
+            )
+            steps.add_measured("material_trim", 0, dropped=dropped, kept=len(chunks))
+        return prompt, material
 
     def _material_metric(self, outcome: str) -> None:
         """One count per course-material turn, by closed outcome code (content-free)."""
@@ -556,24 +605,12 @@ class DiscussionTurnRunner:
             t = time.monotonic()
             history, history_changed = await self._student_history(turn, sh)
             material = await self._course_material(bundle, turn, student_text, steps)
+            prompt, material = await self._fit_with_material(
+                bundle, history, student_text, language, material, turn, steps
+            )
             if material is not None:
-                # [Materiale: <titolo>] resolves only for a module retrieved in THIS turn
+                # [Materiale: <titolo>] resolves only for a module IN THIS TURN'S PROMPT
                 gate.material_titles = material.titles
-            head, past, tail = self._renderer.turn_parts(
-                bundle,
-                history,
-                student_text,
-                language,
-                material=material.chunks if material is not None else (),
-            )
-            prompt = fit(
-                head,
-                past,
-                tail,
-                count=lambda t: self._llm.count_tokens(t, self.model),
-                context_window=self._settings.llm_context_window,
-                max_tokens=self._settings.llm_max_tokens,
-            )
             prompt_tokens = prompt.prompt_tokens
             steps.add(
                 "build_prompt",

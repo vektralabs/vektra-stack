@@ -852,6 +852,16 @@ class VektraAssessSettings(BaseSettings):
             "It exists only so that a deployment that sets it learns that at once."
         ),
     )
+    rag_opt_out_tag: str = Field(
+        "[no-ai]",
+        alias="VEKTRA_ASSESS_RAG_OPT_OUT_TAG",
+        description=(
+            "Title tag that keeps a course module out of discussion retrieval (ARCH-072 "
+            "amendment 2026-11-16), matched case-insensitively anywhere in the module title: "
+            "the same rule and default as the course chatbot ingest (INGEST_OPT_OUT_TAG). An "
+            "empty value is refused at startup (it would match every title)."
+        ),
+    )
     reset_notice_enabled: bool = Field(
         False,
         alias="VEKTRA_ASSESS_RESET_NOTICE_ENABLED",
@@ -870,6 +880,11 @@ class VektraAssessSettings(BaseSettings):
             raise ValueError(
                 "VEKTRA_ASSESS_RAG_ENABLED=true is not available in this release: discussion "
                 "retrieval stays off (ARCH-072). Unset it."
+            )
+        if not self.rag_opt_out_tag.strip():
+            raise ValueError(
+                "VEKTRA_ASSESS_RAG_OPT_OUT_TAG must not be empty: an empty tag would match "
+                "every module title. Unset it for the default [no-ai]."
             )
         if self.reset_notice_enabled:
             raise ValueError(

@@ -30,7 +30,7 @@ from vektra_shared.types import QueryEmbedding, SearchFilters, SearchMode
 
 #: the metadata key the ingest pipeline binds every course document to (FEAT-028)
 CMID_KEY = "cmid"
-#: and the site it comes from (``context.materials.lms_site_key``): a cmid is unique per site
+#: and the site it comes from (``vektra_shared.site_key.lms_site_key``): a cmid is unique per site
 SITE_KEY = "lms_site"
 
 #: why a turn has no material: closed codes, safe to audit and to trace

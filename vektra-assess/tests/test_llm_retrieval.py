@@ -15,7 +15,6 @@ import pytest
 from vektra_assess.context.materials import (
     EligibleModule,
     course_namespace,
-    lms_site_key,
 )
 from vektra_assess.llm.retrieval import (
     FILTER_VIOLATION,
@@ -208,24 +207,3 @@ async def test_a_store_that_ignores_the_site_filter_voids_the_search() -> None:
     r = CourseMaterialRetriever(store, FakeEmbedder(), top_k=5)  # type: ignore[arg-type]
     got = await r.retrieve("psico-prova", "q", MODULES, SITE_KEY)
     assert got.reason == FILTER_VIOLATION and got.chunks == ()
-
-
-@pytest.mark.parametrize(
-    ("base_url", "key"),
-    [
-        ("https://Moodle.Example.IT/", "https://moodle.example.it"),
-        ("https://moodle.example.it:443/moodle/", "https://moodle.example.it/moodle"),
-        ("http://localhost:8080/moodle", "http://localhost:8080/moodle"),
-        ("HTTP://Host:80", "http://host"),
-        ("https://host/a/b?x=1#f", "https://host/a/b"),
-        ("ftp://host", None),
-        ("not a url", None),
-        ("", None),
-        (None, None),
-        ("https://user:pw@host", None),
-    ],
-)
-def test_the_site_key_is_the_normalised_base_url(
-    base_url: Any, key: str | None
-) -> None:
-    assert lms_site_key(base_url) == key

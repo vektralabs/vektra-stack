@@ -27,9 +27,10 @@ import structlog
 from sqlalchemy import text
 
 from vektra_assess.api.site_binding import bind_site
-from vektra_assess.context.materials import EligibleModule, lms_site_key
+from vektra_assess.context.materials import EligibleModule
 from vektra_assess.jobs import JobKind, enqueue_job
 from vektra_assess.llm.types import EligibilityRead
+from vektra_shared.site_key import lms_site_key
 
 log = structlog.get_logger(__name__)
 

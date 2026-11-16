@@ -182,7 +182,19 @@ So without a fix, v0.8.0 would have published a reference doc written in this cy
 - [ ] Canary chunks from a `[no-ai]` module, a hidden module and a restricted module never appear in the exact LLM request bytes or in QueryTrace (pgvector and Qdrant)
 - [ ] Hiding a module, or adding the tag, removes its chunks from discussion retrieval on the next ingest run; the removal is counted in the ingest summary
 - [ ] Saving RAG ON without the attestation is rejected with a field error; the attestation is audited
-- [ ] Spike result on the `availability` field is recorded in ARCH-070 (readable / unreadable) and selects rule 3 or its fallback
+- [x] Spike result on the `availability` field is recorded in ARCH-070 (readable / unreadable) and selects rule 3 or its fallback
+
+**Spike result 2026-11-16** (F1, Moodle 4.3.11+ and 5.2.4+, course PSICO-PROVA, test modules R0..R8; service account, read only):
+- module `visible`, `visibleoncoursepage` and raw `availability` JSON (group, date, completion) are READABLE through `core_course_get_contents`;
+- a section restricted by group is NOT readable: the service account passes the condition through `moodle/site:accessallgroups`, and `core_courseformat_get_state.hasrestrictions` needs `moodle/course:viewhiddensections`. Section date and completion restrictions show up as `uservisible = false` plus `availabilityinfo`;
+- design consequence: no ingest-time tagging. Instead, a LIVE course-wide eligibility allowlist on every RAG turn (ARCH-072 amendment 2026-11-16). Section group restrictions are covered by the teacher attestation (REQ-077 amendment). NFR-015 amendment adds the canary cases.
+
+**Work split** (branch `feat/assess-rag-exclusion`, kept off `develop` until the demo decision):
+1. vektra-shared: new `LmsProvider` member for the eligibility read (neutral types), plus guarded wrapper.
+2. vektra-moodle-discuss `provider/`: implement it over `core_course_get_contents`, release `provider-v0.9.0.dev4` (authorized 2026-11-16), pin it.
+3. vektra-moodle ingest pipeline: send `cmid` in the ingest metadata for every document.
+4. vektra-assess: retrieval function with the eligible-cmid filter before ranking, wired into the runner behind the flag; `[Materiale: <titolo>]` tags; field validation and attestation; canary suites.
+5. vektra-moodle-discuss plugin: unlock the RAG field and add the attestation checkbox.
 
 ---
 

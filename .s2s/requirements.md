@@ -945,6 +945,19 @@ Modular open-source platform for Retrieval-Augmented Generation (RAG) with speci
   - [ ] Help texts contain the pasted-rubric line and the D3 sentence
   - [ ] A quiz in 'separate groups' mode can be enabled; changing the cap after start does not alter that session's deadline; every change audited old/new
 - **Related**: BR-006, BR-007, BR-011, BR-013, REQ-081, REQ-082, REQ-087, REQ-091, REQ-099, EX-023
+- **Amendment 2026-11-16 (product owner; FEAT-028, ARCH-072 amendment 2026-11-16)**: the RAG
+  field ("Ricerca nei materiali del corso", default OFF) becomes settable. Saving it ON requires
+  a teacher ATTESTATION checkbox, recorded with author and time and audited old/new. Proposed
+  wording, to be agreed: "Confermo che le soluzioni e il materiale riservato del corso hanno
+  [no-ai] nel titolo e che nessuna sezione del corso è riservata a un gruppo." The help text
+  says which material is used (visible, unrestricted, untagged modules of this course) and that
+  Soluzione and pasted rubric are never searched. Saving RAG ON is refused with a field error
+  when the attestation is missing or when an ARCH-072 precondition is false; the operator flag
+  OFF keeps the field locked as today. Changing RAG applies to sessions not yet started.
+  Added acceptance criteria:
+  - [ ] RAG ON without the attestation -> field error; with it -> saved, audited old/new with the attestation
+  - [ ] Operator flag OFF -> field locked and RAG ON refused, as before
+  - [ ] An ACTIVE session keeps the RAG setting it started with
 
 #### REQ-078: Per-student extra time (accommodations)
 - **Priority**: must
@@ -2009,6 +2022,15 @@ With RAG OFF, no retrieval call happens at all.
   - [ ] Canary strings seeded in a hidden 'soluzioni' module: across at least 50 queries, 0 canary chunks appear in the retrieval trace (QueryTrace), not just in answers
   - [ ] With RAG OFF, 0 retrieval calls are recorded for discussion sessions
   - [ ] A module hidden after ingest is excluded from the next query
+- **Amendment 2026-11-16 (FEAT-028, ARCH-072 amendment 2026-11-16)**: "hidden from students"
+  is read as NOT ELIGIBLE under ARCH-072: hidden, stealth, any module availability condition,
+  section hidden or date/completion-restricted, opt-out tag in the title, or a chunk without
+  `cmid`. Section group restrictions are not readable and are covered by the REQ-077
+  attestation. Added acceptance criteria (canaries on pgvector and Qdrant, exact LLM request
+  bytes and QueryTrace):
+  - [ ] 0 canary chunks from each non-eligible kind (hidden, stealth, group, date, completion, tagged, restricted section by date) across at least 50 queries
+  - [ ] Adding a restriction or the tag to an eligible module excludes it from the next turn, with no re-ingest
+  - [ ] An Unreadable live eligibility read -> 0 retrieval calls in that turn, audited
 
 #### NFR-016: NFR-USE: accessibility of the discussion UI and transcript
 - **Priority**: must

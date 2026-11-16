@@ -2587,6 +2587,12 @@ The gate inputs and the HTML filterability depend on the unfinished WS spike. Th
     the right answer). The BR-011 structured-only path is the normal path.
   * rubric_display_settings, module_visibility_per_student, login-as cross-check: UNREADABLE on
     both (no WS surface). Rubric descriptors are therefore excluded (BR-011 fail closed, OQ-035).
+  * Added 2026-11-16 (FEAT-028 spike, PSICO-PROVA test modules R0..R8):
+    `module_material_eligibility` READABLE on both (`core_course_get_contents`: module
+    `visible`, `visibleoncoursepage`, raw `availability` JSON; section `visible`,
+    `uservisible`, `availabilityinfo`); `section_group_restriction` UNREADABLE on both
+    (service account passes group conditions through accessallgroups; covered by the REQ-077
+    attestation, ARCH-072 amendment 2026-11-16).
   * Reader rules: a `warnings[]` entry for a requested item, or a caller-relative `null`, maps to
     Unreadable; release state comes from `gradereport_user_get_grade_items.gradeishidden` and
     `mod_assign_get_submission_status.gradingstatus`, never from `mod_quiz_get_user_best_grade` or
@@ -2698,6 +2704,48 @@ CONF-005 resolved 4/4. No scope change, because REQ-077's field and its default 
 - (−) RAG ON may stay unavailable if per-student visibility proves unreadable
 
 *Related*: REQ-077, NFR-015, BR-013, OQ-031, ADR-0026, CONF-005
+
+**Amendment 2026-11-16 (product owner; FEAT-028; supersedes precondition (2))**:
+
+Precondition (2) can never hold: per-student visibility is unreadable through WS (OQ-031(1)).
+It is replaced by a COURSE-WIDE ELIGIBILITY allowlist, which needs no per-student read: a module
+is eligible only when it is visible to every enrolled student by construction. The allowlist is
+read LIVE on every RAG turn (TTL 0), so a module hidden, restricted or tagged after ingest drops
+out on the next turn without a re-ingest (NFR-015 "next query").
+
+A module (cmid) is ELIGIBLE iff ALL of the following hold in the live read
+(`core_course_get_contents`, service account; spike 2026-11-16, 4.3.11+ and 5.2.4+):
+- it is present in the read and `visible = 1`;
+- `visibleoncoursepage = 1` (stealth modules are excluded: conservative);
+- its raw `availability` is null (ANY condition excludes it: group, grouping, date, completion,
+  profile, nested trees);
+- its title does not contain the ingest opt-out tag (`INGEST_OPT_OUT_TAG`, default `[no-ai]`,
+  case-insensitive), the same rule as the course chatbot ingest;
+- its section has `visible = 1`, `uservisible = true` and no `availabilityinfo` (covers section
+  date and completion restrictions, which the service account does not bypass).
+
+Gap: a section restricted by GROUP or GROUPING is invisible to the service account, because
+`moodle/site:accessallgroups` makes the condition pass for it, and no WS returns the raw section
+availability (`core_courseformat_get_state.hasrestrictions` needs
+`moodle/course:viewhiddensections`, which the minimal role does not grant). The gap is covered by
+the TEACHER ATTESTATION (REQ-077), not by widening the role.
+
+Retrieval rules (unchanged in spirit, made concrete):
+- a chunk enters ranking only if its `cmid` metadata is in the turn's eligible set; a chunk
+  without `cmid` is excluded (the ingest pipeline must send `cmid`, plus the `courseid` already
+  bound to the namespace);
+- exclusion happens BEFORE ranking, inside the retrieval function, never by post-filtering;
+- an Unreadable live read means NO retrieval for that turn (fail closed), audited;
+- the activity's Soluzione and pasted rubric never enter the index or the retrieval path.
+
+Activation preconditions now read: (1) operator flag ON; (2) the live eligibility read is
+READABLE in the ARCH-070 matrix for the site release; (3) canary suite passes, as before; (4)
+dedicated namespace with `cmid` on every chunk, as before; (5) the teacher attestation is saved
+for the activity.
+
+Accepted residual risk (product owner, 2026-11-16): the opt-out tag is a denylist; an untagged
+solution file in a visible, unrestricted module reaches the model. The attestation makes the
+teacher responsible for it. To be reviewed with the DPO together with OQ-020.
 
 #### ARCH-073: Top-level vektra_assess module with stable external names and import-linter contracts
 

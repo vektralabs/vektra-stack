@@ -20,8 +20,9 @@ def lms_site_key(base_url: str | None) -> str | None:
 
     Normalised as:
     ``scheme://host[:port][/path]``, scheme and host lowercased, a default port (80 / 443)
-    dropped, no trailing ``/``, no query, no fragment, no credentials. None when it is not an
-    absolute http(s) URL (the turn then has no material)."""
+    dropped, no trailing ``/``, no query, no fragment, and any userinfo (``user:pw@``)
+    removed. None when it is not an absolute http(s) URL with a host: the site is then not
+    usable for course material (no fallback)."""
     if not base_url:
         return None
     try:
@@ -31,7 +32,7 @@ def lms_site_key(base_url: str | None) -> str | None:
         return None
     scheme = parts.scheme.lower()
     host = (parts.hostname or "").lower()
-    if scheme not in _DEFAULT_PORTS or not host or "@" in parts.netloc:
-        return None
+    if scheme not in _DEFAULT_PORTS or not host:
+        return None  # only http(s), with a host: anything else is not a usable site
     netloc = host if port in (None, _DEFAULT_PORTS[scheme]) else f"{host}:{port}"
     return f"{scheme}://{netloc}{parts.path.rstrip('/')}"

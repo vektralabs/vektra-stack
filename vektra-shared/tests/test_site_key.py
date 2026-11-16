@@ -28,7 +28,10 @@ from vektra_shared.site_key import lms_site_key
         ("https://host:99999", None),
         ("", None),
         (None, None),
-        ("https://user:pw@host", None),
+        # userinfo is removed (the ingest side does the same), never a reason to refuse
+        ("https://user:pw@host", "https://host"),
+        ("http://user:pw@H:80/x/", "http://h/x"),
+        ("ftp://h", None),
     ],
 )
 def test_the_site_key_is_the_normalised_root_url(

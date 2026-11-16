@@ -66,6 +66,25 @@ class Retrieval:
         return tuple(sorted({c.cmid for c in self.chunks}))
 
 
+#: what a title may not carry in the prompt: the block's own fences and quote, and the square
+#: brackets of a citation tag (a ``]`` inside would end ``[Materiale: ...]`` early)
+_TITLE_REPLACE = (
+    ("<<<", "< < <"),
+    (">>>", "> > >"),
+    ('"', "'"),
+    ("[", "("),
+    ("]", ")"),
+)
+
+
+def display_title(title: str) -> str:
+    """A module title as the prompt shows it AND as ``[Materiale: <titolo>]`` must cite it: one
+    rewrite for both, so the tag the model copies from the block resolves (FEAT-028)."""
+    for old, new in _TITLE_REPLACE:
+        title = title.replace(old, new)
+    return " ".join(title.split())
+
+
 def cmid_of(metadata: Mapping[str, Any]) -> int | None:
     """The chunk's cmid binding: a JSON integer, or a string of ASCII digits (the providers
     return what the payload holds). Anything else, a bool included, is no binding."""
@@ -132,6 +151,12 @@ class CourseMaterialRetriever:
                 # the store returned a chunk outside the filter: nothing of this search is used
                 return Retrieval((), searched=True, reason=FILTER_VIOLATION)
             chunks.append(
-                MaterialChunk(r.chunk_id, cmid, titles[cmid], r.text_snippet, r.score)
+                MaterialChunk(
+                    r.chunk_id,
+                    cmid,
+                    display_title(titles[cmid]),
+                    r.text_snippet,
+                    r.score,
+                )
             )
         return Retrieval(tuple(chunks), searched=True)

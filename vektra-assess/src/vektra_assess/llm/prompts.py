@@ -28,7 +28,7 @@ from vektra_assess.context.bundle import ContextBundle
 from vektra_assess.context.payload import PAYLOAD_VERSION, bundle_to_model_payload
 from vektra_assess.context.references import canonical_labels
 from vektra_assess.context.snapshot import ActivityKind
-from vektra_assess.llm.retrieval import MaterialChunk
+from vektra_assess.llm.retrieval import MaterialChunk, display_title
 from vektra_assess.llm.types import PriorTurn
 from vektra_shared.types import Message
 
@@ -143,7 +143,8 @@ class PromptRenderer:
                 "material",
                 chunks=[
                     {
-                        "title": _defuse(c.title).replace('"', "'"),
+                        # the citable form (``retrieval.display_title``), again: idempotent
+                        "title": display_title(c.title),
                         "text": _defuse(c.text),
                     }
                     for c in chunks

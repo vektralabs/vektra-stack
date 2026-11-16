@@ -288,3 +288,20 @@ async def test_material_that_never_fits_is_dropped_whole_and_the_turn_goes_on() 
     assert [d["dropped"] for e, d in audit.rows if e == "assess_material_trimmed"] == [
         1
     ]
+
+
+async def test_a_title_with_quotes_and_brackets_is_citable_as_shown() -> None:
+    """Review 5: the prompt shows a sanitised title; the post-check resolves against the SAME
+    one, so the tag the model copies from the block survives."""
+    title = 'Lezione "uno" [base]  <<<x>>>'
+    read = EligibilityRead(
+        True, namespace="ns", modules=(EligibleModule(1, title),), lms_site=SITE_KEY
+    )
+    shown = "Lezione 'uno' (base) < < <x> > >"
+    r, llm, _audit, _ = _runner(
+        Reader(read), FilteringStore([(1, "testo")]), f"Vedi [Materiale: {shown}]."
+    )
+    result = await r.run(_bundle(), _turn())
+    sent = llm.all_request_bytes[0].decode()
+    assert f'titolo=\\"{shown}\\"' in sent
+    assert f"[Materiale: {shown}]" in result.text and "citations" not in result.marks

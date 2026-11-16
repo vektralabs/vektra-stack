@@ -693,3 +693,25 @@ class ModelActivationOrm(Base):
     hard_pass: Mapped[bool] = mapped_column(BOOLEAN)
     activated_at: Mapped[datetime] = _ts(default=True)
     activated_by_key_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True))
+
+
+class MaterialReadOrm(Base):
+    """Revision a0007 (FEAT-028): one RAG turn's live eligibility read, written by the worker,
+    read and deleted by the API (module ids and titles only, never content)."""
+
+    __tablename__ = "assess_material_reads"
+
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
+    session_id: Mapped[UUID] = mapped_column(
+        ForeignKey("assess_sessions.id", ondelete="CASCADE")
+    )
+    site_id: Mapped[UUID] = mapped_column(
+        ForeignKey("assess_sites.id", ondelete="CASCADE")
+    )
+    readable: Mapped[bool] = mapped_column(Boolean)
+    reason: Mapped[str | None] = mapped_column(TEXT)
+    namespace: Mapped[str | None] = mapped_column(TEXT)
+    modules: Mapped[list[Any] | None] = mapped_column(JSONB)
+    read_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), server_default=text("clock_timestamp()")
+    )

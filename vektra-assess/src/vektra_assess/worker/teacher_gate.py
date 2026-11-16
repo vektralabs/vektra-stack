@@ -45,17 +45,36 @@ KINDS = ("quiz", "assign")
 
 class TeacherGateSource(Protocol):
     async def teacher_facts(
-        self, site_id: UUID, cmid: int, courseid: int, kind: str
+        self,
+        site_id: UUID,
+        cmid: int,
+        courseid: int,
+        kind: str,
+        *,
+        read_modules: bool = False,
     ) -> dict[str, Any]: ...
 
 
 # ``refreshed_at`` is the database clock read BEFORE the LMS reads (the API compares it with
 # the same clock): a slow read never makes its list look fresher than it is
 _CLOCK = text("SELECT clock_timestamp()")
+#: FEAT-028 review 9: ``course_modules_readable`` is read only by a RAG refresh. It is stored with
+#: ``course_modules_read_at`` (epoch of the clock read before the LMS reads), and an ordinary
+#: refresh of the SAME hint keeps both, so the config PUT judges that read's own freshness
+_NEW_INPUTS = (
+    "(CAST(:i AS jsonb) || CASE WHEN CAST(:i AS jsonb) ? 'course_modules_readable' "
+    "THEN jsonb_build_object('course_modules_read_at', "
+    "floor(extract(epoch FROM CAST(:t AS timestamptz)))::bigint) ELSE '{}'::jsonb END)"
+)
 _UPSERT = text(
     "INSERT INTO assess_teacher_gate (site_id, cmid, inputs, refreshed_at) "
-    "VALUES (:s, :c, CAST(:i AS jsonb), :t) ON CONFLICT (site_id, cmid) "
-    "DO UPDATE SET inputs = EXCLUDED.inputs, refreshed_at = EXCLUDED.refreshed_at "
+    f"VALUES (:s, :c, {_NEW_INPUTS}, :t) ON CONFLICT (site_id, cmid) "
+    "DO UPDATE SET inputs = CASE WHEN EXCLUDED.inputs ? 'course_modules_readable' "
+    "OR assess_teacher_gate.inputs->'hint' IS DISTINCT FROM EXCLUDED.inputs->'hint' "
+    "THEN EXCLUDED.inputs ELSE EXCLUDED.inputs || jsonb_strip_nulls(jsonb_build_object("
+    "'course_modules_readable', assess_teacher_gate.inputs->'course_modules_readable', "
+    "'course_modules_read_at', assess_teacher_gate.inputs->'course_modules_read_at')) END, "
+    "refreshed_at = EXCLUDED.refreshed_at "
     # a read that resolved nothing (not in that course, or a transient failure) for ANOTHER
     # hint never replaces a resolved row: a wrong course in some request must not turn the
     # activity's facts into activity_not_in_course (review of #221). The row's own hint
@@ -78,14 +97,18 @@ async def refresh_teacher_gate(
     cmid: int,
     courseid: int,
     kind: str,
+    *,
+    read_modules: bool = False,
 ) -> dict[str, Any]:
     """Read the facts fresh and store them, dated when the reads began; returns what was
-    stored."""
+    stored. ``read_modules``: a RAG save asked for the course-module readability too."""
     async with acquire() as conn:
         observed_at = (await conn.execute(_CLOCK)).scalar()
         await conn.rollback()
     try:
-        facts = await source.teacher_facts(site_id, cmid, courseid, kind)
+        facts = await source.teacher_facts(
+            site_id, cmid, courseid, kind, read_modules=read_modules
+        )
     except Exception as exc:  # a reader bug is "unreadable", never a guess
         log.warning("assess_teacher_gate_error", error_type=type(exc).__name__)
         facts = {"resolved": False, "reason": "error"}
@@ -119,6 +142,14 @@ def make_teacher_gate_handler(
             return  # a malformed job is a stale no-op
         if kind not in KINDS or cmid < 1 or courseid < 1:
             return
-        await refresh_teacher_gate(source, ctx.acquire, site_id, cmid, courseid, kind)
+        await refresh_teacher_gate(
+            source,
+            ctx.acquire,
+            site_id,
+            cmid,
+            courseid,
+            kind,
+            read_modules=ctx.args.get("rag") == 1,
+        )
 
     return handle

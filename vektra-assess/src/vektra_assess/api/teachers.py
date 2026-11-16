@@ -86,7 +86,8 @@ NOT_IN_COURSE = "activity_not_in_course"
 
 #: the one read of an activity's cached facts (the role checks and ``gate-refresh``)
 GATE_ROW = text(
-    "SELECT inputs, refreshed_at, extract(epoch FROM clock_timestamp() - refreshed_at) AS age_s "
+    "SELECT inputs, refreshed_at, extract(epoch FROM clock_timestamp() - refreshed_at) AS age_s, "
+    "extract(epoch FROM clock_timestamp())::float AS db_now "
     "FROM assess_teacher_gate WHERE site_id = :s AND cmid = :c"
 )
 
@@ -120,6 +121,8 @@ class TeacherGate:
     facts: dict[str, Any] = field(default_factory=dict)
     #: the row's age in seconds when it was checked (None: no row)
     age_s: float | None = None
+    #: the database clock (epoch seconds) when it was checked (None: no row)
+    db_now: float | None = None
 
     @property
     def ok(self) -> bool:
@@ -138,6 +141,7 @@ async def queue_teacher_gate(
     kind: str | None,
     *,
     follow_up: bool = False,
+    rag: bool = False,
 ) -> bool:
     """Queue a refresh for this hint, in the caller's transaction. ``follow_up``: beside a
     pending one (which may already be running and have read before a change), queue the single
@@ -154,6 +158,11 @@ async def queue_teacher_gate(
         "activity_type": str(kind),
     }
     key = teacher_gate_dedupe_key(site, cmid, int(courseid), str(kind))
+    if rag:
+        # FEAT-028 review 9: this refresh also reads the course-module readability; its own
+        # dedupe key, so a pending ordinary refresh never swallows it
+        args["rag"] = 1  # job args are strings or integer ids only
+        key += ":rag"
     if not follow_up:
         return await enqueue_job(conn, JobKind.TEACHER_GATE, args, dedupe_key=key)
     return await enqueue_with_followup(
@@ -161,7 +170,8 @@ async def queue_teacher_gate(
         JobKind.TEACHER_GATE,
         args,
         key,
-        teacher_gate_followup_dedupe_key(site, cmid, int(courseid), str(kind)),
+        teacher_gate_followup_dedupe_key(site, cmid, int(courseid), str(kind))
+        + (":rag" if rag else ""),
     )
 
 
@@ -241,7 +251,8 @@ async def check_fresh_teacher(
         int(e) for e in members if isinstance(e, int) and not isinstance(e, bool)
     }:
         return TeacherGate(refused, facts, age)
-    return TeacherGate(TeacherCheck.OK, facts, age)
+    db_now = float(row.db_now) if row is not None and row.db_now is not None else None
+    return TeacherGate(TeacherCheck.OK, facts, age, db_now)
 
 
 def gate_hint(gate: TeacherGate) -> tuple[int, str] | None:
@@ -266,7 +277,7 @@ async def queue_after_refusal(
 
 
 async def refresh_after_fact_refusal(
-    engine: Any, site: UUID, cmid: int, gate: TeacherGate
+    engine: Any, site: UUID, cmid: int, gate: TeacherGate, *, rag: bool = False
 ) -> bool:
     """A refusal decided on an LMS fact of ``gate``: queue a refresh of the row in its own
     transaction (the refused request's rolls back), coalesced with a pending refresh and its
@@ -278,7 +289,10 @@ async def refresh_after_fact_refusal(
     if hint is None:
         return False
     return await queue_after_refusal(
-        engine, lambda conn: queue_teacher_gate(conn, site, cmid, *hint, follow_up=True)
+        engine,
+        lambda conn: queue_teacher_gate(
+            conn, site, cmid, *hint, follow_up=True, rag=rag
+        ),
     )
 
 

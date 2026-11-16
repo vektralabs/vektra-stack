@@ -392,9 +392,10 @@ the attestation on record is kept. The RAG fields may travel in a PUT of their o
 sends them after the PUT with the other fields, with the `expected_version` that one returned):
 a body with only the required fields plus `rag_enabled` (and `rag_attested`) is valid, and a
 refused one changes nothing;
-`rag_unavailable` + `reason: eligibility_unreadable` when the worker's latest read of the
-activity's facts (the `teacher_gate` job, at most `VEKTRA_ASSESS_TEACHER_GATE_MAX_AGE_S` old)
-could not read the course's module eligibility. The last one is an LMS-fact refusal: a refresh
+`rag_unavailable` + `reason: eligibility_unreadable` when the course's module eligibility was
+not read as READABLE by the worker within the last `VEKTRA_ASSESS_TEACHER_GATE_MAX_AGE_S` (only a
+refresh queued by such a refusal reads it: an ordinary `teacher_gate` refresh does not, and keeps
+the last read with its time). The last one is an LMS-fact refusal: a refresh
 is queued and, when it is the only kind of error, `retry_after_s` is set. The attestation is
 recorded (`rag_attested_at`, and the actor) when RAG turns ON, kept while it stays ON and cleared
 when RAG turns OFF; both `rag_enabled` and the attestation are audited old/new

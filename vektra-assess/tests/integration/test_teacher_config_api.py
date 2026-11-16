@@ -688,13 +688,20 @@ async def test_a_secret_without_the_sealing_key_is_refused_and_saves_nothing(
 # --- FEAT-028: RAG ON with the teacher's attestation (REQ-077 amendment 2026-11-16) ----------
 
 
-async def _rag_ready(pg, pair, readable: Any = True):  # type: ignore[no-untyped-def]
+async def _rag_ready(pg, pair, readable: Any = True, read_age_s: int | None = 0):  # type: ignore[no-untyped-def]
+    """``read_age_s``: how old the worker's course-module read is (None: no read time)."""
+    import time
+
     ctx = world(pg, default_settings(
         VEKTRA_ASSESS_RECIPIENT_DOMAINS="uni.example", VEKTRA_ASSESS_RAG_ENABLED=True
     ))  # fmt: skip
     w = await ctx.__aenter__()
     w.app.state.assess_keys[route.PUBLIC_KEY] = pair[0]
-    facts = {} if readable is None else {"course_modules_readable": readable}
+    facts: dict[str, Any] = (
+        {} if readable is None else {"course_modules_readable": readable}
+    )
+    if readable is not None and read_age_s is not None:
+        facts["course_modules_read_at"] = int(time.time()) - read_age_s
     await seed_gate(pg, w.site, 60, **facts)
     return ctx, w
 
@@ -859,5 +866,36 @@ async def test_the_view_says_whether_rag_is_available(pg, pair) -> None:  # type
         got = (await w.client.get(url(60), headers=get_headers())).json()
         # the per-turn eligibility is not consulted: unreadable facts, still available
         assert got["rag_available"] is True and got["rag_unavailable_reason"] is None
+    finally:
+        await ctx.__aexit__(None, None, None)
+
+
+@pytest.mark.parametrize("read_age_s", [None, 100_000])
+async def test_a_readability_without_a_fresh_read_time_asks_for_a_rag_refresh(
+    pg, pair, read_age_s: int | None
+) -> None:  # type: ignore[no-untyped-def]
+    """Review 9: the course-module readability counts only when read recently (within the
+    teacher-gate freshness bound); otherwise the save is refused and a RAG refresh is queued
+    (a teacher_gate job that reads course_modules), with the retry hint."""
+    ctx, w = await _rag_ready(pg, pair, True, read_age_s)
+    try:
+        r = await w.client.put(
+            url(60),
+            json=body(rag_enabled=True, rag_attested=True),
+            headers=auth("teacher"),
+        )
+        assert r.status_code == 400, r.text
+        assert err(r)["details"]["fields"] == [
+            {"field": "rag_enabled", "code": "rag_unavailable",
+             "reason": "eligibility_unreadable"}
+        ]  # fmt: skip
+        assert err(r)["details"]["retry_after_s"] > 0
+        queued = await pg.run(
+            "super",
+            "SELECT args FROM assess_jobs WHERE kind = 'teacher_gate' "
+            "AND args->>'site_id' = :s AND args->>'rag' = '1'",
+            {"s": str(w.site)},
+        )
+        assert queued, "no RAG refresh was queued"
     finally:
         await ctx.__aexit__(None, None, None)

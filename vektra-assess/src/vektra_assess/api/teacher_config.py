@@ -90,6 +90,7 @@ from vektra_assess.teacher.schemas import (
     field_errors,
     state,
 )
+from vektra_assess.timing import CLOCK_SKEW_TOLERANCE_S
 from vektra_shared.auth import ApiKeyInfo, require_exact_scope
 
 log = structlog.get_logger(__name__)
@@ -189,8 +190,10 @@ async def _refuse_invalid(
     came from, so an end date refused against the teacher's own attested opening is not
     taken for an LMS fact."""
     on_facts = [e for e in errors if v.is_lms_fact_error(e, opening_source)]
+    # a RAG refusal on the course-module readability asks for the refresh that reads it
+    rag = any(e.extra.get("reason") == "eligibility_unreadable" for e in on_facts)
     queued = bool(on_facts) and await refresh_after_fact_refusal(
-        engine_of(request), site, cmid, gate
+        engine_of(request), site, cmid, gate, rag=rag
     )
     retry = queued and len(on_facts) == len(errors)
     err = config_invalid(
@@ -215,6 +218,23 @@ def _facts(gate: TeacherGate) -> v.ActivityFacts:
         grading_method=method if isinstance(method, str) else None,
         lms_rubric=flag("lms_rubric"),
     )
+
+
+def _fresh_modules_readable(gate: TeacherGate, max_age_s: float) -> bool | None:
+    """The worker's course-module readability, only when its own read is fresh (review 9: a
+    RAG refresh reads it, an ordinary refresh keeps it with its read time). None: never read,
+    or too old: the save is refused as an LMS fact and a RAG refresh is queued."""
+    readable = gate.facts.get("course_modules_readable")
+    read_at = gate.facts.get("course_modules_read_at")
+    if (
+        not isinstance(readable, bool)
+        or not isinstance(read_at, int)
+        or isinstance(read_at, bool)
+        or gate.db_now is None
+    ):
+        return None
+    age = gate.db_now - read_at
+    return readable if -CLOCK_SKEW_TOLERANCE_S <= age <= max_age_s else None
 
 
 async def _setup_green(conn: Any, site: UUID) -> bool:
@@ -316,7 +336,7 @@ async def _save(
         new["show_solution"] = body.show_solution
     if body.rag_enabled is not None:
         new["rag_enabled"] = body.rag_enabled
-        readable = gate.facts.get("course_modules_readable")
+        readable = _fresh_modules_readable(gate, settings.teacher_gate_max_age_s)
         # re-sending ON while it is already ON changes nothing: no new attestation, no new
         # eligibility check (the attestation on record is kept); the operator flag still holds
         unchanged_on = body.rag_enabled and old["rag_enabled"]
@@ -324,9 +344,7 @@ async def _save(
             body.rag_enabled,
             operator_flag=bool(settings.rag_enabled),
             attested=unchanged_on or body.rag_attested is True,
-            eligibility_readable=True
-            if unchanged_on
-            else (readable if isinstance(readable, bool) else None),
+            eligibility_readable=True if unchanged_on else readable,
         )
     if body.given("available_until"):
         end = body.available_until

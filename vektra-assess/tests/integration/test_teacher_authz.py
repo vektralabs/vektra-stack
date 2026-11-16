@@ -230,3 +230,60 @@ async def test_the_facts_are_dated_when_they_were_read_not_when_stored(
     # refresh was called (so the old stamp of an existing row was replaced), not after the
     # Moodle read began (so the 2 s read is not counted as fresh)
     assert t0 <= stamp <= began[0], (t0, stamp, began[0])
+
+
+async def test_an_ordinary_refresh_keeps_the_last_course_module_read(pg) -> None:  # type: ignore[no-untyped-def]
+    """Review 9: course_modules is read only by a RAG refresh; an ordinary refresh afterwards
+    keeps that read's result and its time (same hint), so the save can still judge freshness."""
+    from vektra_assess.worker.teacher_gate import refresh_teacher_gate
+
+    class Facts:
+        def __init__(self) -> None:
+            self.asked: list[bool] = []
+
+        async def teacher_facts(self, *_a, read_modules: bool = False, **_k):  # type: ignore[no-untyped-def]
+            self.asked.append(read_modules)
+            out = {"resolved": True, "editors": [EDITOR]}
+            if read_modules:
+                out["course_modules_readable"] = True
+            return out
+
+    site = await make_site(pg)
+    src = Facts()
+    engine = create_async_engine(pg.url("worker"))
+    try:
+        await refresh_teacher_gate(
+            src, engine.connect, site, 58, COURSE, "assign", read_modules=True
+        )
+        first = (
+            await pg.run(
+                "super",
+                "SELECT inputs FROM assess_teacher_gate WHERE site_id = :s AND cmid = 58",
+                {"s": site},
+            )
+        )[0][0]
+        await refresh_teacher_gate(src, engine.connect, site, 58, COURSE, "assign")
+        second = (
+            await pg.run(
+                "super",
+                "SELECT inputs FROM assess_teacher_gate WHERE site_id = :s AND cmid = 58",
+                {"s": site},
+            )
+        )[0][0]
+        await refresh_teacher_gate(src, engine.connect, site, 58, COURSE + 1, "assign")
+        other = (
+            await pg.run(
+                "super",
+                "SELECT inputs FROM assess_teacher_gate WHERE site_id = :s AND cmid = 58",
+                {"s": site},
+            )
+        )[0][0]
+    finally:
+        await engine.dispose()
+    assert src.asked == [True, False, False]
+    assert first["course_modules_readable"] is True
+    assert isinstance(first["course_modules_read_at"], int)
+    assert second["course_modules_readable"] is True
+    assert second["course_modules_read_at"] == first["course_modules_read_at"]
+    # another hint is another resolution: nothing carried over
+    assert "course_modules_readable" not in other

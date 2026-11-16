@@ -252,7 +252,13 @@ class LmsStartSource:
         return res.value if isinstance(res, Readable) else None
 
     async def teacher_facts(
-        self, site_id: UUID, cmid: int, courseid: int, kind: str
+        self,
+        site_id: UUID,
+        cmid: int,
+        courseid: int,
+        kind: str,
+        *,
+        read_modules: bool = False,
     ) -> dict[str, Any]:
         """The activity-level facts of ``assess_teacher_gate`` (plan assess-teacher-ops): the
         cmid resolved INSIDE the hinted course only, then, concurrently, its editors (REQ-077),
@@ -322,9 +328,10 @@ class LmsStartSource:
             out["editors"] = _ids(editors.value)
         if isinstance(graders, Readable):
             out["graders"] = _ids(graders.value)
-        if self._rag_tag is not None:
+        if self._rag_tag is not None and read_modules:
             # REQ-077 amendment: RAG ON is saved only while the course's module eligibility is
-            # READABLE (a flag, never the modules: those are read live on every RAG turn)
+            # READABLE (a flag, never the modules: those are read live on every RAG turn). Read
+            # only for a refresh a RAG save queued (review 9), never on every refresh
             modules = await lms.course_modules(ref.course_id)
             out["course_modules_readable"] = isinstance(modules, Readable)
         return out

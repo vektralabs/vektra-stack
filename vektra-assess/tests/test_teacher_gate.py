@@ -298,7 +298,9 @@ def test_the_automatic_close_is_the_start_gates_formula() -> None:
 # --- FEAT-028: whether the course's module eligibility is readable -----------------------------
 
 
-async def test_course_modules_are_read_only_with_the_operator_flag() -> None:
+async def test_course_modules_are_read_only_when_a_rag_save_asks_for_them() -> None:
+    """Review 9: a refresh reads course_modules only with the operator flag ON AND when the
+    refresh was queued for a RAG save (``read_modules``); never on every refresh."""
     fake = FakeLmsProvider(_world())
 
     @asynccontextmanager
@@ -306,14 +308,44 @@ async def test_course_modules_are_read_only_with_the_operator_flag() -> None:
         yield _Conn([])
 
     off = LmsStartSource(fake, None, acquire)  # type: ignore[arg-type]
-    got = await off.teacher_facts(SITE, ASSIGN_ACTIVITY, COURSE, "assign")
-    assert "course_modules_readable" not in got
-    assert fake.count("course_modules") == 0
+    got = await off.teacher_facts(
+        SITE, ASSIGN_ACTIVITY, COURSE, "assign", read_modules=True
+    )
+    assert "course_modules_readable" not in got  # flag off: never
     on = LmsStartSource(fake, None, acquire, rag_opt_out_tag="[no-ai]")  # type: ignore[arg-type]
     got = await on.teacher_facts(SITE, ASSIGN_ACTIVITY, COURSE, "assign")
+    assert "course_modules_readable" not in got  # an ordinary refresh: never
+    assert fake.count("course_modules") == 0
+    got = await on.teacher_facts(
+        SITE, ASSIGN_ACTIVITY, COURSE, "assign", read_modules=True
+    )
     assert got["course_modules_readable"] is True
-    # a flag only: no module, no title in the facts
-    assert "Lesson" not in json.dumps(got)
+    assert "Lesson" not in json.dumps(got)  # a flag only: no module, no title
     fake.world.course_module_facts.pop(COURSE)
-    got = await on.teacher_facts(SITE, ASSIGN_ACTIVITY, COURSE, "assign")
+    got = await on.teacher_facts(
+        SITE, ASSIGN_ACTIVITY, COURSE, "assign", read_modules=True
+    )
     assert got["course_modules_readable"] is False
+
+
+async def test_the_handler_reads_the_modules_only_for_a_rag_job() -> None:
+    fake = FakeLmsProvider(_world())
+    sink: list[Any] = []
+
+    @asynccontextmanager
+    async def acquire():  # type: ignore[no-untyped-def]
+        yield _Conn(sink)
+
+    src = LmsStartSource(fake, None, acquire, rag_opt_out_tag="[no-ai]")  # type: ignore[arg-type]
+    handler = make_teacher_gate_handler(src)
+    args = {"site_id": str(SITE), "cmid": ASSIGN_ACTIVITY, "courseid": COURSE,
+            "activity_type": "assign"}  # fmt: skip
+    await handler(
+        JobContext(1, JobKind.TEACHER_GATE, args, 1, acquire, logging.getLogger())
+    )
+    assert fake.count("course_modules") == 0
+    await handler(
+        JobContext(2, JobKind.TEACHER_GATE, {**args, "rag": 1}, 1, acquire,
+                   logging.getLogger())
+    )  # fmt: skip
+    assert fake.count("course_modules") == 1

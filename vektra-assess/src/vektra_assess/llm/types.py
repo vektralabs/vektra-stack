@@ -46,7 +46,11 @@ class EligibilityRead:
 class EligibilityReader(Protocol):
     """Asks the worker for one turn's eligibility and waits a bounded time (the API adapter)."""
 
-    async def __call__(self, session_id: UUID, site_id: UUID) -> EligibilityRead: ...
+    async def __call__(
+        self, session_id: UUID, site_id: UUID, stop: Any = None
+    ) -> EligibilityRead:
+        """``stop``: the turn's ``asyncio.Event``; once set, the wait ends at once."""
+        ...
 
 
 #: why a provider call ended in an outage: a CLOSED set of codes, safe to log and to audit. Derived

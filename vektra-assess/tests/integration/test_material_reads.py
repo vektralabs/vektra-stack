@@ -316,3 +316,33 @@ async def test_a_teacher_withdrawal_stops_the_material_of_the_next_turn(pg: Pg) 
         await worker.dispose()
     assert out["ok"] is False and out["reason"] == "rag_withdrawn"
     assert source.calls == 0  # no LMS read at all
+
+
+async def test_the_wait_backs_off_and_stops_when_the_turn_stops(
+    pg: Pg, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Review 8: polls back off 50 ms -> 500 ms, and a stopped turn (client gone, cut deadline)
+    ends the wait at once instead of after the timeout."""
+    sid, site = await _session(pg)
+    api = create_async_engine(pg.url("api"))
+    delays: list[float] = []
+    real_sleep = asyncio.sleep
+
+    async def record(d: float) -> None:
+        delays.append(round(d, 3))
+        await real_sleep(min(d, 0.05))
+
+    monkeypatch.setattr(material_reads.asyncio, "sleep", record)
+    stop = asyncio.Event()
+    try:
+        reader = ApiEligibilityReader(api, timeout_s=30)
+        asyncio.get_running_loop().call_later(0.6, stop.set)
+        t0 = asyncio.get_running_loop().time()
+        read = await reader(sid, site, stop=stop)
+        took = asyncio.get_running_loop().time() - t0
+    finally:
+        await api.dispose()
+    assert not read.readable and read.reason == "stopped"
+    assert took < 5  # not the 30 s timeout
+    assert delays[:5] == [0.05, 0.1, 0.2, 0.4, 0.5]
+    assert max(delays) <= 0.5

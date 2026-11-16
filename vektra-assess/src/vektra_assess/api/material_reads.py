@@ -35,8 +35,11 @@ log = structlog.get_logger(__name__)
 
 TIMEOUT = "timeout"
 ENQUEUE_FAILED = "enqueue_failed"
+STOPPED = "stopped"  # the turn itself stopped (client gone, cut deadline) while waiting
 #: the outcome codes ``observe`` receives
-OUTCOMES = ("readable", "unreadable", TIMEOUT, ENQUEUE_FAILED)
+OUTCOMES = ("readable", "unreadable", TIMEOUT, ENQUEUE_FAILED, STOPPED)
+#: the polls back off from the first to the last delay, doubling (review 8)
+POLL_FIRST_S, POLL_MAX_S = 0.05, 0.5
 
 _CLOCK = text("SELECT clock_timestamp()")
 _SITE = text("SELECT base_url FROM assess_sites WHERE id = :s")
@@ -45,6 +48,20 @@ _ROW = text(
     "WHERE id = :rid AND session_id = :sid AND site_id = :site AND read_at >= :t0"
 )
 _DELETE = text("DELETE FROM assess_material_reads WHERE id = :rid AND site_id = :site")
+
+
+async def _wait(stop: asyncio.Event | None, seconds: float) -> None:
+    """Sleep ``seconds``, or less when ``stop`` is set meanwhile."""
+    if stop is None:
+        await asyncio.sleep(seconds)
+        return
+    waiter = asyncio.ensure_future(stop.wait())
+    sleeper = asyncio.ensure_future(asyncio.sleep(seconds))
+    try:
+        await asyncio.wait({waiter, sleeper}, return_when=asyncio.FIRST_COMPLETED)
+    finally:
+        waiter.cancel()
+        sleeper.cancel()
 
 
 def dedupe_key(request_id: UUID) -> str:
@@ -75,14 +92,12 @@ class ApiEligibilityReader:
         engine: Any,
         *,
         timeout_s: float,
-        poll_s: float = 0.1,
         observe: Callable[[str, float], None] | None = None,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
         #: an AsyncEngine, or a zero-argument callable returning one (resolved per read)
         self._engine = engine
         self._timeout_s = timeout_s
-        self._poll_s = poll_s
         self._observe = observe
         self._clock = clock
 
@@ -109,7 +124,11 @@ class ApiEligibilityReader:
         )
         return read
 
-    async def __call__(self, session_id: UUID, site_id: UUID) -> EligibilityRead:
+    async def __call__(
+        self, session_id: UUID, site_id: UUID, stop: asyncio.Event | None = None
+    ) -> EligibilityRead:
+        """The eligibility of one turn; ``stop`` (the turn's own cancellation: the client went
+        away or the reply's cut deadline passed) ends the wait at the next poll."""
         started = self._clock()
         rid = uuid4()
         engine = self._engine_now()
@@ -144,7 +163,12 @@ class ApiEligibilityReader:
                 EligibilityRead(False, reason=ENQUEUE_FAILED),
             )
         deadline = started + self._timeout_s
+        delay = POLL_FIRST_S
         while True:
+            if stop is not None and stop.is_set():
+                return self._done(
+                    STOPPED, started, EligibilityRead(False, reason=STOPPED)
+                )
             try:
                 async with engine.begin() as conn:
                     await bind_site(conn, site_id)
@@ -168,7 +192,8 @@ class ApiEligibilityReader:
                 return self._done(
                     TIMEOUT, started, EligibilityRead(False, reason=TIMEOUT)
                 )
-            await asyncio.sleep(min(self._poll_s, left))
+            await _wait(stop, min(delay, left))
+            delay = min(delay * 2, POLL_MAX_S)
         if not row.readable:
             return self._done(
                 "unreadable",

@@ -345,7 +345,12 @@ class DiscussionTurnRunner:
             raise RagNotAvailableError("course material: the operator flag is off")
 
     async def _course_material(
-        self, bundle: ContextBundle, turn: StudentTurn, query: str, steps: _Steps
+        self,
+        bundle: ContextBundle,
+        turn: StudentTurn,
+        query: str,
+        steps: _Steps,
+        stop: asyncio.Event | None = None,
     ) -> Retrieval | None:
         """This turn's course material (FEAT-028): the LIVE eligibility read, then the search
         among the eligible modules only. None for a bundle without course material (no read, no
@@ -361,7 +366,7 @@ class DiscussionTurnRunner:
             read = EligibilityRead(False, reason="no_session")
         else:
             try:
-                read = await self._eligibility(turn.session_id, turn.site_id)
+                read = await self._eligibility(turn.session_id, turn.site_id, stop)
             except Exception as exc:
                 log.warning(
                     "assess_material_read_failed", error_type=type(exc).__name__
@@ -604,7 +609,9 @@ class DiscussionTurnRunner:
             )
             t = time.monotonic()
             history, history_changed = await self._student_history(turn, sh)
-            material = await self._course_material(bundle, turn, student_text, steps)
+            material = await self._course_material(
+                bundle, turn, student_text, steps, stop
+            )
             prompt, material = await self._fit_with_material(
                 bundle, history, student_text, language, material, turn, steps
             )

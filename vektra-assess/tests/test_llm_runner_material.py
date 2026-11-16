@@ -48,9 +48,13 @@ class Reader:
     def __init__(self, read: EligibilityRead | Exception) -> None:
         self.read = read
         self.calls: list[tuple[Any, Any]] = []
+        self.stops: list[Any] = []
 
-    async def __call__(self, session_id: Any, site_id: Any) -> EligibilityRead:
+    async def __call__(
+        self, session_id: Any, site_id: Any, stop: Any = None
+    ) -> EligibilityRead:
         self.calls.append((session_id, site_id))
+        self.stops.append(stop)
         if isinstance(self.read, Exception):
             raise self.read
         return self.read
@@ -331,3 +335,15 @@ async def test_a_live_material_session_on_an_api_without_rag_goes_on_without_it(
         "assess_material_unavailable",
         {"turn_index": 1, "reason_code": "rag_off_api"},
     ) in audit.rows
+
+
+async def test_the_turn_stop_reaches_the_eligibility_wait() -> None:
+    """Review 8: the reader gets the turn's stop event, so a stopped turn ends its wait."""
+    import asyncio
+
+    reader = Reader(READABLE)
+    r, _llm, _a, _t = _runner(reader, FilteringStore(CHUNKS), "Ecco.")
+    stop = asyncio.Event()
+    async for _ in r.run_stream(_bundle(), _turn(), stop):
+        pass
+    assert reader.stops == [stop]

@@ -149,7 +149,9 @@ class LiveFacts:
         self.facts = list(MODULES)
         self.readable = True
 
-    async def __call__(self, session_id: Any, site_id: Any) -> EligibilityRead:
+    async def __call__(
+        self, session_id: Any, site_id: Any, stop: Any = None
+    ) -> EligibilityRead:
         if not self.readable:
             return EligibilityRead(False, reason="modules_unreadable")
         return EligibilityRead(

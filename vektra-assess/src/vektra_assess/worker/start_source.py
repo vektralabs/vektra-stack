@@ -336,16 +336,25 @@ class LmsStartSource:
         | None
     ):
         """FEAT-028: the activity's course, resolved inside the STUDENT's courses (the same
-        authority as the Start gates), and its modules' course-wide visibility facts read NOW
-        (never cached: only the course resolution is). None when the site or the course cannot
-        be resolved."""
+        authority as the Start gates), and its modules' course-wide visibility facts, both read
+        NOW (nothing cached). None when the site or the course cannot be resolved (the student
+        is no longer in the course, or the read failed)."""
         lms = await self._site(target.site_id)
         if lms is None:
             return None
-        ref, _not_found = await self._resolve(lms, target)
-        if ref is None:
+        # TTL 0 (review 7): resolved fresh inside the student's courses on EVERY read, never
+        # through the resolution cache, and nothing is left in it: a student removed from the
+        # course has no material on the next turn, and the enrolment re-check sees no stale ref
+        self._resolved.pop(target.session_id)
+        res = await lms.resolve_activity(
+            user_id=target.student_userid,
+            activity_id=target.cmid,
+            kind=_kind(target.activity_type),
+            course_hint=target.courseid_hint,
+        )
+        if isinstance(res, Unreadable):
             return None
-        return ref, await lms.course_modules(ref.course_id)
+        return res.value, await lms.course_modules(res.value.course_id)
 
     @property
     def rag_opt_out_tag(self) -> str | None:

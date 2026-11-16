@@ -73,3 +73,27 @@ async def test_gate_facts_without_capture_never_grows_the_cache_past_its_bound()
     clock[0] += 61  # entries expire after their TTL
     source._resolved.sweep()
     assert len(source._resolved) == 0
+
+
+async def test_the_material_read_never_uses_the_resolution_cache() -> None:
+    """FEAT-028 review 7: TTL 0. A student removed from the course loses the material on the
+    next turn, and the material read leaves no ref behind for the enrolment re-check."""
+    from support.fake_lms import QUIZ_ACTIVITY
+
+    from vektra_shared.lms import NOT_IN_USER_COURSES, Unreadable, UnreadableReason
+
+    fake = FakeLmsProvider()
+    source = LmsStartSource(fake, parser=None, acquire=acquire)  # type: ignore[arg-type]
+    target = StartTarget(
+        uuid.uuid4(), uuid.uuid4(), QUIZ_ACTIVITY, USER, 10, "quiz", 1, {}
+    )
+    got = await source.course_material(target)
+    assert got is not None
+    assert len(source._resolved) == 0  # nothing cached for the enrolment re-check
+    fake.fail(
+        "resolve_activity",
+        Unreadable(UnreadableReason.ACCESS_EXCEPTION, NOT_IN_USER_COURSES),
+    )
+    assert await source.course_material(target) is None
+    assert fake.count("resolve_activity") == 2  # re-resolved on every read
+    assert await source.enrolled(target) is False  # and the re-check sees the removal

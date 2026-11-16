@@ -74,7 +74,7 @@ def eligible_modules(
 
 def course_namespace(shortname: str | None, course_id: int) -> str:
     """The Vektra namespace of a course: its short name slugified exactly as the ingest pipeline
-    does (vektra-moodle n8n README, "Namespace Convention"), so the discussion searches the
+    does (the LMS adapter's n8n README, "Namespace Convention"), so the discussion searches the
     namespace the course's material was ingested into: NFD with combining marks stripped,
     lowercase, every character outside ``[0-9a-z_-]`` -> ``-``, runs of ``-`` collapsed, leading
     and trailing ``-`` trimmed, at most 50 characters; an empty result is ``course-<id>``."""

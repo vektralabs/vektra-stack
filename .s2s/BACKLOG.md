@@ -161,6 +161,29 @@ So without a fix, v0.8.0 would have published a reference doc written in this cy
 
 **Traceability**: REQ-077, NFR-015, ARCH-072, CONF-005, OQ-031, ADR-0026; plans 20261101-154950-assess-teacher-ops, 20261101-154950-assess-llm-runner, 20261101-154950-assess-moodle-ws
 
+#### Proposal 2026-11-16 (product owner): exclusion rules instead of per-student visibility
+
+**Status of the proposal**: accepted by the product owner on 2026-11-16, to be developed right after the end-to-end test of the assessment discussion. It needs a spec and design amendment (ARCH-072, NFR-015, REQ-077) before code. Priority: high.
+
+**Why**: precondition 2 above can never be met. The OQ-025 spike showed that per-student module visibility is unreadable through Moodle WS (OQ-031(1)), so with the current rules RAG stays off for good. The main course chatbot already runs on course material with two exclusion rules that teachers know. The proposal reuses them, so the discussion stops depending on a reader that does not exist.
+
+**Proposed rules** (they replace precondition 2; preconditions 1, 3 and 4 stay):
+1. **Opt-out tag**: a module whose title contains the ingest opt-out tag (`INGEST_OPT_OUT_TAG`, default `[no-ai]`) is never in the index. It is the same rule and the same tag as the course chatbot ingest pipeline (vektra-moodle `n8n/README.md`, "Excluding material from the index"). Teachers use it for solutions and reserved material.
+2. **Hidden modules excluded, not only uncited**: chunks with `hidden_from_students: true` are excluded BEFORE ranking for discussions. In the course chatbot they stay searchable and uncited (FEAT-026); that is not acceptable here. Hiding or unhiding takes effect on the next ingest run, through the existing change detection.
+3. **Any availability restriction excludes the module** (group, grouping, date, completion, any condition). The rule is conservative: it gives up some material and does not need to know who the restriction is for. **To verify with a short spike**: whether the service account reads the module `availability` field through `core_course_get_contents`, so that the ingest can tag the chunks. If it is unreadable, rule 3 falls back to a teacher attestation that the course has no restricted modules.
+4. **Teacher attestation per activity**: saving RAG ON requires a confirmation, for example "I have tagged [no-ai] on solutions and reserved material, and no module meant for some students only is in the course". The wording is to be agreed. The attestation is recorded and audited, like the attested opening date.
+5. **Fixed limits**: the activity's Soluzione and pasted rubric never enter retrieval. RAG is OFF by default for each activity. Citations of material use the existing `[Materiale]` tag rules (REQ-093 area).
+
+**Accepted residual risk (product owner decision)**: rule 1 is a denylist. A solution file the teacher forgets to tag reaches the model. The course chatbot already accepts that risk; the attestation in rule 4 moves the responsibility to the teacher explicitly. Ask the DPO along with OQ-020.
+
+**Open**: course material must first be ingested into a namespace dedicated to the course (precondition 4). Check whether the existing course chatbot namespace can be reused, read-only, with the cmid binding on every chunk.
+
+**Acceptance criteria (in addition to the ones above)**:
+- [ ] Canary chunks from a `[no-ai]` module, a hidden module and a restricted module never appear in the exact LLM request bytes or in QueryTrace (pgvector and Qdrant)
+- [ ] Hiding a module, or adding the tag, removes its chunks from discussion retrieval on the next ingest run; the removal is counted in the ingest summary
+- [ ] Saving RAG ON without the attestation is rejected with a field error; the attestation is audited
+- [ ] Spike result on the `availability` field is recorded in ARCH-070 (readable / unreadable) and selects rule 3 or its fallback
+
 ---
 
 ### INFRA-009: the VM cannot build the image it deploys

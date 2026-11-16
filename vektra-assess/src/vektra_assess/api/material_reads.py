@@ -42,9 +42,9 @@ _CLOCK = text("SELECT clock_timestamp()")
 _SITE = text("SELECT base_url FROM assess_sites WHERE id = :s")
 _ROW = text(
     "SELECT readable, reason, namespace, modules FROM assess_material_reads "
-    "WHERE id = :rid AND session_id = :sid AND read_at >= :t0"
+    "WHERE id = :rid AND session_id = :sid AND site_id = :site AND read_at >= :t0"
 )
-_DELETE = text("DELETE FROM assess_material_reads WHERE id = :rid")
+_DELETE = text("DELETE FROM assess_material_reads WHERE id = :rid AND site_id = :site")
 
 
 def dedupe_key(request_id: UUID) -> str:
@@ -150,11 +150,12 @@ class ApiEligibilityReader:
                     await bind_site(conn, site_id)
                     row = (
                         await conn.execute(
-                            _ROW, {"rid": rid, "sid": session_id, "t0": t0}
+                            _ROW,
+                            {"rid": rid, "sid": session_id, "site": site_id, "t0": t0},
                         )
                     ).first()
                     if row is not None:
-                        await conn.execute(_DELETE, {"rid": rid})
+                        await conn.execute(_DELETE, {"rid": rid, "site": site_id})
             except Exception as exc:  # a database hiccup: try again until the deadline
                 log.warning(
                     "assess_material_poll_failed", error_type=type(exc).__name__

@@ -35,6 +35,8 @@ API = "vektra_assess_api"
 WORKER = "vektra_assess_worker"
 DEFINER = "vektra_assess_definer"
 TABLE = "assess_material_reads"
+#: the site-scoped tables this revision binds for the API role (as ``a0002.SITE_TABLES``)
+SITE_TABLES: tuple[str, ...] = (TABLE,)
 BOUND_SITE = "NULLIF(pg_catalog.current_setting('app.assess_site_id', true), '')::uuid"
 
 KINDS_BEFORE = "ARRAY['setup_check'::text, 'gate_refresh'::text, 'render_check'::text, 'transcript_generate'::text, 'transcript_deliver'::text, 'enrolment_recheck'::text, 'purge'::text, 'erasure'::text, 'preflight'::text, 'reconcile_reply'::text, 'teacher_notify'::text, 'operator_notify'::text, 'teacher_gate'::text, 'smtp_test_send'::text]"

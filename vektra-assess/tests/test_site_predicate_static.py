@@ -233,13 +233,24 @@ def test_a_route_without_the_predicate_turns_it_red(tmp_path: Path) -> None:
     ]
 
 
+class _Rls:
+    """The site-bound tables of every revision that adds RLS for the API role (``a0002`` for
+    the tables of its time, later revisions for their own new tables, e.g. ``a0007``)."""
+
+    def __init__(self, tables: set[str]) -> None:
+        self.SITE_TABLES = tuple(sorted(tables))
+
+
 def _rls_revision() -> Any:
-    path = PKG / "migrations" / "versions" / "a0002_assess_api_rls.py"
-    spec = importlib.util.spec_from_file_location("assess_rls_static", path)
-    assert spec is not None and spec.loader is not None
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod
+    tables: set[str] = set()
+    for path in sorted((PKG / "migrations" / "versions").glob("a*.py")):
+        spec = importlib.util.spec_from_file_location(f"assess_rls_{path.stem}", path)
+        assert spec is not None and spec.loader is not None
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        tables |= set(getattr(mod, "SITE_TABLES", ()))
+    assert "assess_sessions" in tables  # a0002 really was read
+    return _Rls(tables)
 
 
 def test_the_rls_revision_covers_every_site_scoped_table_the_api_reads() -> None:

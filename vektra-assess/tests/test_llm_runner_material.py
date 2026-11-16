@@ -135,7 +135,7 @@ async def test_an_unreadable_eligibility_means_no_search_call_audited(
         "assess_material_unavailable",
         {"turn_index": 1, "reason_code": reason},
     ) in (audit.rows)
-    assert "MATERIALE DEL CORSO" not in llm.all_request_bytes[0].decode()
+    assert "<<<MATERIALE" not in llm.all_request_bytes[0].decode()
     assert "[Materiale" not in result.text  # nothing retrieved: nothing citable
     assert isinstance(result, TurnResult) and result.text  # the turn went on
     assert traces.rows[0][0].chunks_retrieved == []
@@ -200,3 +200,15 @@ async def test_part_b_retrieves_nothing() -> None:
     except Exception:
         pass  # the Part B checks may reject this text; only the absence of calls matters
     assert reader.calls == [] and store.calls == []
+
+
+def test_the_material_rule_is_in_the_system_prompt_of_a_material_session_only() -> None:
+    from vektra_assess.llm.postcheck.lexicon import LEXICON_VERSION
+    from vektra_assess.llm.prompts import PromptRenderer
+
+    r = PromptRenderer(LEXICON_VERSION)
+    on = " ".join(r.turn_messages(_bundle(), (), "ciao", "it")[0].content.split())
+    off = r.turn_messages(_bundle(course_material=False), (), "ciao", "it")[0].content
+    assert "MATERIALE DEL CORSO." in on and "[Materiale: <titolo>]" in on
+    assert "non cambia la valutazione" in on and "risposta giusta" in on
+    assert "MATERIALE DEL CORSO" not in off and "Materiale" not in off

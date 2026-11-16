@@ -129,6 +129,8 @@ class PromptRenderer:
                 reply_language_name=LANGUAGE_NAMES[language],
                 word_target=WORD_TARGET,
                 labels=canonical_labels(bundle),
+                # FEAT-028: the material rules appear only in a course-material session
+                course_material=bundle.course_material,
             ),
         )
 

@@ -174,12 +174,13 @@ def test_a_malformed_operator_email_blocks_only_an_enabled_assess() -> None:
 # --- plan assess-teacher-ops: startup refusals ------------------------------------------------
 
 
-def test_rag_flag_on_is_refused_at_startup(monkeypatch: pytest.MonkeyPatch) -> None:
-    """ARCH-072: no dormant RAG path; the flag exists only to be refused."""
+def test_rag_flag_is_off_by_default_and_may_be_turned_on(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """FEAT-028: the operator flag ships OFF; ON is now accepted (ARCH-072 amendment)."""
     assert VektraAssessSettings().rag_enabled is False
     monkeypatch.setenv("VEKTRA_ASSESS_RAG_ENABLED", "true")
-    with pytest.raises(ValidationError, match="not available in this release"):
-        VektraAssessSettings()
+    assert VektraAssessSettings().rag_enabled is True
 
 
 def test_reset_notice_flag_on_is_refused_at_startup(

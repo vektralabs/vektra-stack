@@ -106,14 +106,12 @@ async def test_worker_run_checks_hits_ceiling_before_db(
         await assess_worker.run_checks()
 
 
-@pytest.mark.parametrize(
-    "flag", ["VEKTRA_ASSESS_RAG_ENABLED", "VEKTRA_ASSESS_RESET_NOTICE_ENABLED"]
-)
+@pytest.mark.parametrize("flag", ["VEKTRA_ASSESS_RESET_NOTICE_ENABLED"])
 async def test_worker_refuses_the_flags_not_in_this_release(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, flag: str
 ) -> None:
     """CodeRabbit nitpick (PR #179): the worker, not only the API, refuses to start with the
-    RAG flag or the REQ-092 reset-notice flag on."""
+    REQ-092 reset-notice flag on (the RAG flag is the FEAT-028 operator flag, accepted)."""
     d = _worker_keys(tmp_path / "w")
     monkeypatch.setenv("VEKTRA_ASSESS_ENABLED", "true")
     monkeypatch.setenv("VEKTRA_ASSESS_SECRETS_DIR", str(d))

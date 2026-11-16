@@ -45,7 +45,7 @@ not start in production) is fixed; most criteria are blocked on the target envir
 | 4 | DPO values set (OQ-020) and erasure mode chosen (OQ-033) | **OPEN** | DPO decisions pending: retention days, legal basis, notice (`PUT /api/v1/assess/sites/{site_id}/privacy`) and `VEKTRA_ASSESS_ERASURE_MODE` (`erase` or `retain_exam_evidence`) |
 | 5 | OQ-029 reading confirmed by product and QA ("exactly one SENT record per recipient, at most one audited duplicate on a crash") | **OPEN** | The code implements the design default; confirmation not recorded |
 | 6 | K and hardware decided (OQ-032, NFR-020) with NFR-018 evidence | **BLOCKED** | Needs the target VM (or HPC) and the reference model (OQ-026). Run `scripts/assess_burst.py` at K = 5, 10, 15, 20 with bursts of 20/30/40 Starts, then `VEKTRA_NFR_ASSESS_DSN=... VEKTRA_NFR_ASSESS_SINCE=... python scripts/assess_nfr_report.py`; write `docs/guides/operators/assess-sizing.md` with the table. Until then K = 10 is a placeholder |
-| 7 | RAG for discussions confirmed OFF | **PASS** (code) | `VEKTRA_ASSESS_RAG_ENABLED=true` is refused at startup and `CHECK (rag_enabled = false)` makes it unrepresentable (CHANGELOG `[Unreleased]`, teacher configuration). Re-confirm on the pilot deployment's settings |
+| 7 | RAG for discussions confirmed OFF | **PASS** (code) | `VEKTRA_ASSESS_RAG_ENABLED` defaults to `false` (FEAT-028 made it a real operator flag); with it off a teacher's RAG ON is the field error `rag_unavailable`, and RAG ON without the teacher attestation is unrepresentable (`CHECK (rag_enabled = false OR rag_attested_at IS NOT NULL)`). Re-confirm on the pilot deployment's settings that the flag is unset |
 
 ### NFR campaign (all on the target environment)
 

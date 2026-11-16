@@ -847,9 +847,11 @@ class VektraAssessSettings(BaseSettings):
         False,
         alias="VEKTRA_ASSESS_RAG_ENABLED",
         description=(
-            "Course-material retrieval in discussions (ARCH-072). NOT AVAILABLE in this release: "
-            "setting it to true is refused at startup, and a teacher's RAG ON is a field error. "
-            "It exists only so that a deployment that sets it learns that at once."
+            "Operator flag of course-material retrieval in discussions (FEAT-028, ARCH-072 "
+            "amendment 2026-11-16). OFF by default: a teacher's RAG ON is then the field error "
+            "rag_unavailable (operator_flag_off) and no retrieval call happens. ON lets a teacher "
+            "save RAG ON with the attestation; each RAG turn reads the course's module "
+            "eligibility live and retrieves only from eligible modules."
         ),
     )
     rag_opt_out_tag: str = Field(
@@ -874,13 +876,8 @@ class VektraAssessSettings(BaseSettings):
 
     @model_validator(mode="after")
     def _teacher_ops_refusals(self) -> Self:
-        """Startup refusals (plan assess-teacher-ops): no dormant path for RAG nor for the
-        REQ-092 reset notice (both not available in this release)."""
-        if self.rag_enabled:
-            raise ValueError(
-                "VEKTRA_ASSESS_RAG_ENABLED=true is not available in this release: discussion "
-                "retrieval stays off (ARCH-072). Unset it."
-            )
+        """Startup refusals (plan assess-teacher-ops): no dormant path for the REQ-092 reset
+        notice (not available in this release), and no opt-out tag that matches every title."""
         if not self.rag_opt_out_tag.strip():
             raise ValueError(
                 "VEKTRA_ASSESS_RAG_OPT_OUT_TAG must not be empty: an empty tag would match "

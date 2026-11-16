@@ -53,12 +53,13 @@ PROTOCOL_MEMBERS = frozenset(
         "grade_item",
         "grading_definition",
         "rubric_fillings",
+        "course_modules",
     }
 )
 
 
-def test_the_protocol_has_the_25_members() -> None:
-    assert len(PROTOCOL_MEMBERS) == 25
+def test_the_protocol_has_the_26_members() -> None:
+    assert len(PROTOCOL_MEMBERS) == 26
     assert set(LmsProvider.__protocol_attrs__) == PROTOCOL_MEMBERS  # type: ignore[attr-defined]
 
 

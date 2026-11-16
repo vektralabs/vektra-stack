@@ -33,6 +33,7 @@ from vektra_shared.lms.types import (
     AssignmentSettings,
     AttemptReview,
     AttemptSummary,
+    CourseModuleVisibility,
     Enrolment,
     GradeItem,
     GradingDefinition,
@@ -112,7 +113,7 @@ MAX_CALL_DEADLINE_S = 600.0
 
 @runtime_checkable
 class LmsProvider(Protocol):
-    """Read access to one LMS product, for every site of a deployment (25 members).
+    """Read access to one LMS product, for every site of a deployment (26 members).
 
     The entry point is a factory called with one keyword argument, ``development`` (the
     composition root's resolved flag), and carrying ``REQUIRED_SECRETS`` (the value
@@ -249,3 +250,14 @@ class LmsProvider(Protocol):
     async def rubric_fillings(
         self, site: LmsSite, definition_id: int
     ) -> Reading[tuple[RubricFilling, ...]]: ...
+
+    # --- course material (FEAT-028) ---------------------------------------------------------
+
+    async def course_modules(
+        self, site: LmsSite, course_id: int
+    ) -> Reading[tuple[CourseModuleVisibility, ...]]:
+        """Every module of the course with its course-wide visibility facts. A read that cannot
+        tell any of the facts for some module is ``Unreadable`` as a whole, never a partial
+        list (the vertical treats an absent module as not eligible, so a partial list must not
+        look complete)."""
+        ...

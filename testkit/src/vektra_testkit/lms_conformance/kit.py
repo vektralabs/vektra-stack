@@ -199,6 +199,7 @@ def _inv() -> dict[str, Invocation]:
             t.site, i(t).assignment_activity_id
         ),
         "rubric_fillings": lambda p, t: p.rubric_fillings(t.site, i(t).definition_id),
+        "course_modules": lambda p, t: p.course_modules(t.site, i(t).course_id),
     }
 
 

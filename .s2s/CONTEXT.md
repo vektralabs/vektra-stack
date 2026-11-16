@@ -146,7 +146,7 @@ See [architecture.md](architecture.md) for complete architecture documentation.
 - SafeguardHook: pre/post query safeguards (3 trust boundary points) with content modification support (ARCH-049)
 - EventEmitter: internal event hooks. NoOpEventEmitter (Phase 1), WebhookEventEmitter (Phase 2: HMAC-SHA256 signed HTTP POST)
 - KeyStoreProvider: API key lookup and validation for the auth middleware (ADR-0010). Defined in `auth.py` rather than the protocols module, and registered under the `key_store` slot like the others
-- LmsProvider: read access to one LMS product for the assessment vertical (ADR-0033). `vektra_shared.lms`, 25 members, neutral types, loaded from the entry-point group `vektra.lms_providers` (`VEKTRA_ASSESS_LMS_PROVIDER`) into the `lms` slot and wrapped fail-closed by `guarded()` (`GuardedLmsProvider`). No in-tree implementation: the Moodle provider lives in vektra-moodle-discuss `provider/` and the `lms-moodle` image installs it as a wheel pinned by sha256
+- LmsProvider: read access to one LMS product for the assessment vertical (ADR-0033). `vektra_shared.lms`, 26 members, neutral types, loaded from the entry-point group `vektra.lms_providers` (`VEKTRA_ASSESS_LMS_PROVIDER`) into the `lms` slot and wrapped fail-closed by `guarded()` (`GuardedLmsProvider`). No in-tree implementation: the Moodle provider lives in vektra-moodle-discuss `provider/` and the `lms-moodle` image installs it as a wheel pinned by sha256
 
 **Key decisions** (79 total, ARCH-001 to ARCH-079; 33 ADRs):
 - [ADR-0003](decisions/ADR-0003-modular-monolith-phase1.md): Modular monolith for Phase 1

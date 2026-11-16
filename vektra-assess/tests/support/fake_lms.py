@@ -50,6 +50,7 @@ from vektra_shared.lms import (
     AttemptState,
     AttemptSummary,
     CapabilityResult,
+    CourseModuleVisibility,
     Enrolment,
     Feedback,
     GracePolicy,
@@ -126,6 +127,10 @@ class FakeLmsWorld:
     grade_items: dict[tuple[int, int, int], GradeItem] = field(default_factory=dict)
     gradings: dict[int, GradingDefinition] = field(default_factory=dict)
     fillings: dict[int, tuple[RubricFilling, ...]] = field(default_factory=dict)
+    #: course id -> its modules' visibility facts (FEAT-028)
+    course_module_facts: dict[int, tuple[CourseModuleVisibility, ...]] = field(
+        default_factory=dict
+    )
     #: member -> the rest of the LMS's answer to that read: content no returned value may carry
     wire: dict[str, dict[str, Any]] = field(default_factory=dict)
 
@@ -475,6 +480,15 @@ class FakeLmsProvider:
             self.world.fillings.get(definition_id),
         )
 
+    async def course_modules(
+        self, site: LmsSite, course_id: int
+    ) -> Reading[tuple[CourseModuleVisibility, ...]]:
+        return self._read(
+            "course_modules",
+            {"course_id": course_id},
+            self.world.course_module_facts.get(course_id),
+        )
+
 
 # --- a consistent default world ------------------------------------------------------------
 
@@ -670,6 +684,13 @@ def default_world() -> FakeLmsWorld:
             DEFINITION: (
                 RubricFilling(
                     81, GRADE_ID, 0, (RubricCriterionFilling(1, 2, "clear"),)
+                ),
+            )
+        },
+        course_module_facts={
+            COURSE: (
+                CourseModuleVisibility(
+                    QUIZ_ACTIVITY, "Lesson 1", 1, True, True, False, True, True
                 ),
             )
         },

@@ -506,3 +506,29 @@ class RubricFilling:
     item_id: int  # the grade id (``Feedback.grade_id``)
     status: int
     criteria: tuple[RubricCriterionFilling, ...]
+
+
+# --- course material (FEAT-028, ARCH-072 amendment 2026-11-16) ------------------------------
+
+
+@dataclass(frozen=True)
+class CourseModuleVisibility:
+    """The course-wide visibility facts of one module, as the service account reads them.
+
+    Facts only: the vertical decides what is eligible for retrieval (ARCH-072). No content, no
+    per-student value. A module the provider cannot place in a section is not returned."""
+
+    cmid: int
+    title: str
+    section_id: int
+    #: the module's own visibility flag (the eye icon)
+    visible: bool
+    #: False for a "stealth" module: available, but not shown on the course page
+    on_course_page: bool
+    #: True when the module has ANY availability condition (group, date, completion...)
+    has_conditions: bool
+    #: the section's visibility flag
+    section_visible: bool
+    #: False when the section is not available to the service account (date, completion...)
+    #: or carries an availability notice. A group condition on a section is NOT detectable here
+    section_available: bool

@@ -711,7 +711,7 @@ Phase 1: NoOpEventEmitter. Emission points: document.indexed, document.failed, q
 
 ```python
 @runtime_checkable
-class LmsProvider(Protocol):  # vektra_shared.lms.protocol, 25 members
+class LmsProvider(Protocol):  # vektra_shared.lms.protocol, 26 members (course_modules added 2026-11-16, FEAT-028)
     name: str
     # read members (per site): every one returns Reading[T] = Readable[T] | Unreadable
     # plus setup items, capability results, startup problems, the review-HTML profile,

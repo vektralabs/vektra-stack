@@ -76,6 +76,7 @@ READ_MEMBERS: tuple[str, ...] = (
     "grade_item",
     "grading_definition",
     "rubric_fillings",
+    "course_modules",
 )
 #: the members with their own declared failure, implemented below
 OTHER_MEMBERS: tuple[str, ...] = (

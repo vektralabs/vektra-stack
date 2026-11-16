@@ -60,7 +60,8 @@ async def _session(pg: Pg) -> tuple[uuid.UUID, uuid.UUID]:
     )[0][0]
     await pg.run(
         "super",
-        "INSERT INTO assess_activity_config (site_id, cmid, activity_type) VALUES (:s, 1, 'quiz') "
+        "INSERT INTO assess_activity_config (site_id, cmid, activity_type, rag_enabled, "
+        "rag_attested_at, rag_attested_by) VALUES (:s, 1, 'quiz', true, now(), '7') "
         "ON CONFLICT DO NOTHING",
         {"s": site},
     )
@@ -295,3 +296,23 @@ async def test_a_site_without_a_usable_base_url_reads_nothing(pg: Pg) -> None:
         {"s": str(sid)},
     )
     assert jobs[0][0] == 0
+
+
+async def test_a_teacher_withdrawal_stops_the_material_of_the_next_turn(pg: Pg) -> None:
+    """FEAT-028 review 2: the teacher turns RAG OFF mid-session -> the next read gives no
+    material (rag_withdrawn), whatever the session froze at Start."""
+    sid, site = await _session(pg)
+    await pg.run(
+        "super",
+        "UPDATE assess_activity_config SET rag_enabled = false, rag_attested_at = NULL, "
+        "rag_attested_by = NULL WHERE site_id = :s",
+        {"s": site},
+    )
+    source = Source()
+    worker = create_async_engine(pg.url("worker"))
+    try:
+        out = await read_material(source, _acquire(worker), sid, uuid.uuid4())
+    finally:
+        await worker.dispose()
+    assert out["ok"] is False and out["reason"] == "rag_withdrawn"
+    assert source.calls == 0  # no LMS read at all

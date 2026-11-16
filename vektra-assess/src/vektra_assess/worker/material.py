@@ -8,7 +8,8 @@ the read is cached) and writes ONE row:
 
 - readable: the course's namespace (the ingest pipeline's slug of the short name) and the
   ELIGIBLE modules only, ``[[cmid, title], ...]``;
-- not readable: a closed ``reason`` code (``rag_off``, ``session_not_live``,
+- not readable: a closed ``reason`` code (``rag_off``, ``session_not_live``, ``rag_withdrawn``
+  (the activity's RAG is no longer ON and attested),
   ``course_unresolved``, ``modules_unreadable``, ``error``) and nothing else.
 
 The row holds module ids and titles, never content and never a student value. The API deletes
@@ -42,7 +43,8 @@ READ_RETENTION_S = 300
 
 _SESSION = text(
     "SELECT s.site_id, s.cmid, s.student_userid, s.courseid_hint, s.session_no, s.state, "
-    "c.activity_type FROM assess_sessions s JOIN assess_activity_config c "
+    "c.activity_type, (c.rag_enabled AND c.rag_attested_at IS NOT NULL) AS rag_on "
+    "FROM assess_sessions s JOIN assess_activity_config c "
     "ON c.site_id = s.site_id AND c.cmid = s.cmid WHERE s.id = :sid"
 )
 _INSERT = text(
@@ -83,6 +85,10 @@ async def read_material(
         out["reason"] = "rag_off"
     elif row.state not in ("ACTIVE", "OUTAGE"):
         out["reason"] = "session_not_live"
+    elif not row.rag_on:
+        # the teacher turned RAG OFF (or the attestation is gone) after this session started:
+        # no material from the next turn on (ARCH-072: disabled for new turns, audited)
+        out["reason"] = "rag_withdrawn"
     else:
         target = StartTarget(
             session_id=session_id,

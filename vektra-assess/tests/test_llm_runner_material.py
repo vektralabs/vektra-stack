@@ -120,6 +120,8 @@ async def test_material_of_eligible_modules_reaches_the_request_and_the_trace() 
     [
         (EligibilityRead(False, reason="modules_unreadable"), "modules_unreadable"),
         (EligibilityRead(False, reason="timeout"), "timeout"),
+        # the teacher turned RAG OFF mid-session (review 2): the next turn has no material
+        (EligibilityRead(False, reason="rag_withdrawn"), "rag_withdrawn"),
         (EligibilityRead(False, reason="enqueue_failed"), "enqueue_failed"),
         (RuntimeError("boom"), "error"),
         (EligibilityRead(True, namespace=None, modules=()), "unreadable"),

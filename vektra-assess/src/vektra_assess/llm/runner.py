@@ -313,7 +313,7 @@ class DiscussionTurnRunner:
                     "assess_material_read_failed", error_type=type(exc).__name__
                 )
                 read = EligibilityRead(False, reason="error")
-        if not read.readable or not read.namespace:
+        if not read.readable or not read.namespace or not read.lms_site:
             reason = read.reason or "unreadable"
             # NO retrieval call for this turn (NFR-015 amendment: fail closed)
             await self._audit(
@@ -323,7 +323,9 @@ class DiscussionTurnRunner:
             steps.add("retrieval", t, searched=False, reason=reason, eligible=0)
             return Retrieval((), searched=False, reason=reason)
         try:
-            got = await self._retriever.retrieve(read.namespace, query, read.modules)
+            got = await self._retriever.retrieve(
+                read.namespace, query, read.modules, read.lms_site
+            )
         except (
             Exception
         ) as exc:  # the store or the embedder failed: no material, never a guess

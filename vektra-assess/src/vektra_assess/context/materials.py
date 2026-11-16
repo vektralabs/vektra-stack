@@ -27,6 +27,7 @@ import re
 import unicodedata
 from collections.abc import Iterable
 from dataclasses import dataclass
+from urllib.parse import urlsplit
 
 from vektra_shared.lms import CourseModuleVisibility
 
@@ -73,6 +74,32 @@ def eligible_modules(
             continue
         seen[m.cmid] = EligibleModule(int(m.cmid), m.title) if ok else None
     return tuple(v for _k, v in sorted(seen.items()) if v is not None)
+
+
+_DEFAULT_PORTS = {"http": 80, "https": 443}
+
+
+def lms_site_key(base_url: str | None) -> str | None:
+    """The site a course chunk belongs to (metadata ``lms_site``, FEAT-028 review 1): a
+    namespace and a cmid are unique within ONE LMS site only, so retrieval also filters on this.
+
+    The site's registered ``base_url`` (its LMS root, e.g. Moodle's wwwroot), normalised:
+    ``scheme://host[:port][/path]``, scheme and host lowercased, a default port (80 / 443)
+    dropped, no trailing ``/``, no query, no fragment, no credentials. None when it is not an
+    absolute http(s) URL (the turn then has no material)."""
+    if not base_url:
+        return None
+    try:
+        parts = urlsplit(base_url.strip())
+        port = parts.port
+    except ValueError:
+        return None
+    scheme = parts.scheme.lower()
+    host = (parts.hostname or "").lower()
+    if scheme not in _DEFAULT_PORTS or not host or "@" in parts.netloc:
+        return None
+    netloc = host if port in (None, _DEFAULT_PORTS[scheme]) else f"{host}:{port}"
+    return f"{scheme}://{netloc}{parts.path.rstrip('/')}"
 
 
 def course_namespace(shortname: str | None, course_id: int) -> str:

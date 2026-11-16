@@ -15,7 +15,7 @@ import pytest
 from fakes import RecordingAuditSink, RecordingSafeguard, RecordingTraceWriter
 from test_context_bundle import _frozen
 from test_context_snapshot import make
-from test_llm_retrieval import FakeEmbedder, FilteringStore
+from test_llm_retrieval import SITE_KEY, FakeEmbedder, FilteringStore
 
 from vektra_assess.config import VektraAssessSettings
 from vektra_assess.context.assemble import assemble_context
@@ -85,6 +85,7 @@ READABLE = EligibilityRead(
     True,
     namespace="psico-prova",
     modules=(EligibleModule(1, "Lezione 1"), EligibleModule(2, "Dispensa")),
+    lms_site=SITE_KEY,
 )
 CHUNKS = [(1, "La fotosintesi usa la luce."), (3, "CANARY-HIDDEN"), (2, "Clorofilla.")]
 
@@ -95,7 +96,7 @@ async def test_material_of_eligible_modules_reaches_the_request_and_the_trace() 
     r, llm, audit, traces = _runner(reader, store, reply)
     result = await r.run(_bundle(), _turn())
     assert reader.calls == [(SID, SITE)]
-    assert store.calls[0]["filters"] == {"cmid": [1, 2]}
+    assert store.calls[0]["filters"] == {"cmid": [1, 2], "lms_site": SITE_KEY}
     assert store.calls[0]["namespace"] == "psico-prova"
     (sent,) = llm.all_request_bytes
     text = sent.decode("utf-8")
@@ -122,6 +123,8 @@ async def test_material_of_eligible_modules_reaches_the_request_and_the_trace() 
         (EligibilityRead(False, reason="enqueue_failed"), "enqueue_failed"),
         (RuntimeError("boom"), "error"),
         (EligibilityRead(True, namespace=None, modules=()), "unreadable"),
+        # no site key: nothing could be filtered on it (FEAT-028 review 1)
+        (EligibilityRead(True, namespace="ns", modules=READABLE.modules), "unreadable"),
     ],
 )
 async def test_an_unreadable_eligibility_means_no_search_call_audited(
@@ -142,7 +145,9 @@ async def test_an_unreadable_eligibility_means_no_search_call_audited(
 
 
 async def test_no_eligible_module_means_no_search_call_audited() -> None:
-    reader = Reader(EligibilityRead(True, namespace="ns", modules=()))
+    reader = Reader(
+        EligibilityRead(True, namespace="ns", modules=(), lms_site=SITE_KEY)
+    )
     store = FilteringStore(CHUNKS)
     r, _llm, audit, _ = _runner(reader, store, "Ecco.")
     await r.run(_bundle(), _turn())
@@ -183,12 +188,15 @@ async def test_each_turn_reads_the_eligibility_again() -> None:
     r, _llm, _a, _t = _runner(reader, store, "Uno.")
     await r.run(_bundle(), _turn())
     reader.read = EligibilityRead(
-        True, namespace="psico-prova", modules=(EligibleModule(2, "Dispensa"),)
+        True,
+        namespace="psico-prova",
+        modules=(EligibleModule(2, "Dispensa"),),
+        lms_site=SITE_KEY,
     )
     r._llm = RecordingLLMProvider(["Due."])  # type: ignore[assignment]
     await r.run(_bundle(), _turn())
     assert len(reader.calls) == 2
-    assert [c["filters"] for c in store.calls] == [{"cmid": [1, 2]}, {"cmid": [2]}]
+    assert [c["filters"]["cmid"] for c in store.calls] == [[1, 2], [2]]
     assert "La fotosintesi" not in r._llm.all_request_bytes[0].decode()  # type: ignore[attr-defined]
 
 

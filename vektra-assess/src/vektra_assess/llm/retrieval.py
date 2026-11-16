@@ -30,6 +30,8 @@ from vektra_shared.types import QueryEmbedding, SearchFilters, SearchMode
 
 #: the metadata key the ingest pipeline binds every course document to (FEAT-028)
 CMID_KEY = "cmid"
+#: and the site it comes from (``context.materials.lms_site_key``): a cmid is unique per site
+SITE_KEY = "lms_site"
 
 #: why a turn has no material: closed codes, safe to audit and to trace
 NO_ELIGIBLE_MODULE = "no_eligible_module"
@@ -96,9 +98,14 @@ class CourseMaterialRetriever:
         return self._top_k
 
     async def retrieve(
-        self, namespace: str, query: str, eligible: Sequence[EligibleModule]
+        self,
+        namespace: str,
+        query: str,
+        eligible: Sequence[EligibleModule],
+        lms_site: str,
     ) -> Retrieval:
-        """The chunks of ``namespace`` closest to ``query`` among the ``eligible`` modules only.
+        """The chunks of ``namespace`` closest to ``query`` among the ``eligible`` modules of
+        THIS site (``lms_site``) only: a chunk of another site, or of none, never matches.
 
         No eligible module -> no embedding and no search call (``NO_ELIGIBLE_MODULE``)."""
         titles = {int(m.cmid): m.title for m in eligible}
@@ -112,12 +119,16 @@ class CourseMaterialRetriever:
             self._top_k,
             SearchMode.DENSE,
             # IN, before ranking (NFR-015); SearchFilters accepts any key at runtime
-            filters=cast(SearchFilters, {CMID_KEY: allowed}),
+            filters=cast(SearchFilters, {CMID_KEY: allowed, SITE_KEY: lms_site}),
         )
         chunks: list[MaterialChunk] = []
         for r in results:
             cmid = cmid_of(r.metadata)
-            if cmid is None or cmid not in titles:
+            if (
+                cmid is None
+                or cmid not in titles
+                or r.metadata.get(SITE_KEY) != lms_site
+            ):
                 # the store returned a chunk outside the filter: nothing of this search is used
                 return Retrieval((), searched=True, reason=FILTER_VIOLATION)
             chunks.append(

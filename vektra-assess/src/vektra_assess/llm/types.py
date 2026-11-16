@@ -39,6 +39,8 @@ class EligibilityRead:
     namespace: str | None = None
     modules: tuple[EligibleModule, ...] = ()
     reason: str | None = None
+    #: the site key every retrieved chunk must carry (``context.materials.lms_site_key``)
+    lms_site: str | None = None
 
 
 class EligibilityReader(Protocol):

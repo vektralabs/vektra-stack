@@ -83,19 +83,31 @@ CANARIES = {
     None: "CANARY-nocmid-7f3a",
 }
 LATER_TEXT = "LATER-restricted-next-turn-7f3a"
+#: the site of the turn and another one (FEAT-028 review 1): a namespace and a cmid are unique
+#: per site only, so the SAME namespace and the SAME eligible cmid of another site, or of no
+#: site at all, must never come back
+SITE_A, SITE_B = "https://lms-a.example", "https://lms-b.example"
+SITE_CANARIES = (
+    (ELIGIBLE, "CANARY-othersite-7f3a", SITE_B),
+    (ELIGIBLE, "CANARY-nosite-7f3a", None),
+)
+ALL_CANARIES = (*CANARIES.values(), *(t for _c, t, _s in SITE_CANARIES))
 
 
 def _chunks(doc: uuid.UUID) -> list[ChunkEmbedding]:
-    rows: list[tuple[Any, str]] = [
-        (ELIGIBLE, f"Materiale ammesso, parte {i}.") for i in range(3)
+    rows: list[tuple[Any, str, Any]] = [
+        (ELIGIBLE, f"Materiale ammesso, parte {i}.", SITE_A) for i in range(3)
     ]
-    rows += [(LATER, LATER_TEXT)]
-    rows += list(CANARIES.items())
+    rows += [(LATER, LATER_TEXT, SITE_A)]
+    rows += [(c, t, SITE_A) for c, t in CANARIES.items()]
+    rows += list(SITE_CANARIES)
     out = []
-    for cmid, body in rows:
+    for cmid, body, site in rows:
         meta: dict[str, Any] = {"document_id": str(doc)}
         if cmid is not None:
             meta["cmid"] = cmid
+        if site is not None:
+            meta["lms_site"] = site
         out.append(
             ChunkEmbedding(
                 chunk_id=str(uuid.uuid4()), text=body, dense=VECTOR, metadata=meta
@@ -137,7 +149,9 @@ class LiveFacts:
     async def __call__(self, session_id: Any, site_id: Any) -> EligibilityRead:
         if not self.readable:
             return EligibilityRead(False, reason="modules_unreadable")
-        return EligibilityRead(True, NAMESPACE, eligible_modules(self.facts, TAG))
+        return EligibilityRead(
+            True, NAMESPACE, eligible_modules(self.facts, TAG), lms_site=SITE_A
+        )
 
 
 # --- the two providers ------------------------------------------------------------------------
@@ -313,9 +327,9 @@ async def _canary_ids(store: Any) -> dict[str, Any]:
     """Control: WITHOUT the filter every canary is retrievable (the suite is not vacuous)."""
     got = await store.search(NAMESPACE, QueryEmbedding(dense=VECTOR), 50)
     by_text = {r.text_snippet: r for r in got}
-    for body in CANARIES.values():
+    for body in ALL_CANARIES:
         assert body in by_text, f"control: {body} not retrievable without the filter"
-    return {body: by_text[body].chunk_id for body in CANARIES.values()}
+    return {body: by_text[body].chunk_id for body in ALL_CANARIES}
 
 
 async def test_no_canary_reaches_the_request_or_the_trace(
@@ -331,7 +345,7 @@ async def test_no_canary_reaches_the_request_or_the_trace(
         sent = llm.all_request_bytes
         assert len(sent) == QUERIES
         for body in sent:
-            for canary in CANARIES.values():
+            for canary in ALL_CANARIES:
                 assert canary.encode() not in body
         assert all(
             b"Materiale ammesso" in body for body in sent
@@ -405,7 +419,7 @@ async def test_an_unreadable_eligibility_makes_no_search_call(
         assert counted.searches == 0
         for body in llm.all_request_bytes:
             assert b"Materiale ammesso" not in body
-            assert not [c for c in CANARIES.values() if c.encode() in body]
+            assert not [c for c in ALL_CANARIES if c.encode() in body]
         assert all(t.chunks_retrieved == [] for t, _ in traces.rows)
 
 

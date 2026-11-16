@@ -127,6 +127,8 @@ async def test_a_readable_read_gives_the_eligible_modules_and_is_deleted(
     sid, read, seen = await _round_trip(pg, Source())
     assert read.readable and read.namespace == "psico-prova"
     assert read.modules == (EligibleModule(11, "Lezione 1"),)
+    # the site key every chunk must carry: the normalised base_url of the session's site
+    assert read.lms_site == "https://m.example"
     assert [o for o, _ in seen] == ["readable"] and seen[0][1] >= 0
     left = await pg.run(
         "super",
@@ -270,3 +272,26 @@ async def test_the_row_shape_is_enforced(pg: Pg) -> None:
             "VALUES (:i, :s, :site, true)",
             {"i": uuid.uuid4(), "s": sid, "site": site},
         )
+
+
+async def test_a_site_without_a_usable_base_url_reads_nothing(pg: Pg) -> None:
+    """No site key, no filter on it: the turn has no material and queues no job."""
+    sid, site = await _session(pg)
+    await pg.run(
+        "super",
+        "UPDATE assess_sites SET base_url = 'not a url' WHERE id = :s",
+        {"s": site},
+    )
+    api = create_async_engine(pg.url("api"))
+    try:
+        read = await ApiEligibilityReader(api, timeout_s=1)(sid, site)
+    finally:
+        await api.dispose()
+    assert not read.readable and read.reason == "site_unknown"
+    jobs = await pg.run(
+        "super",
+        "SELECT count(*) FROM assess_jobs WHERE kind = 'material_eligibility' "
+        "AND args->>'session_id' = :s",
+        {"s": str(sid)},
+    )
+    assert jobs[0][0] == 0

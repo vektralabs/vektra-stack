@@ -27,7 +27,7 @@ import structlog
 from sqlalchemy import text
 
 from vektra_assess.api.site_binding import bind_site
-from vektra_assess.context.materials import EligibleModule
+from vektra_assess.context.materials import EligibleModule, lms_site_key
 from vektra_assess.jobs import JobKind, enqueue_job
 from vektra_assess.llm.types import EligibilityRead
 
@@ -39,6 +39,7 @@ ENQUEUE_FAILED = "enqueue_failed"
 OUTCOMES = ("readable", "unreadable", TIMEOUT, ENQUEUE_FAILED)
 
 _CLOCK = text("SELECT clock_timestamp()")
+_SITE = text("SELECT base_url FROM assess_sites WHERE id = :s")
 _ROW = text(
     "SELECT readable, reason, namespace, modules FROM assess_material_reads "
     "WHERE id = :rid AND session_id = :sid AND read_at >= :t0"
@@ -112,9 +113,19 @@ class ApiEligibilityReader:
         started = self._clock()
         rid = uuid4()
         engine = self._engine_now()
+        site_key: str | None = None
         try:
             async with engine.begin() as conn:
                 await bind_site(conn, site_id)
+                base_url = (await conn.execute(_SITE, {"s": site_id})).scalar()
+                site_key = lms_site_key(base_url)
+                if site_key is None:
+                    # no usable site key: nothing could be filtered on it, so nothing is read
+                    return self._done(
+                        "unreadable",
+                        started,
+                        EligibilityRead(False, reason="site_unknown"),
+                    )
                 t0 = (await conn.execute(_CLOCK)).scalar()
                 queued = await enqueue_job(
                     conn,
@@ -171,5 +182,10 @@ class ApiEligibilityReader:
         return self._done(
             "readable",
             started,
-            EligibilityRead(True, namespace=str(row.namespace), modules=modules),
+            EligibilityRead(
+                True,
+                namespace=str(row.namespace),
+                modules=modules,
+                lms_site=site_key,
+            ),
         )

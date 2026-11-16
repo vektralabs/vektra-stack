@@ -336,15 +336,13 @@ class DiscussionTurnRunner:
             observe(outcome)
 
     def _admit(self, bundle: ContextBundle, *, part_b: bool = False) -> None:
-        """Fail closed, before a byte is rendered, on a course-material bundle this runner cannot
-        honour: the operator flag off, or (for a turn) no retriever or eligibility reader. Part B
-        retrieves nothing (there is no student question yet): it needs the flag only."""
-        if not bundle.course_material:
-            return
-        if not self._settings.rag_enabled:
+        """Fail closed, before a byte is rendered, on a Start (Part B) of a course-material
+        bundle with the operator flag off: the session would be promised material it cannot
+        have. A TURN of a live course-material session on a runner that lost the flag or the
+        parts (an API restarted with RAG off) is not refused: it goes on without material,
+        audited ``rag_off_api`` (``_course_material``), never an error on every turn."""
+        if part_b and bundle.course_material and not self._settings.rag_enabled:
             raise RagNotAvailableError("course material: the operator flag is off")
-        if not part_b and not self.rag_ready:
-            raise RagNotAvailableError("course material: no retriever is wired")
 
     async def _course_material(
         self, bundle: ContextBundle, turn: StudentTurn, query: str, steps: _Steps
@@ -355,10 +353,11 @@ class DiscussionTurnRunner:
         fails the turn."""
         if not bundle.course_material:
             return None
-        assert self._retriever is not None and self._eligibility is not None  # _admit
         t = time.monotonic()
         read: EligibilityRead
-        if turn.session_id is None or turn.site_id is None:
+        if self._retriever is None or self._eligibility is None or not self.rag_ready:
+            read = EligibilityRead(False, reason="rag_off_api")
+        elif turn.session_id is None or turn.site_id is None:
             read = EligibilityRead(False, reason="no_session")
         else:
             try:
@@ -378,6 +377,7 @@ class DiscussionTurnRunner:
             self._material_metric(reason)
             steps.add("retrieval", t, searched=False, reason=reason, eligible=0)
             return Retrieval((), searched=False, reason=reason)
+        assert self._retriever is not None  # rag_ready above
         try:
             got = await self._retriever.retrieve(
                 read.namespace, query, read.modules, read.lms_site

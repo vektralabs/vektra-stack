@@ -71,22 +71,20 @@ def _material_bundle():  # type: ignore[no-untyped-def]
     return assemble_context(s, _frozen(s))
 
 
-def test_a_bundle_frozen_with_course_material_is_refused_without_the_flag() -> None:
+def test_a_start_of_a_course_material_bundle_is_refused_without_the_flag() -> None:
     bundle = _material_bundle()
     assert bundle.course_material is True
     with pytest.raises(RagNotAvailableError, match="operator flag"):
-        runner()._admit(bundle)
-    with pytest.raises(RagNotAvailableError, match="operator flag"):
         runner()._admit(bundle, part_b=True)
+    # a TURN is never refused for it (review 6): it goes on without material, audited
+    runner()._admit(bundle)
 
 
-def test_with_the_flag_a_turn_still_needs_the_retriever_but_part_b_does_not() -> None:
-    """FEAT-028: Part B retrieves nothing; a turn needs both course-material parts wired."""
+def test_with_the_flag_part_b_needs_no_retriever() -> None:
+    """FEAT-028: Part B retrieves nothing; it needs the flag only."""
     bundle = _material_bundle()
     r = runner(VEKTRA_ASSESS_RAG_ENABLED=True)
     assert r.rag_ready is False
-    with pytest.raises(RagNotAvailableError, match="no retriever"):
-        r._admit(bundle)
     r._admit(bundle, part_b=True)
 
 

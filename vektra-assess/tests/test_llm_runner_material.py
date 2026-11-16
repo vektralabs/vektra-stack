@@ -305,3 +305,29 @@ async def test_a_title_with_quotes_and_brackets_is_citable_as_shown() -> None:
     sent = llm.all_request_bytes[0].decode()
     assert f'titolo=\\"{shown}\\"' in sent
     assert f"[Materiale: {shown}]" in result.text and "citations" not in result.marks
+
+
+@pytest.mark.parametrize("what", ["flag_off", "no_retriever"])
+async def test_a_live_material_session_on_an_api_without_rag_goes_on_without_it(
+    what: str,
+) -> None:
+    """Review 6: the API restarted with the flag OFF (or without the parts) while a
+    course-material session is live: its turns go on without material, audited rag_off_api,
+    never an internal error on every turn."""
+    llm, audit = RecordingLLMProvider(["Ecco."]), RecordingAuditSink()
+    flag = {"VEKTRA_ASSESS_RAG_ENABLED": True} if what == "no_retriever" else {}
+    r = DiscussionTurnRunner(
+        llm=llm,
+        safeguard=RecordingSafeguard(),
+        trace_writer=RecordingTraceWriter(),
+        settings=VektraAssessSettings.model_validate(
+            {"VEKTRA_ASSESS_LLM_MODEL": "t/m", **flag}
+        ),
+        audit=audit,
+    )
+    result = await r.run(_bundle(), _turn())
+    assert result.text == "Ecco."
+    assert (
+        "assess_material_unavailable",
+        {"turn_index": 1, "reason_code": "rag_off_api"},
+    ) in audit.rows

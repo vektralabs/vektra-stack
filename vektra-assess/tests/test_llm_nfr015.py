@@ -93,7 +93,7 @@ def test_canary_the_scan_catches_a_planted_reference(planted: str) -> None:
     assert _hits(planted)
 
 
-async def test_a_course_material_bundle_is_refused_before_any_call() -> None:
+async def test_a_course_material_bundle_without_rag_is_refused_at_start_only() -> None:
     s = make()
     s = s.model_copy(
         update={
@@ -115,8 +115,11 @@ async def test_a_course_material_bundle_is_refused_before_any_call() -> None:
         audit=RecordingAuditSink(),
     )
     bundle = assemble_context(s, _frozen(s))
-    with pytest.raises(RagNotAvailableError):
-        await r.run(bundle, StudentTurn("ciao", 0))
+    # a Start (Part B) is refused before any call
     with pytest.raises(RagNotAvailableError):
         await r.run_part_b(bundle)
     assert llm.calls == [] and guard.log == [] and guard.post_retrieval_calls == 0
+    # a turn of a live session goes on WITHOUT material (review 6): no retrieval of any kind
+    await r.run(bundle, StudentTurn("ciao", 0))
+    assert b"<<<MATERIALE" not in b"".join(llm.all_request_bytes)
+    assert guard.post_retrieval_calls == 0

@@ -91,6 +91,7 @@ SITE_CANARIES = (
     (ELIGIBLE, "CANARY-othersite-7f3a", SITE_B),
     (ELIGIBLE, "CANARY-nosite-7f3a", None),
 )
+STRING_CMID_TEXT = "Materiale con cmid stringa."
 ALL_CANARIES = (*CANARIES.values(), *(t for _c, t, _s in SITE_CANARIES))
 
 
@@ -99,6 +100,8 @@ def _chunks(doc: uuid.UUID) -> list[ChunkEmbedding]:
         (ELIGIBLE, f"Materiale ammesso, parte {i}.", SITE_A) for i in range(3)
     ]
     rows += [(LATER, LATER_TEXT, SITE_A)]
+    # the eligible cmid as a JSON STRING (review 3): both stores treat it like the integer
+    rows += [(str(ELIGIBLE), STRING_CMID_TEXT, SITE_A)]
     rows += [(c, t, SITE_A) for c, t in CANARIES.items()]
     rows += list(SITE_CANARIES)
     out = []
@@ -350,6 +353,8 @@ async def test_no_canary_reaches_the_request_or_the_trace(
         assert all(
             b"Materiale ammesso" in body for body in sent
         )  # the eligible material does come
+        # pgvector and Qdrant agree on a cmid stored as a string (review 3)
+        assert all(STRING_CMID_TEXT.encode() in body for body in sent)
         allowed = {ELIGIBLE, LATER}
         for trace, _ns in traces.rows:
             ids = {c.chunk_id for c in trace.chunks_retrieved}

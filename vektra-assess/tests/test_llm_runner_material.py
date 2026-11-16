@@ -222,3 +222,35 @@ def test_the_material_rule_is_in_the_system_prompt_of_a_material_session_only() 
     assert "MATERIALE DEL CORSO." in on and "[Materiale: <titolo>]" in on
     assert "non cambia la valutazione" in on and "risposta giusta" in on
     assert "MATERIALE DEL CORSO" not in off and "Materiale" not in off
+
+
+class _Metrics:
+    def __init__(self) -> None:
+        self.material: list[str] = []
+
+    def replacement(self, stage: str, count: int) -> None: ...
+    def behaviour_class(self, code: str) -> None: ...
+    def call_outcome(self, outcome: str) -> None: ...
+    def part_b_rejected(self, code: str) -> None: ...
+
+    def material_outcome(self, outcome: str) -> None:
+        self.material.append(outcome)
+
+
+async def test_a_search_that_finds_nothing_is_audited_and_counted() -> None:
+    """Review 3: "searched, 0 chunks" is not a silent success: content-free audit + counter."""
+    store = FilteringStore([(3, "other module only")])
+    r, _llm, audit, _ = _runner(Reader(READABLE), store, "Ecco.")
+    metrics = _Metrics()
+    r._metrics = metrics  # type: ignore[assignment]
+    await r.run(_bundle(), _turn())
+    assert store.calls  # it did search
+    assert ("assess_material_empty", {"turn_index": 1, "reason_code": "no_chunks"}) in (
+        audit.rows
+    )
+    assert metrics.material == ["no_chunks"]
+    r2, _l, _a, _t = _runner(Reader(READABLE), FilteringStore(CHUNKS), "Ecco.")
+    m2 = _Metrics()
+    r2._metrics = m2  # type: ignore[assignment]
+    await r2.run(_bundle(), _turn())
+    assert m2.material == ["retrieved"]

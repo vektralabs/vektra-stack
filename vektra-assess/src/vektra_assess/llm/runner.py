@@ -280,6 +280,12 @@ class DiscussionTurnRunner:
         for rec in records:
             self._metrics.call_outcome(rec.outcome)
 
+    def _material_metric(self, outcome: str) -> None:
+        """One count per course-material turn, by closed outcome code (content-free)."""
+        observe = getattr(self._metrics, "material_outcome", None)
+        if callable(observe):
+            observe(outcome)
+
     def _admit(self, bundle: ContextBundle, *, part_b: bool = False) -> None:
         """Fail closed, before a byte is rendered, on a course-material bundle this runner cannot
         honour: the operator flag off, or (for a turn) no retriever or eligibility reader. Part B
@@ -320,6 +326,7 @@ class DiscussionTurnRunner:
                 "assess_material_unavailable",
                 {"turn_index": turn.turn_index, "reason_code": reason},
             )
+            self._material_metric(reason)
             steps.add("retrieval", t, searched=False, reason=reason, eligible=0)
             return Retrieval((), searched=False, reason=reason)
         try:
@@ -336,6 +343,16 @@ class DiscussionTurnRunner:
                 "assess_material_unavailable",
                 {"turn_index": turn.turn_index, "reason_code": got.reason},
             )
+        elif not got.chunks:
+            # searched among eligible modules and found nothing (an index without this
+            # course's material, a type mismatch...): never a silent success
+            await self._audit(
+                "assess_material_empty",
+                {"turn_index": turn.turn_index, "reason_code": "no_chunks"},
+            )
+        self._material_metric(
+            got.reason or ("retrieved" if got.chunks else "no_chunks")
+        )
         steps.add(
             "retrieval",
             t,

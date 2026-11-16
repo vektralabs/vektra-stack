@@ -243,6 +243,12 @@ class PrometheusRunnerMetrics:
                 "Part B generations rejected, by content-free rejection code",
                 ["code"],
             )
+            c["material"] = Counter(
+                "vektra_assess_material_turns_total",
+                "Course-material discussion turns by outcome: retrieved, no_chunks (searched, "
+                "nothing found), or the closed reason there was no material",
+                ["outcome"],
+            )
             c["eligibility"] = Histogram(
                 "vektra_assess_material_eligibility_seconds",
                 "Round trip of a RAG turn's live course-module eligibility read (API -> "
@@ -263,6 +269,11 @@ class PrometheusRunnerMetrics:
 
     def part_b_rejected(self, code: str) -> None:
         self._c["part_b"].labels(code=code).inc()
+
+    def material_outcome(self, outcome: str) -> None:
+        """FEAT-028: one course-material turn by closed outcome (retrieved, no_chunks, or why
+        there was no material)."""
+        self._c["material"].labels(outcome=outcome).inc()
 
     def eligibility_read(self, outcome: str, seconds: float) -> None:
         """FEAT-028: one RAG turn's eligibility round trip to the worker, by closed outcome."""

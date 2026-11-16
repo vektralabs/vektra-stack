@@ -599,6 +599,25 @@ class QdrantVectorStoreProvider:
         except Exception as exc:
             return HealthStatus(status="unhealthy", message=str(exc))
 
+    @staticmethod
+    def _match_any(models: Any, key: str, values: list[Any]) -> Any:
+        """IN over a payload field, with pgvector's semantics: pgvector compares the ``->>``
+        TEXT of the field, so an integer value also matches the same digits stored as a JSON
+        string. Qdrant matches by type, so an integer list matches either form here (a nested
+        ``should``); a string list stays one ``MatchAny``. Without this a cmid stored as a
+        string matched on pgvector and silently matched nothing on Qdrant (FEAT-028)."""
+        ints = [v for v in values if isinstance(v, int) and not isinstance(v, bool)]
+        if not ints or len(ints) != len(values):
+            return models.FieldCondition(key=key, match=models.MatchAny(any=values))
+        return models.Filter(
+            should=[
+                models.FieldCondition(key=key, match=models.MatchAny(any=ints)),
+                models.FieldCondition(
+                    key=key, match=models.MatchAny(any=[str(v) for v in ints])
+                ),
+            ]
+        )
+
     def _build_filter(
         self,
         namespace: str,
@@ -623,10 +642,7 @@ class QdrantVectorStoreProvider:
             for key, value in filters.items():
                 if isinstance(value, list):
                     must_conditions.append(
-                        models.FieldCondition(
-                            key=f"metadata.{key}",
-                            match=models.MatchAny(any=value),
-                        )
+                        self._match_any(models, f"metadata.{key}", value)
                     )
                 else:
                     must_conditions.append(

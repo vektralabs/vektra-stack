@@ -124,6 +124,8 @@ _SEALED = text(
     "SELECT field, is_set, item_count FROM assess_activity_config_sealed "
     "WHERE site_id = :s AND cmid = :c"
 )
+#: the attestation as stored by the write itself (review 10: no second read for its audit)
+_RETURNING = " RETURNING extract(epoch FROM rag_attested_at)::bigint AS rag_attested_at, rag_attested_by"
 _INSERT = text(
     "INSERT INTO assess_activity_config (site_id, cmid, activity_type, enabled, flags, "
     "rag_enabled, rag_attested_at, rag_attested_by, end_at, cap_minutes, version, updated_by, "
@@ -133,7 +135,7 @@ _INSERT = text(
     ":end, :cap, 1, :u, now()) "
     # a first save has no row to lock: a concurrent first save that committed meanwhile makes
     # this a version conflict (409), never a unique violation (500)
-    "ON CONFLICT (site_id, cmid) DO NOTHING"
+    "ON CONFLICT (site_id, cmid) DO NOTHING" + _RETURNING
 )
 _VERSION = text(
     "SELECT version FROM assess_activity_config WHERE site_id = :s AND cmid = :c"
@@ -148,7 +150,7 @@ _UPDATE = text(
     "rag_attested_by = CASE CAST(:ram AS text) WHEN 'set' THEN CAST(:rab AS text) "
     "WHEN 'clear' THEN NULL ELSE rag_attested_by END, "
     "version = version + 1, updated_by = :u, updated_at = now() "
-    "WHERE site_id = :s AND cmid = :c AND version = :v"
+    "WHERE site_id = :s AND cmid = :c AND version = :v" + _RETURNING
 )
 _SETUP = text(
     "SELECT items FROM assess_setup_check_reports WHERE site_id = :s AND status = 'done' "
@@ -447,14 +449,16 @@ async def _save(
         "u": body.actor_userid,
     }
     if row is None:
-        if not (await conn.execute(_INSERT, {**params, "t": kind})).rowcount:
+        written = (await conn.execute(_INSERT, {**params, "t": kind})).first()
+        if written is None:
             now = (await conn.execute(_VERSION, {"s": site, "c": cmid})).scalar()
             raise fail(config_conflict(int(now or 0)))
     else:
-        done = (await conn.execute(_UPDATE, {**params, "v": current_version})).rowcount
-        if (
-            done != 1
-        ):  # locked FOR UPDATE above: cannot happen, refuse rather than guess
+        written = (
+            await conn.execute(_UPDATE, {**params, "v": current_version})
+        ).first()
+        if written is None:
+            # locked FOR UPDATE above: cannot happen, refuse rather than guess
             raise fail(config_conflict(current_version))
     version = current_version + 1
     for name in (
@@ -483,7 +487,6 @@ async def _save(
             )
     if attestation != "keep" and (old["rag_enabled"] or new["rag_enabled"]):
         # the attestation audited old/new on its own (REQ-077 amendment): when, and by whom
-        now_row = (await conn.execute(_CONFIG, {"s": site, "c": cmid})).first()
         await write_event(
             conn,
             AssessAuditEvent.TEACHER_CONFIG_CHANGED,
@@ -493,8 +496,8 @@ async def _save(
             data={
                 "field": "rag_attested",
                 "old": iso_time(old_attested_at),
-                "new": iso_time(now_row.rag_attested_at) if now_row else None,
-                "attested_by": now_row.rag_attested_by if now_row else None,
+                "new": iso_time(written.rag_attested_at),
+                "attested_by": written.rag_attested_by,
                 "cmid": cmid,
                 "actor": body.actor_userid,
                 "version": version,

@@ -899,3 +899,37 @@ async def test_a_readability_without_a_fresh_read_time_asks_for_a_rag_refresh(
         assert queued, "no RAG refresh was queued"
     finally:
         await ctx.__aexit__(None, None, None)
+
+
+async def test_the_attestation_audit_reads_no_extra_config_row(pg, pair) -> None:  # type: ignore[no-untyped-def]
+    """Review 10: the attestation's audit takes the stored time and actor from the write itself
+    (RETURNING), not from a second read of the config row."""
+    from sqlalchemy import event
+
+    ctx, w = await _rag_ready(pg, pair)
+    reads: list[str] = []
+
+    def count(_c, _cur, statement, *_a):  # type: ignore[no-untyped-def]
+        if (
+            "FROM assess_activity_config " in statement
+            and "rag_attested_by" in statement
+        ):
+            reads.append(statement)
+
+    engine = w.app.state.assess_engine.sync_engine
+    event.listen(engine, "before_cursor_execute", count)
+    try:
+        r = await w.client.put(
+            url(60),
+            json=body(rag_enabled=True, rag_attested=True),
+            headers=auth("teacher"),
+        )
+        assert r.status_code == 200, r.text
+        # the row lock of the save, and the view: nothing more
+        assert len(reads) == 2, reads
+        (audit,) = [d for c, d in await audits(pg, w.site) if c == "rag_attested"]
+        assert audit["new"] == r.json()["rag_attested_at"]
+        assert audit["attested_by"] == str(EDITOR)
+    finally:
+        event.remove(engine, "before_cursor_execute", count)
+        await ctx.__aexit__(None, None, None)

@@ -34,7 +34,8 @@ class Conn:
 
 def gate(age: float = 1.0, **facts: Any) -> SimpleNamespace:
     inputs = {"resolved": True, "editors": [5], "hint": [7, "quiz"], **facts}
-    return SimpleNamespace(inputs=inputs, age_s=age)
+    # the columns of GATE_ROW, db_now included (FEAT-028 review 9)
+    return SimpleNamespace(inputs=inputs, age_s=age, db_now=1_900_000_000.0)
 
 
 def check(

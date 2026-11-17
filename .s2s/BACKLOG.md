@@ -137,6 +137,35 @@ So without a fix, v0.8.0 would have published a reference doc written in this cy
 
 ---
 
+### FEAT-029: the teacher attaches a document as the solution and/or the rubric
+
+**Status**: planned | **Priority**: medium | **Created**: 2026-11-17
+**Origin**: product owner request (2026-11-17), after the F1 end-to-end test of FEAT-028. To be developed after the demo, on its own branch.
+
+**Context**: today the activity configuration takes the solution and the pasted rubric as plain text only (`teacher/schemas.py` `solution` / `pasted_rubric`, normalised text capped at `MAX_TEXT_CHARS` = 20 000 in `teacher/validation.py`). A teacher who already has the answer key or the grading grid as a file has to copy and paste it. Course-material RAG (FEAT-028) is no substitute: it serves only material that students can already see, and a hidden module is excluded on purpose.
+
+**Proposal**:
+- In "Discussione con l'assistente", the plugin form gets one optional file per field: one for the solution, one for the rubric. The text stays. A field may hold text only, file only, or both.
+- Accepted formats: PDF, DOCX, plain text, Markdown. One file per field; it can be replaced or removed. The form shows "Documento: <name> (impostato)", never the content.
+- Vektra extracts the text with the existing parser sidecar, the same one that reads student submissions. The extracted text is stored encrypted like the pasted text (ADR-0031 envelope) and never shown back. The original file is not kept, unless a later decision needs it.
+- A file with no extractable text (a scan, no OCR) is refused at save with a clear field error, not discovered during a discussion.
+- Documents get a higher size limit than the 20 000 characters of pasted text. The save checks the discussion token budget: an extract that cannot fit the prompt is refused at save, with the reason.
+- The student never sees the document. The solution document follows the existing "show the solution" switch (default OFF), exactly like the text.
+
+**Work split**:
+- vektra-stack: the config API takes the file (multipart or a separate upload endpoint, to be decided in design), parser job, encrypted storage, budget check, view fields, audit, purge.
+- vektra-moodle-discuss (plugin session): form filepicker, upload, error display, strings it/en.
+
+**Acceptance criteria**:
+- [ ] A teacher can save a PDF or DOCX as the solution and/or the rubric, with or without text; the discussion uses its extracted text
+- [ ] A scanned PDF with no text, a wrong format, or an extract over budget is refused at save with a field error; the earlier config is unchanged
+- [ ] The extracted text is encrypted at rest, absent from logs and audit, and removed by the purge and the privacy erase like the pasted text
+- [ ] The student-facing UI and transcript never expose the document unless "show the solution" is ON (solution only)
+
+**Traceability**: REQ-077 (activity configuration), ADR-0031 (envelope encryption), parser sidecar (COMP assess parser); needs a REQ amendment before code.
+
+---
+
 ### FEAT-028: enable course-material RAG for assessment discussions (guarded)
 
 **Status**: draft | **Priority**: low | **Created**: 2026-11-01

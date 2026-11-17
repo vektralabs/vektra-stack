@@ -22,6 +22,28 @@
 
 ## Planned
 
+### DEBT-044: the ingest pipeline needs the `admin` scope only to delete the documents it ingested
+
+**Status**: planned | **Priority**: medium | **Created**: 2026-11-17
+**Origin**: F1 demo preparation (2026-11-17). The n8n Moodle ingest ran with an `ingest`-only key: adds worked, but every deletion of a removed module's document failed with `403 ERR-AUTH-003`, because `DELETE /api/v1/documents/batch` and `DELETE /api/v1/documents/{id}` accept `admin` only. The stale documents stayed in the index until the key was replaced by an `admin` one.
+
+**Problem**: a pipeline that keeps a namespace in sync with an LMS must delete what disappeared from the LMS. Today that forces an `admin` key into n8n: create and revoke keys, every namespace, every admin route. Least privilege is lost exactly where the credential lives longest, in an external automation tool. With FEAT-028 the deletion also matters for correctness: a stale chunk keeps its `cmid` and could become eligible again if a new module ever reused that number (Moodle does not reuse cmids, but the guard should not depend on it).
+
+**Proposed approach**: let the `ingest` scope delete documents. Options:
+- (a) `ingest` satisfies the document deletes, limited to the namespace given in the request;
+- (b) a new `ingest:delete` scope;
+- (c) per-key namespace binding, so an ingest key can only add or delete in its namespaces.
+To be decided in design; (a) + (c) is the natural pair. Update the n8n README once it lands (today it says the key must be `admin`).
+
+**Acceptance criteria**:
+- [ ] An ingest pipeline can add and delete documents without `admin`
+- [ ] The key cannot delete outside the namespaces it is allowed to write
+- [ ] Existing `admin` deletes keep working; audited as today
+
+**Traceability**: REQ-031 (scopes), ADR-0010 (auth gateway), ADR-0026 (deletes through the vector store Protocol), FEAT-028.
+
+---
+
 ### BUG-030: the LLM provider sends `max_tokens` to OpenAI models that only accept `max_completion_tokens`
 
 **Status**: draft | **Priority**: medium | **Created**: 2026-11-09

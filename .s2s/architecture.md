@@ -2642,6 +2642,15 @@ it is missing a key it needs or holds one it must not have):
 - Teacher config (solution, pasted rubric) is WRITE-ONLY from the API: sealed to the worker's
   public key, so the API cannot read stored solutions back. The settings form shows "impostata
   / non impostata, sostituisci?" (product confirmation pending; see the new OQ).
+  *Amended 2026-11-18 (OQ-034 resolved by the product owner, FEAT-030)*: still write-only for the
+  API, which still holds NO private key; a fresh EDITOR may read ONE field back on request
+  ("Mostra") through the worker: the API sends an ephemeral public key of the request in a
+  `config_reveal` job, the worker re-seals the opened field to it (purpose `config-reveal`,
+  binding `[site, cmid, field, request]`) in `assess_config_reveals` (ciphertext only, RLS,
+  swept after 60 s), and the API opens it in memory, deletes the row and audits the reveal
+  (`assess_teacher_config_revealed`, no content) in one transaction. A compromised API role can
+  now obtain stored values through the worker (and leaves the worker's own log line), which it
+  could not before: that is the accepted exposure of the decision.
 - Keys are backed up offline, separately from DB dumps, with a restore drill and rotation
   runbooks (KEK re-wrap job, re-sealing of at most K hand-off rows).
 
@@ -3230,6 +3239,7 @@ Ratified endpoint set, amended:
 | POST | `/api/v1/assess/sessions/{sid}/turns/{tid}/flag` | REQ-103 marker (ACTIVE/OUTAGE only) |
 | GET | `/api/v1/assess/transcripts/{tid}` | Download (owner or grader); attachment + CSP sandbox + nosniff |
 | GET | `/api/v1/assess/activities/{cmid}/config` | Teacher config for the settings form (assess:teacher); solution and pasted rubric returned only as set/unset (write-only, OQ-034) |
+| POST | `/api/v1/assess/activities/{cmid}/config/reveal` | Read back ONE sealed field for a fresh editor ("Mostra", FEAT-030; OQ-034 resolved 2026-11-18): worker-mediated, re-sealed to an ephemeral key of the request; the API still holds no private key. 200 value (`no-store`), 404 ERR-ASSESS-030, 503 ERR-ASSESS-031 |
 | PUT | `/api/v1/assess/activities/{cmid}/config` | Teacher config (assess:teacher; BR-013; audited) |
 | GET | `/api/v1/assess/activities/{cmid}/sessions` | Teacher list (graders of that activity) |
 | POST | `/api/v1/assess/activities/{cmid}/sessions/{sid}/reset` | Grant session #N+1 (mandatory reason) |
@@ -3288,7 +3298,7 @@ Amended:
   size the hardware. A remote provider carries the load, but data egress depends on the DPO
   (OQ-020). Does not block design or implementation. Original text: Hardware envelope: co-located on-prem LLM overcommits the 8 GB / 4 CPU VM — - Memory limits: postgres 0.5-0.75G + API 3G + assess-worker about 0.5G + parser 0.5-0.77G + Ollama 4G = about 8.5-8.8 GB, plus the host OS. That is over 8 GB. - CPU: CPU-only inference on 4 cores at K = 10 is not credible against NFR-018 (all four participants flagged this). Options: an off-VM or dedicated-hardware LLM; a larger VM; trimming the API limit (the assess path loads no embedding model); a smaller K. This is an operator and product decision that feeds OQ-026 and NFR-020. It does not change the architecture. *Needs human/ops/spike input; design default recorded.*
 - **OQ-033**: Privacy erasure (Moodle delete_data_for_user) vs exam-evidence retention — The Moodle Privacy API expects deletion as well as export, and REQ-093 covers export only. Design default: build the site-bound erasure endpoint (scope assess:privacy-erase), which crypto-shreds and deletes the subject's sessions, snapshots, turns and transcripts, verified by row count. The DPO decides whether transcripts are retained as exam evidence under a legal-basis exemption (OQ-020). Whatever the outcome, an unhandled delete request must never pass silently. *Needs human/ops/spike input; design default recorded.*
-- **OQ-034**: Teacher config re-display: may the settings form show the stored solution text back? — Design default: write-only. The API seals the solution text and pasted rubric to the worker's public key, and the form shows "impostata / non impostata, sostituisci?". This leaves API compromises unable to read any course's solutions. If product requires re-display, the API must hold a symmetric teacher-config key: a documented exposure, about 1 day of change. *Needs human/ops/spike input; design default recorded.*
+- **OQ-034** — **RESOLVED 2026-11-18 by the product owner**: yes, on request, through a worker-mediated reveal with an ephemeral key; the API still holds no private key (FEAT-030, ADR-0031 amendment 2026-11-18, route `POST /activities/{cmid}/config/reveal`). The symmetric-key option below was not taken. Original text: Teacher config re-display: may the settings form show the stored solution text back? — Design default: write-only. The API seals the solution text and pasted rubric to the worker's public key, and the form shows "impostata / non impostata, sostituisci?". This leaves API compromises unable to read any course's solutions. If product requires re-display, the API must hold a symmetric teacher-config key: a documented exposure, about 1 day of change. *Needs human/ops/spike input; design default recorded.*
 - **OQ-035** (new, 2026-11-01, from the OQ-025 spike): Rubric descriptors in the model context — rubric display settings (whether students see criterion/level descriptions) are unreadable through WS on 4.3 and 5.2. Design default (BR-011 fail closed): descriptors are always excluded; the bot can use scores, levels by number and the teacher's remarks, not the descriptor texts. Alternative: a per-activity teacher attestation that descriptors are student-visible (more teacher work, an attested input like REQ-091). Related fact needed: which Moodle version the pilot sites run (on 4.3, quiz overrides are unreadable and REQ-091 becomes the normal path). *Needs product input; design default recorded.*
 
 Feature-level open items from specs remain: OQ-020 (DPO), OQ-025 (WS readability resolved 2026-11-01; math/qtype fidelity still open), OQ-026 (reference model/hardware), OQ-027 (eval-suite owner).

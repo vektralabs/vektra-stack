@@ -2966,6 +2966,27 @@ Storage aligns with the same model as grounding mode: persisted in `namespaces.c
 
 ## In Progress
 
+### FEAT-030: Teacher can read back sealed activity config (Mostra)
+
+**Status**: in_progress | **Priority**: high | **Created**: 2026-11-18
+**Origin**: product owner decision (2026-11-18), resolving OQ-034. Branch `feat/assess-config-reveal` (from `feat/assess-rag-exclusion`).
+
+**Context**: the solution, the pasted rubric and the transcript recipients are sealed to the worker's public key (ARCH-071, ADR-0031); the API holds no private key, so the settings form could only show "impostata / non impostata". A teacher editing an activity could not see what was stored.
+
+**Decision ("variant B")**: a fresh EDITOR presses "Mostra" and reads back ONE field, without Moodle storing it. `POST /api/v1/assess/activities/{cmid}/config/reveal` verifies the actor like the PUT, generates an ephemeral X25519 keypair in memory, and queues a `config_reveal` job with the public half. The worker opens the field and re-seals it to that key (purpose `config-reveal`, binding `[site, cmid, field, request]`) in `assess_config_reveals` (revision a0008: ciphertext only, RLS-bound, swept after 60 s). The API opens it in memory, deletes the row and writes the audit `assess_teacher_config_revealed` (actor, cmid, field; no content) in one transaction. 200 `{"field", "value"}` with `no-store`; 404 `ERR-ASSESS-030` (not set); 503 `ERR-ASSESS-031` (`retry_after_s`, the worker did not answer within `VEKTRA_ASSESS_CONFIG_REVEAL_TIMEOUT_S`, default 3 s, at most 3.5 s); 400 `ERR-ASSESS-014` (`field`). Metric `vektra_assess_config_reveal_total{outcome}`.
+
+**Accepted exposure**: a compromised API database role can now obtain stored values through the worker (each answer leaves a worker log line with ids only); before, it could not read them at all.
+
+**Acceptance criteria**:
+- [x] An editor reads back each of the three fields once; nothing of the value is stored, logged, audited or put in a job
+- [x] Non-editors and stale facts are refused exactly as the PUT refuses them
+- [x] A row of another site, cmid, field or request is never read; the row is deleted on read, swept otherwise
+- [ ] The plugin's "Mostra" (vektra-moodle-discuss) works end to end on a live stack
+
+**Traceability**: OQ-034, ADR-0031 (amendment 2026-11-18), ARCH-071, REQ-077, FEAT-029 (a document-backed solution or rubric must define what "Mostra" shows for it).
+
+---
+
 ### BUG-011: ~~Ingest pipeline does not generate sparse embeddings for hybrid search~~
 
 **Status**: completed | **Priority**: high | **Created**: 2026-03-17 | **Completed**: 2026-03-22 (v0.3.0)

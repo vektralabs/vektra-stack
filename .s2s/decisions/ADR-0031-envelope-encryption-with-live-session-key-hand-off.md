@@ -1,6 +1,6 @@
 # ADR-0031: Envelope encryption with live-session key hand-off and crypto-shredding for assess data
 
-**Status**: accepted (amended 2026-11-01: cryptography hard dependency, no pgcrypto fallback)
+**Status**: accepted (amended 2026-11-01: cryptography hard dependency, no pgcrypto fallback; amended 2026-11-18: worker-mediated read-back of teacher config with an ephemeral key, OQ-034 / FEAT-030)
 **Date**: 2026-11-01
 **Context**: design session `20261101-143802-design-assessment-discussion-chatbot` (assessment discussion chatbot); covers ARCH-079, ARCH-071
 
@@ -78,6 +78,15 @@ it is missing a key it needs or holds one it must not have):
 - Teacher config (solution, pasted rubric) is WRITE-ONLY from the API: sealed to the worker's
   public key, so the API cannot read stored solutions back. The settings form shows "impostata
   / non impostata, sostituisci?" (product confirmation pending; see the new OQ).
+  *Amended 2026-11-18 (OQ-034 resolved by the product owner, FEAT-030)*: still write-only for the
+  API, which still holds NO private key; a fresh EDITOR may read ONE field back on request
+  ("Mostra") through the worker: the API sends an ephemeral public key of the request in a
+  `config_reveal` job, the worker re-seals the opened field to it (purpose `config-reveal`,
+  binding `[site, cmid, field, request]`) in `assess_config_reveals` (ciphertext only, RLS,
+  swept after 60 s), and the API opens it in memory, deletes the row and audits the reveal
+  (`assess_teacher_config_revealed`, no content) in one transaction. A compromised API role can
+  now obtain stored values through the worker (and leaves the worker's own log line), which it
+  could not before: that is the accepted exposure of the decision.
 - Keys are backed up offline, separately from DB dumps, with a restore drill and rotation
   runbooks (KEK re-wrap job, re-sealing of at most K hand-off rows).
 
@@ -95,4 +104,3 @@ Converged 4/4.
 - (+) REQ-089 purge verifiable
 - (+) REQ-102 hashes anchored
 - (−) rekeying the subject key later would touch every historical row (decide now)
-

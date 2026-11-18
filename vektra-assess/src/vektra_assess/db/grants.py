@@ -29,6 +29,9 @@ TABLES: tuple[str, ...] = (
     "assess_activity_config",
     "assess_activity_config_sealed",  # revision 0036 (plan 11): one sealed row per field
     "assess_audit_events",
+    # revision a0008 (FEAT-030): the worker's re-sealed answer to one teacher read-back
+    # ("Mostra"), ciphertext under the request's ephemeral key, picked up and deleted by the API
+    "assess_config_reveals",
     "assess_consumed_jtis",
     "assess_deliveries",
     "assess_enrolment_checks",
@@ -230,6 +233,9 @@ MATRIX: Mapping[str, Mapping[str, Privs]] = {
         # revision a0007 (FEAT-028): the turn reads the worker's eligibility row for its own
         # request and deletes it at once
         "assess_material_reads": {"SELECT": _ALL, "DELETE": _ALL},
+        # revision a0008 (FEAT-030): the read-back reads the worker's answer for its own request
+        # and deletes it at once; it never writes one (no INSERT, no UPDATE)
+        "assess_config_reveals": {"SELECT": _ALL, "DELETE": _ALL},
         # snapshots, turns, session_keys, session_handoff: no privilege at all
     },
     WORKER: {
@@ -238,6 +244,9 @@ MATRIX: Mapping[str, Mapping[str, Privs]] = {
         # revision a0007: the material_eligibility job writes one row; the sweeper deletes the
         # rows nobody picked up
         "assess_material_reads": {"SELECT": _ALL, "INSERT": _ALL, "DELETE": _ALL},
+        # revision a0008: the config_reveal job writes one answer; the sweeper deletes the rows
+        # nobody picked up
+        "assess_config_reveals": {"SELECT": _ALL, "INSERT": _ALL, "DELETE": _ALL},
         # the Part B pre-flight refuses an unactivated triple (plan 8): read only
         "assess_model_activations": {"SELECT": _ALL},
         "assess_render_checks": {

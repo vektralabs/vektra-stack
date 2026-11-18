@@ -27,6 +27,7 @@ PRODUCTION_KINDS = {
     "setup_check", "teacher_notify", "operator_notify", "transcript_deliver",
     "transcript_generate", "teacher_gate", "smtp_test_send",
     "material_eligibility",  # FEAT-028: one RAG turn's live eligibility read
+    "config_reveal",  # FEAT-030: a teacher's read-back of one sealed config field
 }  # fmt: skip
 PRODUCTION_TICKS = [
     "heartbeat", "job_cleanup", "lease_reaper", "sweeper", "starting_reaper", "outage_probe",

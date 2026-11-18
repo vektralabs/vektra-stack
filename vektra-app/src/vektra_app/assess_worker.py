@@ -453,6 +453,7 @@ def _session_handlers(
     from vektra_app.assess_llm import build_assess_llm, build_worker_part_b_runner
     from vektra_assess.delivery.recipients import ConfigRecipients
     from vektra_assess.jobs import JobKind
+    from vektra_assess.worker.config_reveal import make_config_reveal_handler
     from vektra_assess.worker.enrolment import make_recheck_handler
     from vektra_assess.worker.material import make_material_handler
     from vektra_assess.worker.parser_client import ParserClient
@@ -522,6 +523,11 @@ def _session_handlers(
         JobKind.TEACHER_GATE: make_teacher_gate_handler(source),
         # FEAT-028: one RAG turn's live course-module eligibility (the API cannot ask the LMS)
         JobKind.MATERIAL_ELIGIBILITY: make_material_handler(source),
+        # FEAT-030: a fresh editor's read-back of one sealed config field, re-sealed to the
+        # request's ephemeral key (the API holds no private key)
+        JobKind.CONFIG_REVEAL: make_config_reveal_handler(
+            checked.keys["assess_teacher_config_private"]
+        ),
     }
 
 
@@ -867,6 +873,7 @@ def make_outage_probe(settings: Any) -> Any:
 
 def _session_ticks(checked: Checked) -> dict[str, Any]:
     """The plan assess-session-lifecycle tick bodies (they need no key)."""
+    from vektra_assess.worker.config_reveal import sweep_config_reveals
     from vektra_assess.worker.enrolment import queue_rechecks
     from vektra_assess.worker.material import sweep_material_reads
     from vektra_assess.worker.outage_probe import outage_tick
@@ -893,6 +900,8 @@ def _session_ticks(checked: Checked) -> dict[str, Any]:
         await queue_reconciles(engine.connect, settings.outage_timeout_s)
         # FEAT-028: eligibility rows no turn picked up (it timed out, or its API died)
         await sweep_material_reads(engine.connect)
+        # FEAT-030: read-back answers no request picked up (ciphertext under a key now gone)
+        await sweep_config_reveals(engine.connect)
 
     async def enrolment_recheck() -> None:
         await queue_rechecks(engine.connect)

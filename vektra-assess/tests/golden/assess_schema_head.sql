@@ -765,6 +765,22 @@ ALTER SEQUENCE public.assess_audit_events_id_seq OWNER TO <owner>;
 
 ALTER SEQUENCE public.assess_audit_events_id_seq OWNED BY public.assess_audit_events.id;
 
+CREATE TABLE public.assess_config_reveals (
+    id uuid NOT NULL,
+    site_id uuid NOT NULL,
+    cmid bigint NOT NULL,
+    field text NOT NULL,
+    status text NOT NULL,
+    sealed_value bytea,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT ck_assess_config_reveals_field CHECK ((field = ANY (ARRAY['solution'::text, 'pasted_rubric'::text, 'transcript_recipients'::text]))),
+    CONSTRAINT ck_assess_config_reveals_shape CHECK (((status = 'ok'::text) = (sealed_value IS NOT NULL))),
+    CONSTRAINT ck_assess_config_reveals_status CHECK ((status = ANY (ARRAY['ok'::text, 'not_set'::text, 'unreadable'::text]))),
+    CONSTRAINT ck_assess_config_reveals_value_small CHECK (((sealed_value IS NULL) OR (octet_length(sealed_value) < 262144)))
+);
+
+ALTER TABLE public.assess_config_reveals OWNER TO <owner>;
+
 CREATE TABLE public.assess_consumed_jtis (
     jti_hash text NOT NULL,
     aud text NOT NULL,
@@ -905,7 +921,7 @@ CREATE TABLE public.assess_jobs (
     done_at timestamp with time zone,
     last_error_code text,
     CONSTRAINT ck_assess_jobs_args_small CHECK ((pg_column_size(args) < 1024)),
-    CONSTRAINT ck_assess_jobs_kind CHECK ((kind = ANY (ARRAY['setup_check'::text, 'gate_refresh'::text, 'render_check'::text, 'transcript_generate'::text, 'transcript_deliver'::text, 'enrolment_recheck'::text, 'purge'::text, 'erasure'::text, 'preflight'::text, 'reconcile_reply'::text, 'teacher_notify'::text, 'operator_notify'::text, 'teacher_gate'::text, 'smtp_test_send'::text, 'material_eligibility'::text]))),
+    CONSTRAINT ck_assess_jobs_kind CHECK ((kind = ANY (ARRAY['setup_check'::text, 'gate_refresh'::text, 'render_check'::text, 'transcript_generate'::text, 'transcript_deliver'::text, 'enrolment_recheck'::text, 'purge'::text, 'erasure'::text, 'preflight'::text, 'reconcile_reply'::text, 'teacher_notify'::text, 'operator_notify'::text, 'teacher_gate'::text, 'smtp_test_send'::text, 'material_eligibility'::text, 'config_reveal'::text]))),
     CONSTRAINT ck_assess_jobs_state CHECK ((state = ANY (ARRAY['ready'::text, 'leased'::text, 'done'::text, 'failed'::text, 'dead'::text])))
 )
 WITH (autovacuum_vacuum_cost_delay='0', fillfactor='70', autovacuum_vacuum_scale_factor='0.01', autovacuum_vacuum_threshold='200', autovacuum_analyze_scale_factor='0.02');
@@ -1638,6 +1654,9 @@ ALTER TABLE ONLY public.assess_activity_config
 ALTER TABLE ONLY public.assess_audit_events
     ADD CONSTRAINT assess_audit_events_pkey PRIMARY KEY (id);
 
+ALTER TABLE ONLY public.assess_config_reveals
+    ADD CONSTRAINT assess_config_reveals_pkey PRIMARY KEY (id);
+
 ALTER TABLE ONLY public.assess_consumed_jtis
     ADD CONSTRAINT assess_consumed_jtis_pkey PRIMARY KEY (jti_hash);
 
@@ -1825,6 +1844,8 @@ CREATE INDEX idx_dashboard_tokens_hash ON public.dashboard_tokens USING btree (t
 
 CREATE INDEX ix_api_keys_expires ON public.api_keys USING btree (expires_at) WHERE ((expires_at IS NOT NULL) AND (revoked_at IS NULL));
 
+CREATE INDEX ix_assess_config_reveals_created_at ON public.assess_config_reveals USING btree (created_at);
+
 CREATE INDEX ix_assess_deliveries_due ON public.assess_deliveries USING btree (status, not_before);
 
 CREATE INDEX ix_assess_erasure_records_overdue_open ON public.assess_erasure_records USING btree (requested_at, id) WHERE ((completed_at IS NULL) AND (overdue_alerted_at IS NULL));
@@ -1942,6 +1963,9 @@ ALTER TABLE ONLY public.assess_activity_config_sealed
 
 ALTER TABLE ONLY public.assess_activity_config
     ADD CONSTRAINT assess_activity_config_site_id_fkey FOREIGN KEY (site_id) REFERENCES public.assess_sites(id) ON DELETE CASCADE;
+
+ALTER TABLE ONLY public.assess_config_reveals
+    ADD CONSTRAINT assess_config_reveals_site_id_fkey FOREIGN KEY (site_id) REFERENCES public.assess_sites(id) ON DELETE CASCADE;
 
 ALTER TABLE ONLY public.assess_deliveries
     ADD CONSTRAINT assess_deliveries_transcript_id_fkey FOREIGN KEY (transcript_id) REFERENCES public.assess_transcripts(id);
@@ -2095,6 +2119,8 @@ CREATE POLICY assess_api_site_bound ON public.assess_activity_config TO vektra_a
 
 CREATE POLICY assess_api_site_bound ON public.assess_activity_config_sealed TO vektra_assess_api USING ((site_id = (NULLIF(current_setting('app.assess_site_id'::text, true), ''::text))::uuid)) WITH CHECK ((site_id = (NULLIF(current_setting('app.assess_site_id'::text, true), ''::text))::uuid));
 
+CREATE POLICY assess_api_site_bound ON public.assess_config_reveals TO vektra_assess_api USING ((site_id = (NULLIF(current_setting('app.assess_site_id'::text, true), ''::text))::uuid)) WITH CHECK ((site_id = (NULLIF(current_setting('app.assess_site_id'::text, true), ''::text))::uuid));
+
 CREATE POLICY assess_api_site_bound ON public.assess_erasure_records TO vektra_assess_api USING ((site_id = (NULLIF(current_setting('app.assess_site_id'::text, true), ''::text))::uuid)) WITH CHECK ((site_id = (NULLIF(current_setting('app.assess_site_id'::text, true), ''::text))::uuid));
 
 CREATE POLICY assess_api_site_bound ON public.assess_extra_time TO vektra_assess_api USING ((site_id = (NULLIF(current_setting('app.assess_site_id'::text, true), ''::text))::uuid)) WITH CHECK ((site_id = (NULLIF(current_setting('app.assess_site_id'::text, true), ''::text))::uuid));
@@ -2132,6 +2158,8 @@ CREATE POLICY assess_api_site_bound ON public.assess_terminations TO vektra_asse
 CREATE POLICY assess_api_site_bound ON public.assess_token_jti TO vektra_assess_api USING ((site_id = (NULLIF(current_setting('app.assess_site_id'::text, true), ''::text))::uuid)) WITH CHECK ((site_id = (NULLIF(current_setting('app.assess_site_id'::text, true), ''::text))::uuid));
 
 CREATE POLICY assess_api_site_bound ON public.assess_transcript_download_tokens TO vektra_assess_api USING ((site_id = (NULLIF(current_setting('app.assess_site_id'::text, true), ''::text))::uuid)) WITH CHECK ((site_id = (NULLIF(current_setting('app.assess_site_id'::text, true), ''::text))::uuid));
+
+ALTER TABLE public.assess_config_reveals ENABLE ROW LEVEL SECURITY;
 
 ALTER TABLE public.assess_erasure_records ENABLE ROW LEVEL SECURITY;
 
@@ -2174,6 +2202,8 @@ ALTER TABLE public.assess_transcript_download_tokens ENABLE ROW LEVEL SECURITY;
 CREATE POLICY assess_unbound_roles ON public.assess_activity_config TO vektra_assess_worker, vektra_assess_definer USING (true) WITH CHECK (true);
 
 CREATE POLICY assess_unbound_roles ON public.assess_activity_config_sealed TO vektra_assess_worker, vektra_assess_definer USING (true) WITH CHECK (true);
+
+CREATE POLICY assess_unbound_roles ON public.assess_config_reveals TO vektra_assess_worker, vektra_assess_definer USING (true) WITH CHECK (true);
 
 CREATE POLICY assess_unbound_roles ON public.assess_erasure_records TO vektra_assess_worker, vektra_assess_definer USING (true) WITH CHECK (true);
 
@@ -2369,6 +2399,9 @@ GRANT INSERT ON TABLE public.assess_audit_events TO vektra_assess_definer;
 GRANT USAGE ON SEQUENCE public.assess_audit_events_id_seq TO vektra_assess_api;
 GRANT USAGE ON SEQUENCE public.assess_audit_events_id_seq TO vektra_assess_worker;
 GRANT USAGE ON SEQUENCE public.assess_audit_events_id_seq TO vektra_assess_definer;
+
+GRANT SELECT,DELETE ON TABLE public.assess_config_reveals TO vektra_assess_api;
+GRANT SELECT,INSERT,DELETE ON TABLE public.assess_config_reveals TO vektra_assess_worker;
 
 GRANT SELECT,INSERT ON TABLE public.assess_consumed_jtis TO vektra_assess_api;
 GRANT SELECT,DELETE ON TABLE public.assess_consumed_jtis TO vektra_assess_worker;

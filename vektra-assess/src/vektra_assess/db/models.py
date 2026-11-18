@@ -715,3 +715,23 @@ class MaterialReadOrm(Base):
     read_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), server_default=text("clock_timestamp()")
     )
+
+
+class ConfigRevealOrm(Base):
+    """Revision a0008 (FEAT-030): the worker's answer to one teacher read-back of a sealed config
+    field ("Mostra"): a status code and, for ``ok``, the field re-sealed to the request's
+    ephemeral public key. Never plaintext. Read and deleted by the API at once."""
+
+    __tablename__ = "assess_config_reveals"
+
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
+    site_id: Mapped[UUID] = mapped_column(
+        ForeignKey("assess_sites.id", ondelete="CASCADE")
+    )
+    cmid: Mapped[int] = mapped_column(BIGINT)
+    field: Mapped[str] = mapped_column(TEXT)
+    status: Mapped[str] = mapped_column(TEXT)
+    sealed_value: Mapped[bytes | None] = mapped_column(LargeBinary)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), server_default=text("clock_timestamp()")
+    )

@@ -683,6 +683,8 @@ sequence vektra_assess_worker assess_render_checks_id_seq USAGE
 sequence vektra_assess_worker assess_setup_checks_id_seq USAGE
 sequence vektra_assess_worker assess_start_attempts_id_seq USAGE
 table vektra_assess_api assess_audit_events INSERT
+table vektra_assess_api assess_config_reveals DELETE
+table vektra_assess_api assess_config_reveals SELECT
 table vektra_assess_api assess_consumed_jtis INSERT
 table vektra_assess_api assess_consumed_jtis SELECT
 table vektra_assess_api assess_enrolment_checks SELECT
@@ -748,6 +750,9 @@ table vektra_assess_definer assess_turns SELECT
 table vektra_assess_worker assess_activity_config SELECT
 table vektra_assess_worker assess_activity_config_sealed SELECT
 table vektra_assess_worker assess_audit_events INSERT
+table vektra_assess_worker assess_config_reveals DELETE
+table vektra_assess_worker assess_config_reveals INSERT
+table vektra_assess_worker assess_config_reveals SELECT
 table vektra_assess_worker assess_consumed_jtis DELETE
 table vektra_assess_worker assess_consumed_jtis SELECT
 table vektra_assess_worker assess_deliveries DELETE

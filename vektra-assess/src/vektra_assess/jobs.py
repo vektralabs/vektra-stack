@@ -70,6 +70,8 @@ class JobKind(enum.StrEnum):
     SMTP_TEST_SEND = "smtp_test_send"
     # the live course-module eligibility read of one RAG turn (revision a0007, FEAT-028)
     MATERIAL_ELIGIBILITY = "material_eligibility"
+    # a teacher's read-back of one sealed config field, "Mostra" (revision a0008, FEAT-030)
+    CONFIG_REVEAL = "config_reveal"
 
 
 def teacher_gate_dedupe_key(

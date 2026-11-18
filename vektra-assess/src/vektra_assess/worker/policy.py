@@ -110,6 +110,9 @@ KIND_DEFAULTS: dict[JobKind, KindPolicy] = {
     # one RAG turn's eligibility read (FEAT-028): the course resolution and course_modules.
     # One attempt: the turn waits a few seconds for it, a retry would answer nobody
     JobKind.MATERIAL_ELIGIBILITY: KindPolicy("ws", 20, 40, 1),
+    # a teacher's read-back of one sealed config field (FEAT-030): one DB read, one re-seal, one
+    # insert; no LMS call. One attempt: the request waits a few seconds, a retry answers nobody
+    JobKind.CONFIG_REVEAL: KindPolicy("maintenance", 10, 20, 1),
 }
 
 _POOL_PREFIX = "VEKTRA_ASSESS_POOL_"

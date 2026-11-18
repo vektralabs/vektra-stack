@@ -31,6 +31,8 @@ JOB_LOOP = "20261101-154950-assess-job-loop"
 TEACHER = "20261101-154950-assess-teacher-ops"
 #: course-material retrieval in discussions (BACKLOG FEAT-028, branch feat/assess-rag-exclusion)
 MATERIAL = "FEAT-028"
+#: the teacher's read-back of a sealed config field, "Mostra" (BACKLOG FEAT-030, OQ-034)
+REVEAL = "FEAT-030"
 
 # job kind -> plan that binds its handler
 HANDLER_OWNERS: dict[JobKind, str] = {
@@ -50,6 +52,7 @@ HANDLER_OWNERS: dict[JobKind, str] = {
     JobKind.TEACHER_GATE: TEACHER,
     JobKind.SMTP_TEST_SEND: PRIVACY,
     JobKind.MATERIAL_ELIGIBILITY: MATERIAL,
+    JobKind.CONFIG_REVEAL: REVEAL,
 }
 
 # tick name -> plan that binds its body

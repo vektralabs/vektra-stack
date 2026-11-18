@@ -127,7 +127,7 @@ async def test_every_site_scoped_table_the_api_reads_has_the_policy(pg: Pg) -> N
     assert {"assess_sessions", "assess_site_keys", "assess_activity_config"} <= set(
         covered
     )
-    assert len(covered) == 21, covered
+    assert len(covered) == 22, covered  # a0008: assess_config_reveals
     # enabled, not forced: the owner (the migration user) keeps every row, so a later data
     # migration and the base revision's own downgrade check still see what is there
     assert flags == {t: (True, False) for t in covered}

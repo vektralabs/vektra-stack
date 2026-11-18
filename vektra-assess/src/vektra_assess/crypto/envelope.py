@@ -19,7 +19,11 @@ purpose            row binding
 ``transcript-dek`` transcript_id
 ``teacher-config`` site_id, cmid, field
 ``teacher-reason`` table, row id
+``config-reveal``  site_id, cmid, field, request_id
 =================  ==================================
+
+``config-reveal`` (FEAT-030) is the worker re-sealing one opened teacher-config field to the
+API's EPHEMERAL public key of one read-back request (``crypto.reveal``).
 
 Nothing here logs, and no object defined here has a repr containing key bytes.
 """
@@ -66,6 +70,7 @@ class Purpose:
     TRANSCRIPT_DEK: Final = "transcript-dek"
     TEACHER_CONFIG: Final = "teacher-config"
     TEACHER_REASON: Final = "teacher-reason"
+    CONFIG_REVEAL: Final = "config-reveal"
     ALL: Final = frozenset(
         {
             "snapshot",
@@ -76,6 +81,7 @@ class Purpose:
             "transcript-dek",
             "teacher-config",
             "teacher-reason",
+            "config-reveal",
         }
     )
 

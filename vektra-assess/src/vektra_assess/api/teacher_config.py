@@ -13,6 +13,10 @@ Secret fields are audited by the database (set / replaced / cleared, recipient r
 content; nothing secret is logged. A session that has already started keeps what it copied at
 Start (duration, cap, snapshot); only the transcript recipients are re-read at send time.
 
+POST ``/config/reveal`` (FEAT-030, OQ-034 resolved 2026-11-18): a fresh editor reads back ONE
+sealed field through the worker, re-sealed to an ephemeral key of the request (the API still
+holds no private key); see ``api.config_reveal``.
+
 GET: the non-secret values, ``impostata`` / ``non impostata`` for each secret field (plus the
 recipients' count), the computed opening condition, the end-date warning, the review-options
 warning and the number of active sessions. It never returns a solution, a rubric or an address.
@@ -49,6 +53,7 @@ from vektra_assess.api.common import (
     parse_body,
     site_of_key,
 )
+from vektra_assess.api.config_reveal import reveal_config_field
 from vektra_assess.api.deps import settings_of
 from vektra_assess.api.teacher_ops import opening_for
 from vektra_assess.api.teachers import (
@@ -64,6 +69,9 @@ from vektra_assess.api.teachers import (
     verify_teacher,
 )
 from vektra_assess.audit import AssessAuditEvent, write_event
+from vektra_assess.crypto.teacher_config import (
+    FIELDS as SEALED_FIELDS,
+)
 from vektra_assess.crypto.teacher_config import (
     PASTED_RUBRIC,
     SOLUTION,
@@ -84,6 +92,7 @@ from vektra_assess.teacher.schemas import (
     MAX_RECIPIENT_CHARS,
     MAX_RECIPIENT_ITEMS,
     ConfigPut,
+    ConfigReveal,
     FieldError,
     TeacherAction,
     TriState,
@@ -610,6 +619,30 @@ async def get_config(
     if refused is not None:
         raise refused
     return JSONResponse(view, headers={"Cache-Control": "no-store"})
+
+
+# --- read-back of a sealed field, "Mostra" (FEAT-030, OQ-034 resolved 2026-11-18) -------------
+
+
+@router.post("/activities/{cmid}/config/reveal")
+async def reveal_config(
+    cmid: str, request: Request, key: ApiKeyInfo = Depends(_guard)
+) -> JSONResponse:
+    """A fresh EDITOR reads back ONE sealed field (``solution``, ``pasted_rubric``,
+    ``transcript_recipients``) once, without the LMS storing it. The body is the common
+    teacher shape plus ``field``; the actor is verified exactly as the PUT verifies it. The API
+    holds no private key: the worker re-seals the field to an ephemeral key of this request
+    (``api.config_reveal``). 200 ``{"field", "value"}`` (``no-store``), 404 ``ERR-ASSESS-030``
+    when the field is not set, 503 ``ERR-ASSESS-031`` when the worker does not answer in time,
+    400 ``ERR-ASSESS-014`` (``field``) for any other field name."""
+    c = path_id(cmid, "cmid")
+    body = await parse_body(request, ConfigReveal)
+    field = body.field
+    if not isinstance(field, str) or field not in SEALED_FIELDS:
+        raise fail(bad_request("field"))
+    return await reveal_config_field(
+        request, key, c, body, field, settings=settings_of(request)
+    )
 
 
 # --- gate refresh (live E2E follow-up) ----------------------------------------------------------

@@ -6,7 +6,7 @@ only re-exports them and builds the assess envelopes. Owning plans:
 .s2s/plans/20261101-154950-assess-session-lifecycle (005-016) and
 .s2s/plans/20261101-154950-assess-transcript-delivery (017-021) and
 .s2s/plans/20261101-154950-assess-teacher-ops (022-025) and
-.s2s/plans/20261101-154950-assess-privacy-retention (026-029).
+.s2s/plans/20261101-154950-assess-privacy-retention (026-029); BACKLOG FEAT-030 (030-031).
 
 Every message and remediation here is fixed text plus content-free codes: no envelope ever
 carries a student's text, a value read from the LMS or a row of another student.
@@ -44,6 +44,8 @@ from vektra_shared.errors import (
     ERR_ASSESS_027,
     ERR_ASSESS_028,
     ERR_ASSESS_029,
+    ERR_ASSESS_030,
+    ERR_ASSESS_031,
     ErrorCategory,
     ErrorResponse,
 )
@@ -78,12 +80,16 @@ __all__ = [
     "ERR_ASSESS_027",
     "ERR_ASSESS_028",
     "ERR_ASSESS_029",
+    "ERR_ASSESS_030",
+    "ERR_ASSESS_031",
     "activation_refused",
     "assess_unavailable",
     "bad_request",
     "capacity_reached",
     "config_conflict",
+    "config_field_not_set",
     "config_invalid",
+    "config_reveal_unavailable",
     "deadline_passed",
     "download_token_invalid",
     "erasure_not_completed",
@@ -539,4 +545,37 @@ def privacy_notice_changed() -> ErrorResponse:
         message="The privacy notice changed after the page was opened.",
         remediation="Reopen the page to read the current notice, then start again.",
         details={"reason": "privacy_notice_changed"},
+    )
+
+
+# --- teacher config read-back, "Mostra" (FEAT-030, OQ-034 resolved 2026-11-18) ---------------
+
+#: seconds a client waits before asking again for a read-back the worker did not answer
+REVEAL_RETRY_AFTER_S = 2
+
+
+def config_field_not_set(field: str) -> ErrorResponse:
+    """404: the sealed field has no value (never set, or cleared): there is nothing to show.
+    ``field`` is one of the three closed field names, never a value."""
+    return ErrorResponse(
+        category=ErrorCategory.PERMANENT,
+        code=ERR_ASSESS_030,
+        message="This setting has no stored value.",
+        remediation="Nothing to show: enter a value and save the settings.",
+        details={"reason": "field_not_set", "field": field},
+    )
+
+
+def config_reveal_unavailable() -> ErrorResponse:
+    """503: the worker did not answer the read-back in time (or its answer could not be
+    opened). Nothing was shown and nothing was audited as shown; the same request may be
+    retried."""
+    return ErrorResponse(
+        category=ErrorCategory.TRANSIENT,
+        code=ERR_ASSESS_031,
+        message="The stored value cannot be shown right now.",
+        remediation=f"Retry in about {REVEAL_RETRY_AFTER_S} seconds.",
+        retry_after=REVEAL_RETRY_AFTER_S,
+        # the plugin recognises a retryable refusal by ``details.retry_after_s``
+        details={"reason": "reveal_unavailable", **retry_details(REVEAL_RETRY_AFTER_S)},
     )

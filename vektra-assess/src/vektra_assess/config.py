@@ -875,6 +875,19 @@ class VektraAssessSettings(BaseSettings):
             "the turn goes on without course material, audited (fail closed)."
         ),
     )
+    config_reveal_timeout_s: float = Field(
+        3.0,
+        ge=0.5,
+        # the plugin waits 4 s per call (one retry): an answer later than that reaches nobody
+        le=3.5,
+        alias="VEKTRA_ASSESS_CONFIG_REVEAL_TIMEOUT_S",
+        description=(
+            "How long a teacher's read-back of a sealed setting ('Mostra': solution, pasted "
+            "rubric, transcript recipients; FEAT-030) waits for the worker (the config_reveal "
+            "job; the API holds no private key). No answer in time: 503 ERR-ASSESS-031, "
+            "retryable (retry_after_s), nothing shown. At most 3.5: the plugin's own wait is 4 s."
+        ),
+    )
     rag_top_k: int = Field(
         4,
         ge=1,

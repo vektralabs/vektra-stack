@@ -211,6 +211,10 @@ ERR_ASSESS_028 = (
 ERR_ASSESS_029 = (
     "ERR-ASSESS-029"  # Privacy notice changed since the student saw it (mint or Start)
 )
+ERR_ASSESS_030 = (
+    "ERR-ASSESS-030"  # Sealed teacher-config field not set: nothing to show (FEAT-030)
+)
+ERR_ASSESS_031 = "ERR-ASSESS-031"  # Sealed teacher-config read-back unavailable now: retry (FEAT-030)
 
 # Admin errors (ERR-ADMIN-001..007 live in vektra-admin as string literals;
 # 008 is shared because it backs a factory reused within that module)
@@ -279,6 +283,8 @@ _CODE_STATUS_OVERRIDE: dict[str, int] = {
     ERR_ASSESS_027: 503,
     ERR_ASSESS_028: 400,  # explicit envelope with details.fields, never the 422 path (DEBT-035)
     ERR_ASSESS_029: 409,
+    ERR_ASSESS_030: 404,
+    ERR_ASSESS_031: 503,
 }
 
 

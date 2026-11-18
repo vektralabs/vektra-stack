@@ -41,6 +41,7 @@ EXPECTED = {
     # plan 11 (11a)
     ("GET", "/api/v1/assess/activities/{cmid}/config"),
     ("PUT", "/api/v1/assess/activities/{cmid}/config"),
+    ("POST", "/api/v1/assess/activities/{cmid}/config/reveal"),  # FEAT-030
     # plan 11 (11b)
     ("GET", "/api/v1/assess/activities/{cmid}/sessions"),
     ("POST", "/api/v1/assess/activities/{cmid}/sessions/{sid}/reset"),

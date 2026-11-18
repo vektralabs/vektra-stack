@@ -159,6 +159,7 @@ Every token requires `loginas: false` (`403 ERR-ASSESS-006` otherwise).
 | GET | `/api/v1/assess/transcripts/{tid}` | download token | transcripts |
 | POST | `/api/v1/assess/transcripts/{tid}/resend` | `assess:teacher` (a grader) or `admin` | transcripts |
 | GET, PUT | `/api/v1/assess/activities/{cmid}/config` | `assess:teacher` (an editor) | teacher configuration |
+| POST | `/api/v1/assess/activities/{cmid}/config/reveal` | `assess:teacher` (an editor) | teacher configuration |
 | POST | `/api/v1/assess/activities/{cmid}/gate-refresh` | `assess:teacher` (verifies nobody) | teacher configuration |
 | GET | `/api/v1/assess/activities/{cmid}/sessions` | `assess:teacher` (a grader) | teacher operations |
 | POST | `/api/v1/assess/activities/{cmid}/sessions/{sid}/reset` | `assess:teacher` (a grader) | teacher operations |
@@ -345,7 +346,22 @@ moment ago, a little skew) is fresh, further below is a backward clock step and 
 |--------|------|------------|---------|--------|
 | GET | `/api/v1/assess/activities/{cmid}/config` | `assess:teacher` key; headers `X-Assess-Actor` (Moodle user id), `X-Assess-Course`, `X-Assess-Activity-Type` (`quiz`/`assign`) | `200` the view below, `Cache-Control: no-store` | `400 ERR-ASSESS-014` (`cmid`, `x_assess_actor`; `teacher_gate_hint`: the activity's facts are absent or stale and the course / type headers are missing or invalid, so no check could be queued), `403 ERR-ASSESS-007`, `403 ERR-ASSESS-021` (`not_an_editor`, `editor_check_stale`; audited `assess_teacher_unverified`) |
 | PUT | `/api/v1/assess/activities/{cmid}/config` | `assess:teacher` key; body below (at most about 593 KiB: two 20,000-code-point texts fully `\u`-escaped plus the recipients) | `200` the view below (new `version`) | `400 ERR-ASSESS-014` (malformed body, unknown field, wrong type), `400 ERR-ASSESS-022` (field errors, all at once, nothing saved; `details.retry_after_s` when every error is an LMS fact being re-read, above), `403 ERR-ASSESS-007`, `403 ERR-ASSESS-021`, `409 ERR-ASSESS-023` (`expected_version` is not `details.current_version`: reload, nothing saved), `503 ERR-ASSESS-001` (`teacher_config_key`) |
+| POST | `/api/v1/assess/activities/{cmid}/config/reveal` | `assess:teacher` key; body `{"actor_userid", "courseid", "activity_type", "field"}` (the strict teacher-operation shape below plus `field`: `solution`, `pasted_rubric` or `transcript_recipients`) | `200 {"field", "value"}` (exactly these two keys; `field` echoes the field sent), `Cache-Control: no-store`: `value` is the stored text for `solution` / `pasted_rubric`, the list of addresses (`list[str]`) for `transcript_recipients` | `400 ERR-ASSESS-014` (`details.reason` `field`: `field` missing, not a string or not one of the three names; `cmid`, the body schema), `403 ERR-AUTH-003` (not a teacher key), `403 ERR-ASSESS-007`, `403 ERR-ASSESS-021` (`not_an_editor`, `editor_check_stale` with `retry_after_s`: the same check and refusals as the PUT; audited `assess_teacher_unverified` with `route` `reveal_config`), `404 ERR-ASSESS-030` (`details` `{"reason": "field_not_set", "field"}`: no stored value; no job is queued), `503 ERR-ASSESS-031` (`details` `{"reason": "reveal_unavailable", "retry_after_s": 2}`, `Retry-After: 2`, retryable: the worker did not answer within `VEKTRA_ASSESS_CONFIG_REVEAL_TIMEOUT_S`, the job could not be queued, or the stored seal does not open) |
 | POST | `/api/v1/assess/activities/{cmid}/gate-refresh` | `assess:teacher` key; body `{"actor_userid", "courseid", "activity_type"}` (all required, the strict teacher-operation shape below; `actor_userid` is checked for shape only and verifies nobody) | `202 {"cmid", "queued", "refreshed_at"}`, `Cache-Control: no-store`: `queued` whether a refresh was queued now (`false`: a refresh and its one follow-up are already pending, or the activity's facts were read less than 10 s ago); `refreshed_at` when the stored facts were read (ISO 8601) or `null` | `400 ERR-ASSESS-014` (`cmid`, the body schema), `403 ERR-AUTH-003` (not a teacher key), `403 ERR-ASSESS-007` |
+
+`config/reveal` ("Mostra", FEAT-030; OQ-034 resolved by the product owner on 2026-11-18): a
+fresh EDITOR of the activity reads back ONE write-only field, so the settings form can show it
+on request without Moodle ever storing it. The actor is verified exactly as for the PUT. The API
+still holds no private key of the teacher config: it generates an ephemeral X25519 keypair for
+the request (memory only), queues the worker job `config_reveal` with the public half, and the
+worker re-seals the opened field to it (purpose `config-reveal`, binding `[site, cmid, field,
+request id]`) in one row of `assess_config_reveals` (ciphertext only, RLS-bound to the site). The
+API opens it in memory, deletes the row and writes the audit row `assess_teacher_config_revealed`
+(`reason_code` = the field; `data` `{"actor", "cmid", "field"}`, never the value) in one
+transaction; rows nobody picked up are swept after a minute. The value appears in this response
+only: never in a log, an audit row, a job argument or an error. Each request is counted in
+`vektra_assess_config_reveal_total{outcome}` (`revealed`, `not_set`, `refused`, `timeout`,
+`enqueue_failed`, `unreadable`, `stopped`). No extra rate limit beyond the key's RPM.
 
 `gate-refresh` (live E2E follow-up, 2026-11-13): the plugin calls it, fire and forget, when a
 teacher page of the activity opens (the Discussioni list, the activity settings form, the
@@ -376,8 +392,8 @@ Write-only fields (OQ-034): `solution` and `pasted_rubric` (text, at most 20,000
 NFC normalisation with control characters other than newline and tab removed; text that is empty
 after that is a clear), `transcript_recipients` (1 to 3 addresses, each in
 `VEKTRA_ASSESS_RECIPIENT_DOMAINS`; case-insensitive duplicates collapse). For these, `null` clears
-and a value replaces. They are sealed to the worker's key; no response, log or audit row ever
-contains them (the audit records `set`/`replaced`/`cleared` and, for recipients, the
+and a value replaces. They are sealed to the worker's key; no response (other than an editor's
+explicit `config/reveal` above), log or audit row ever contains them (the audit records `set`/`replaced`/`cleared` and, for recipients, the
 `sha256(site|address)` refs old/new).
 Enable (`enabled: true`) is refused, as field errors, for: a quiz without a close date or an
 assignment without a cut-off (BR-007), team submission, marking-guide grading (EX-023), the

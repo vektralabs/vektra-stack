@@ -88,6 +88,8 @@ TEACHER_PREFIX = "/api/v1/assess/activities/"
 TEACHER_ROUTES = {
     ("/api/v1/assess/activities/{cmid}/config", "GET"),
     ("/api/v1/assess/activities/{cmid}/config", "PUT"),
+    # FEAT-030: a fresh editor reads back one sealed field ("Mostra")
+    ("/api/v1/assess/activities/{cmid}/config/reveal", "POST"),
     ("/api/v1/assess/activities/{cmid}/sessions", "GET"),
     ("/api/v1/assess/activities/{cmid}/sessions/{sid}/reset", "POST"),
     ("/api/v1/assess/activities/{cmid}/terminate", "POST"),

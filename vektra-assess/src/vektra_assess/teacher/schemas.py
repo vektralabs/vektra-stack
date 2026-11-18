@@ -100,6 +100,15 @@ class TeacherAction(BaseModel):
     activity_type: ActivityType
 
 
+class ConfigReveal(TeacherAction):
+    """``POST /activities/{cmid}/config/reveal`` (FEAT-030): read back one sealed field.
+
+    ``field`` is checked by the route against the three sealed fields (400 ``field``): it is
+    left untyped here so a missing, mistyped or unknown name gets that one refusal."""
+
+    field: Any = None
+
+
 class ResetPost(TeacherAction):
     """``POST /activities/{cmid}/sessions/{sid}/reset`` (REQ-087)."""
 

@@ -105,6 +105,9 @@ class AssessAuditEvent(enum.StrEnum):
     # plan 12b: the operator's SMTP test send (requested by the API, its outcome by the worker)
     SMTP_TEST_REQUESTED = "assess_smtp_test_requested"
     SMTP_TEST_RESULT = "assess_smtp_test_result"
+    # FEAT-030 (OQ-034 resolved 2026-11-18): a fresh editor read back one sealed config field
+    # ("Mostra"). Who, which activity, which field: never the value
+    TEACHER_CONFIG_REVEALED = "assess_teacher_config_revealed"
 
 
 class Conn(Protocol):

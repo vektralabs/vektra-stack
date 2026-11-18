@@ -79,6 +79,8 @@ ELSEWHERE = {
     # plan 12b
     E.SMTP_TEST_REQUESTED: "test_smtp_test_send.py",
     E.SMTP_TEST_RESULT: "test_smtp_test_send.py",
+    # FEAT-030: the teacher's read-back of a sealed config field ("Mostra")
+    E.TEACHER_CONFIG_REVEALED: "test_config_reveal.py",
 }
 NOT_DRIVABLE = {E.ATTEMPT_MISMATCH_REJECTED}
 

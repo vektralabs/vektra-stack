@@ -2,7 +2,9 @@
 
 REQ-097 asks to "extend the REQ-044 lexicon", which does not exist in code (vektra_core safeguards
 hold only Presidio and passthrough), so this assess-owned lexicon is built here (plan Notes). A
-sentence that matches is replaced by the runner with the BR-009 notice, the turn is marked and
+sentence that matches a grade-related category (``GRADE_CATEGORIES``) is replaced by the runner
+with the BR-009 notice; a sentence in any other category (teacher intent, person, tone) is removed,
+since a grade notice there only confuses the student. Either way the turn is marked and
 ``grade_claim_replaced`` is audited with the category only.
 
 Patterns are matched case-insensitively on the sentence with the machine markers already removed;
@@ -70,13 +72,28 @@ PATTERNS: dict[str, tuple[str, ...]] = {
         r"\bnon sei portat[oa]\b",
         r"\byou(?:['\u2019]re| are) (?:very |really |so )?(?:lazy|smart|careless|stupid|brilliant|clever|bad at|good at|a genius|talented)\b",
     ),
-    # sarcasm, belittling or inflated wording (REQ-100)
+    # sarcasm, belittling or inflated wording (REQ-100): "facile" only when it belittles the task
+    # or the student ("era facile", "una domanda facile"), never a comparison or a description of
+    # learning ("più facile", "meno facile", "si apprendono facilmente": F1 2026-11-19)
     "tone": (
-        r"\bbanal[ei]\b|\bbanalmente\b|\bfacil[ei]\b|\bfacilissim[oa]\b|\belementare\b|\bovviamente\b",
+        r"\bbanal[ei]\b|\bbanalmente\b|\bfacilissim[oaie]\b|\belementare\b|\bovviamente\b",
         r"\bcome chiunque\b|\bpersino tu\b|\bperfino tu\b",
-        r"\b(?:trivial|obviously|it was easy|it is easy|anyone could|even you)\b",
+        r"\b(?:è|e['\u2019]|era|erano|sono|sarebbe(?:ro)? stat[oaie]|risulta(?:va)?) "
+        r"(?:(?:molto|davvero|proprio|abbastanza|piuttosto) )?facil[ei]\b",
+        r"\b(?:domand[ae]|esercizi[o]?|rispost[ae]|compit[oi]|consegn[ae]|quesit[oi]|passaggi[o]?) "
+        r"(?:(?:molto|davvero|proprio|abbastanza) )?facil[ei]\b",
+        r"\bti bastava\b|\bbastava (?:solo |semplicemente |soltanto )?(?:leggere|rileggere|guardare|"
+        r"ricordare|applicare|scrivere|notare|citare|usare|seguire|fare attenzione)\b",
+        r"\b(?:trivial|obviously|anyone could|even you)\b",
+        r"\b(?:it|this|that)(?:['\u2019]s| is| was) (?:(?:really|very|so|quite|pretty) )?easy\b",
+        r"\b(?:an |a )?(?:really |very |pretty )?easy (?:question|exercise|task|answer|one)\b",
+        r"\ball you had to do\b|\byou (?:just|only|simply) had to\b",
     ),
 }
+
+#: the grade-related categories (REQ-097, BR-009): a hit is replaced by the BR-009 notice. Any other
+#: category (teacher intent, person, tone) says nothing about the grade: its sentence is removed
+GRADE_CATEGORIES = frozenset({"verdict", "grade_change", "merit", "estimate"})
 
 # a first-person negation directly governing a verb-led grade-change pattern (must end right
 # before the verb). Only the patterns listed in _NEGATABLE may be cleared by it

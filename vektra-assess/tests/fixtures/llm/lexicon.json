@@ -86,11 +86,21 @@
       "it": [
         "Era una domanda banale.",
         "Ovviamente la risposta è la B.",
-        "Era facile vederlo."
+        "Era facile vederlo.",
+        "È facile: bastava leggere la consegna.",
+        "Era una domanda facile.",
+        "Era facilissimo.",
+        "Ti bastava rileggere il testo.",
+        "È un concetto elementare.",
+        "Erano esercizi facili."
       ],
       "en": [
         "This was trivial.",
-        "Obviously you missed the sign."
+        "Obviously you missed the sign.",
+        "It was easy to see.",
+        "That's an easy question.",
+        "All you had to do was read the prompt.",
+        "You just had to apply the rule."
       ]
     }
   },
@@ -114,6 +124,16 @@
     "Io non ho il potere di modificare il voto.",
     "No, I cannot change your grade.",
     "I can’t change your grade, only the teacher can.",
-    "We won't raise your grade here."
+    "We won't raise your grade here.",
+    "Secondo le dispense è più facile avere paura dei serpenti che dei fiori, perché alcune associazioni sono biologicamente preparate.",
+    "Cosa significa in pratica: non è che la paura sia automatica o inevitabile, ma che alcune associazioni si formano più facilmente e richiedono meno esperienza o rinforzo.",
+    "Alcune associazioni (gusto-disgusto vs luce/suono-dolore) si apprendono più facilmente (Garcia & Koelling).",
+    "Puoi citare Garcia & Koelling come esempio di double dissociation che mostra come tipo di stimolo e tipo di conseguenza interagiscano nella facilità di apprendimento.",
+    "Alcune paure si apprendono facilmente, altre meno facilmente.",
+    "Un suono è meno facile da associare alla nausea di un sapore.",
+    "È più facile che il ratto impari l'associazione tra sapore e nausea.",
+    "Fears of snakes are learned more easily than fears of flowers.",
+    "It is easier to condition fear to a snake than to a flower.",
+    "Some associations are easy to learn and others are not."
   ]
 }

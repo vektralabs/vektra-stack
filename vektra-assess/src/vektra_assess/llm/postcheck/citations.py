@@ -2,7 +2,10 @@
 
 A citation tag names one of the bundle's canonical labels: ``[Domanda n]``, ``[Criterio n]``,
 ``[Valutazione complessiva]``, ``[Consegna]`` or ``[Consegna p.X]``. A tag that does not resolve in
-the label index is removed and the turn is marked. ``[Materiale: <titolo>]`` (REQ-096 (b),
+the label index is removed and the turn is marked; when an article or determiner governs it
+("Non c'è alcuna [Domanda 5] nel contesto") it is replaced by its kind word in lower case
+("alcuna domanda"), so the sentence still reads and the number of the non-existent item is gone
+(F1 2026-11-19). ``[Materiale: <titolo>]`` (REQ-096 (b),
 FEAT-028) resolves only to the title of a course module whose material was retrieved in THIS
 turn (``materials``, from the live eligibility read; whitespace and case are not significant):
 any other one, a bare ``[Materiale]`` included, is removed and marks the turn, like an unresolved
@@ -24,6 +27,13 @@ _TAG = re.compile(
 _PAGE = re.compile(r"^Consegna\s+p\.\s*(\d+)$", re.IGNORECASE)
 _MATERIAL = re.compile(r"^Materiale\s*:\s*(?P<title>.+)$", re.IGNORECASE)
 MATERIAL_PREFIX = "Materiale: "
+# a word that needs a noun after it: removing the tag after one breaks the sentence
+_DETERMINER = re.compile(
+    r"(?:^|[\s(])(?:alcuna|alcun|nessuna|nessun|una|un|la|il|lo|le|gli|della|del|dello|nella|nel|"
+    r"nello|alla|al|allo|dalla|dal|dallo|sulla|sul|sullo|questa|questo|quella|quello|ogni|tale|"
+    r"the|a|an|no|this|that|any|each|every)\s+$",
+    re.IGNORECASE,
+)
 
 
 def _norm(title: str) -> str:
@@ -62,6 +72,10 @@ def check(
             label = by_lower.get("consegna")
         if label is None:
             removed += 1
+            if _DETERMINER.search(sentence, 0, m.start()):
+                return body.split()[
+                    0
+                ].lower()  # "domanda", "criterio", "consegna", "question"
             return ""
         resolved.append(label)
         return m.group(0)

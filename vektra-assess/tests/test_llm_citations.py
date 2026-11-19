@@ -42,6 +42,31 @@ def test_unresolved_and_material_tags_are_removed(sentence: str, expected: str) 
     assert out.text == expected and out.removed == 1
 
 
+@pytest.mark.parametrize(
+    ("sentence", "expected"),
+    [
+        # F1 2026-11-19: "Non c'è alcuna nel contesto" after removing a non-existent item
+        (
+            "Non c'è alcuna [Domanda 5] nel contesto della prova.",
+            "Non c'è alcuna domanda nel contesto della prova.",
+        ),
+        ("Rileggi la [Consegna p.0] con calma.", "Rileggi la consegna con calma."),
+        ("Nel [Criterio 4] manca il punto.", "Nel criterio manca il punto."),
+        (
+            "There is no [Question 7] in this quiz.",
+            "There is no question in this quiz.",
+        ),
+    ],
+)
+def test_an_unresolved_tag_after_a_determiner_leaves_its_kind_word(
+    sentence: str, expected: str
+) -> None:
+    """The number goes (it names an item that does not exist), the noun stays: the sentence
+    still reads. A tag not governed by a determiner is removed as before."""
+    out = citations.check(sentence, LABELS)
+    assert out.text == expected and out.removed == 1 and out.resolved == ()
+
+
 def test_material_is_removed_even_if_a_label_had_that_name() -> None:
     assert citations.check("[Materiale: x]", (*LABELS, "Materiale: x")).removed == 1
 

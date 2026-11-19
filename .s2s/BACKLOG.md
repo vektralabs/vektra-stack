@@ -22,6 +22,28 @@
 
 ## Planned
 
+### BUG-032: a session-bound chat token expires before a long discussion ends
+
+**Status**: draft | **Priority**: high | **Created**: 2026-11-19
+**Origin**: F1 demo stack, 2026-11-19. At minute 16 of a 20-minute discussion every `POST /turns` was refused (audit `assess_in_session_gate_rejected`, reason `token`) and the student saw "messaggio non inviato" until the page was reloaded.
+
+**Context**: the session-bound token lives `VEKTRA_ASSESS_SESSION_TOKEN_TTL_S` = 900 s by default (`vektra_assess.config`, `session_token_ttl_s`), but a discussion lasts `cap_minutes` (20 on F1, up to 120). The UI re-mints the token only on resume (page reload, `resume()` in the UI `app.ts`); during an active session nothing renews it, so any session longer than 15 minutes loses its token mid-way.
+
+**Options**:
+- raise the default TTL to at least the maximum cap plus the reply grace: the mint already clamps the lifetime to deadline + grace, so a long TTL never outlives the session;
+- or add an in-session renewal route that the UI calls before expiry.
+
+**Mitigation (F1)**: set `VEKTRA_ASSESS_SESSION_TOKEN_TTL_S` above the activity cap plus grace in the stack environment.
+
+**Acceptance criteria**:
+- [ ] A session at the maximum cap can send a turn in its last minute without a reload
+- [ ] A token still never outlives deadline + reply grace
+- [ ] A test fails on the current default: a turn after 15 minutes of a 20-minute session is refused
+
+**Traceability**: assess session tokens (config `session_token_ttl_s`, `reply_grace_s`), discussion UI resume.
+
+---
+
 ### DEBT-044: the ingest pipeline needs the `admin` scope only to delete the documents it ingested
 
 **Status**: planned | **Priority**: medium | **Created**: 2026-11-17
@@ -3092,6 +3114,28 @@ The backend stores conversation turns in the database (used for multi-turn query
 ---
 
 ## Completed
+
+### BUG-031: ~~the discussion post-check replaced legitimate text (tone, grade notice, rubric sub-scores, citations)~~
+
+**Status**: completed | **Priority**: high | **Created**: 2026-11-19 | **Completed**: 2026-11-19
+**Branch**: `fix/assess-postcheck-tuning` (from `feat/assess-rag-exclusion`)
+**Origin**: F1 transcript 2026-11-19 (quiz, pasted rubric with sub-scores, course material on, synthetic data).
+
+**Fixes**:
+1. **Tone lexicon**: `\bfacil[ei]\b` hit "è più facile avere paura dei serpenti" (Seligman, from the course material). "facile" now hits only when it belittles the task or the student ("era facile", "una domanda facile", "ti bastava rileggere", "facilissimo"), never a comparison or a description ("più/meno facile", "si apprendono facilmente"). EN analogues aligned.
+2. **Replacement by category**: a tone hit came out as the BR-009 grade notice. Only grade categories (verdict, grade_change, merit, estimate: REQ-097, BR-009) get the notice; teacher_intent, person and tone drop the sentence. Mark and `grade_claim_replaced` audit unchanged.
+3. **Rubric sub-scores**: "(4 punti)" copied from the pasted rubric became "[valore non verificato ...]". Plain point wording is accepted when it equals a sub-score written in that pasted criterion's text, or, attributed to no item, a point value in the pasted rubric or the solution in context; never with earned or score wording in the clause, never on an item with a snapshot mark, never as a criterion's maximum.
+4. **Citation removal**: "Non c'è alcuna [Domanda 5] nel contesto" became "Non c'è alcuna nel contesto". After an article or determiner an unresolved tag now leaves its kind word ("alcuna domanda").
+
+**Note**: the lexicon change moves `LEXICON_VERSION` and `prompt_version`: production needs a new NFR-023 activation.
+
+**Acceptance criteria**:
+- [x] Regression tests from the transcript sentences; real belittling, verdicts and grade claims still caught
+- [x] An obtained or invented score is still replaced, rubric number or not
+
+**Traceability**: REQ-096, REQ-097, REQ-100, BR-009.
+
+---
 
 ### BUG-012: ~~LLM exposes RAG retrieval internals to end users~~
 

@@ -235,3 +235,79 @@ def test_a_zero_padded_pasted_criterion_is_indexed_by_its_number() -> None:
     from vektra_assess.llm.postcheck.values import _pasted_maxima
 
     assert "criterio 2" in _pasted_maxima("Criterio 02 - Memoria (10 punti)")
+
+
+# --- rubric sub-scores taken from the context (F1 2026-11-19) ---------------------------------------
+
+_SUB_RUBRIC = (
+    "Criterio 1 - Condizionamento classico (10 punti): definizioni corrette (4), ruolo di stimolo "
+    "e conseguenza (3), due esempi pertinenti (3). Criterio 2 - Rinforzo e punizione (10 punti): "
+    "effetto aumenta/diminuisce (4), significato di positivo/negativo (3), esempi (3). Criterio 3 "
+    "- Tolman (10 punti): esperimento descritto (4), apprendimento latente (3), S-O-R contro S-R (3)."
+)
+
+
+def _sub_index(solution: str | None = None):  # type: ignore[no-untyped-def]
+    """The F1 shape: a quiz (Domanda 1 1/1, Domanda 2 2,5/5) with a pasted rubric."""
+    s = make(pasted_rubric=_SUB_RUBRIC, solution_text=solution)
+    if (
+        solution is not None
+    ):  # the solution is in context only with the teacher's toggle
+        flags = s.header.flags.model_copy(update={"show_solution": True})
+        s = s.model_copy(
+            update={"header": s.header.model_copy(update={"flags": flags})}
+        )
+    return value_index(assemble_context(s, _with_review(s, _ALL, "unreadable")))
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    [
+        "[Criterio 2]: la rubrica valuta soprattutto «effetto aumenta/diminuisce» (4 punti) e "
+        "«significato di positivo/negativo» (3 punti).",
+        "Secondo la rubrica avresti dovuto descrivere l'esperimento (4 punti): Tolman fece "
+        "esplorare i ratti anche senza ricompensa.",
+        "Avresti dovuto spiegare l'apprendimento latente (3 punti): cioè l'apprendimento senza "
+        "rinforzo.",
+        "Il [Criterio 3] vale 10 punti.",
+    ],
+)
+def test_a_sub_score_written_in_the_pasted_rubric_is_accepted(sentence: str) -> None:
+    out = check(sentence, _sub_index())
+    assert out.replaced == 0 and out.text == sentence
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    [
+        "Nel [Criterio 2] hai ottenuto 4 punti.",  # earned: no per-criterion mark exists
+        "Hai preso 4 punti.",  # unattributed, but presented as obtained
+        "Ti hanno tolto 3 punti sull'esperimento.",
+        "Nel [Criterio 2] vale 7 punti.",  # not in the rubric
+        "Il [Criterio 2] vale 4 punti.",  # a sub-score is not what the criterion is worth
+        "L'esperimento vale 6 punti.",  # unattributed, not in the context
+        "Nel [Criterio 2] hai ottenuto quattro punti.",  # spelled out: always replaced
+        "Il tuo punteggio è 4.",  # a score word, not a rubric point
+        "Il punteggio del [Criterio 2] è di 4 punti.",
+        "Il voto è 3.",
+    ],
+)
+def test_a_rubric_number_never_becomes_an_obtained_or_invented_score(
+    sentence: str,
+) -> None:
+    assert check(sentence, _sub_index()).replaced == 1, sentence
+
+
+def test_a_quiz_mark_is_still_checked_against_the_snapshot() -> None:
+    """A number the rubric happens to contain is no licence on an item with a snapshot mark."""
+    idx = _sub_index()
+    assert check("Nella [Domanda 2] hai 4 punti.", idx).replaced == 1
+    assert check("Nella [Domanda 2] il punteggio è 3.", idx).replaced == 1
+    assert check("Nella [Domanda 2] hai ottenuto 2,5/5 punti.", idx).replaced == 0
+
+
+def test_points_in_the_solution_in_context_are_accepted() -> None:
+    sol = "Risposta attesa: definizione (2 punti) e un esempio (5 punti)."
+    sentence = "La soluzione chiede un esempio (5 punti)."
+    assert check(sentence, _sub_index(sol)).replaced == 0
+    assert check(sentence, _sub_index()).replaced == 1  # not in context: not accepted

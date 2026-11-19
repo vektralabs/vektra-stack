@@ -14,6 +14,22 @@ attributed to with certainty, or an item that is not in the bundle is replaced w
 and the turn is marked. A hidden mark is not in the index, so a stated hidden mark is always
 replaced, even when it equals the visible maximum: the check can neither confirm nor reveal it.
 Signs are kept (``-1`` is not ``1``).
+
+Points written in the context the model was given (F1 2026-11-19): the teacher's pasted rubric
+("esperimento descritto (4)", "(10 punti)") and the solution when it is in context. A point value
+(only plain point wording, "4 punti" or "(4)": never "punteggio", "voto", a level, a ratio or a
+spelled-out number) that no clause wording presents as obtained by
+the student ("hai", "ottenuto", "tolto", ...) is accepted when
+
+- it is attributed to a pasted criterion and equals that criterion's maximum or one of the points
+  written inside that criterion's text (a value presented as what the criterion is worth, "vale",
+  "su", must still be its maximum), or
+- it is attributed to no item and equals a point value written anywhere in the pasted rubric or
+  the solution in context.
+
+An item with a snapshot mark (a quiz question, an LMS criterion, the overall grade) is never
+relaxed: a value attributed to it is checked against the snapshot as before, whatever the rubric
+says. So a rubric number can be repeated as what the rubric asks, never turned into a score.
 """
 
 from __future__ import annotations
@@ -99,6 +115,9 @@ class ItemValues:
     #: a criterion known only from the teacher's PASTED rubric: it has maxima (the points each
     #: criterion is worth, student-visible by definition, BR-011) and never an earned value
     rubric_only: bool = False
+    #: points written in the context for this criterion (its sub-scores), or, under
+    #: ``CONTEXT_KEY``, anywhere in the pasted rubric or the solution in context
+    parts: frozenset[Decimal] = frozenset()
 
 
 @dataclass(frozen=True)
@@ -147,10 +166,35 @@ def _values(
 
 # words that present a value as obtained by the student: never confirmed for a rubric-only item
 _EARNED_CONTEXT = re.compile(
-    r"\b(?:ottenut\w*|pres[oaie]|preso|assegnat\w*|hai|guadagnat\w*|perso|persi|got|received|"
-    r"awarded|scored|earned|lost)\b",
+    r"\b(?:ottenut\w*|pres[oaie]|preso|assegnat\w*|hai|guadagnat\w*|perso|persi|tolt[oaie]|"
+    r"attribuit\w*|riconosciut\w*|got|received|awarded|scored|earned|lost|deducted|given)\b",
     re.IGNORECASE,
 )
+
+
+#: the ``value_index`` key of the points written in the context but in no item ("" is no label)
+CONTEXT_KEY = ""
+# a point value as a rubric or a solution writes it: "(4)", "(4 punti)", "4 punti", "4 points"
+_WRITTEN_POINTS = re.compile(
+    rf"\(\s*({_NUM})\s*(?:{_PTS})?\s*\)|(?<![\w.,/])({_NUM})\s+{_PTS}\b", re.IGNORECASE
+)
+# only plain point wording ("4 punti", "(4)") may repeat the context: "punteggio", "voto", "score"
+# name the student's result and are always checked against the snapshot
+_POINT_KEY = re.compile(rf"^{_PTS}$", re.IGNORECASE)
+# a clause that talks about the student's result: a context point may not be repeated in it
+_SCORE_WORD = re.compile(
+    r"\b(?:punteggio|voto|valutazione|livello|scored?|grade|mark)\b", re.IGNORECASE
+)
+_CRITERION_HEAD = re.compile(r"\bCriteri(?:o|on)\s+(\d+)\b", re.IGNORECASE)
+
+
+def _written_points(text: str) -> set[Decimal]:
+    out = set()
+    for m in _WRITTEN_POINTS.finditer(text):
+        d = _dec(m.group(1) or m.group(2))
+        if d is not None:
+            out.add(d)
+    return out
 
 
 def _pasted_maxima(text: str) -> dict[str, ItemValues]:
@@ -159,8 +203,21 @@ def _pasted_maxima(text: str) -> dict[str, ItemValues]:
         d = _dec(m.group(2))
         if d is not None:
             out.setdefault(f"criterio {int(m.group(1))}", set()).add(d)
+    # each criterion's text runs from its heading to the next one
+    heads = list(_CRITERION_HEAD.finditer(text))
+    parts: dict[str, set[Decimal]] = {}
+    for h, nxt in zip(heads, [*heads[1:], None], strict=True):
+        end = nxt.start() if nxt is not None else len(text)
+        key = f"criterio {int(h.group(1))}"
+        parts.setdefault(key, set()).update(_written_points(text[h.end() : end]))
     return {
-        k: ItemValues(frozenset(), frozenset(), frozenset(v), rubric_only=True)
+        k: ItemValues(
+            frozenset(),
+            frozenset(),
+            frozenset(v),
+            rubric_only=True,
+            parts=frozenset(parts.get(k, ())),
+        )
         for k, v in out.items()
     }
 
@@ -176,6 +233,18 @@ def value_index(bundle: ContextBundle) -> dict[str, ItemValues]:
     for n, c in enumerate(bundle.criteria, start=1):
         out[S.CRITERION_LABEL.format(n=n).lower()] = _values(
             (c.points, c.max_points), level=(c.level_index, c.level_count)
+        )
+    written = _written_points(bundle.pasted_rubric or "")
+    written |= _written_points(
+        bundle.solution_text or ""
+    )  # None unless it is in context
+    if written:
+        out[CONTEXT_KEY] = ItemValues(
+            frozenset(),
+            frozenset(),
+            frozenset(),
+            rubric_only=True,
+            parts=frozenset(written),
         )
     ov = bundle.overall
     if ov.grade_kind is GradeKind.POINTS:
@@ -234,21 +303,43 @@ def check(
             return True
         return not (pair in it.pairs or (talks_levels and pair in it.level_pairs))
 
+    def _clause(at: int) -> int:
+        return max((sentence.rfind(c, 0, at) for c in ";\u2014"), default=-1) + 1
+
+    def earned(at: int) -> bool:
+        """The clause that attributes the value at ``at`` presents it as obtained: checked whole,
+        earned wording before the citation included ("Hai ottenuto nel [Criterio 2] 10 punti")."""
+        return bool(_EARNED_CONTEXT.search(sentence, _clause(at), at))
+
+    def as_context_point(key: str, at: int) -> bool:
+        """Plain point wording in a clause that neither presents it as obtained nor talks about
+        the result ("il punteggio del Criterio 2 è di 4 punti" is a score, not a rubric line)."""
+        return bool(_POINT_KEY.match(key)) and not (
+            earned(at) or _SCORE_WORD.search(sentence, _clause(at), at)
+        )
+
     def bad_single(at: int, a: str, key: str, before: str) -> bool:
         it, da = item_at(at), _dec(a)
-        if it is None or da is None:
+        if da is None:
             return True
+        if it is None:
+            # attributed to no item: only a point value the context itself writes, not as obtained
+            written = None if _attributed(cites, at) else index.get(CONTEXT_KEY)
+            return (
+                written is None
+                or da not in written.parts
+                or not as_context_point(key, at)
+            )
         if _IS_LEVEL.match(key):
             return da not in it.levels
         if it.rubric_only:
             # "Criterio 2 (Memoria di lavoro, 10 punti)": the value the rubric gives the criterion,
-            # never a score the student obtained (none exists per criterion). The clause that
-            # attributes the value is checked whole, earned wording before the citation included,
-            # and before the maximum shortcut ("hai ottenuto il massimo: 10 punti")
-            clause = max((sentence.rfind(c, 0, at) for c in ";\u2014"), default=-1) + 1
-            return da not in it.maxima or bool(
-                _EARNED_CONTEXT.search(sentence, clause, at)
-            )
+            # or one of the sub-scores written in its text, never a score the student obtained
+            # (none exists per criterion). Earned wording is checked before the maximum shortcut
+            # ("hai ottenuto il massimo: 10 punti"); "vale"/"su" asks for the maximum itself
+            parts = it.parts if as_context_point(key, at) else frozenset()
+            allowed = it.maxima if _MAX_CONTEXT.search(before) else it.maxima | parts
+            return da not in allowed or earned(at)
         if _MAX_CONTEXT.search(before):
             return da not in it.maxima
         return da not in it.earned

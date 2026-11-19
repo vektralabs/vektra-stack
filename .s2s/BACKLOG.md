@@ -169,9 +169,10 @@ So without a fix, v0.8.0 would have published a reference doc written in this cy
 **Proposal**:
 - In "Discussione con l'assistente", the plugin form gets one optional file per field: one for the solution, one for the rubric. The text stays. A field may hold text only, file only, or both.
 - Accepted formats: PDF, DOCX, plain text, Markdown. One file per field; it can be replaced or removed. The form shows "Documento: <name> (impostato)", never the content.
-- Vektra extracts the text with the existing parser sidecar, the same one that reads student submissions. The extracted text is stored encrypted like the pasted text (ADR-0031 envelope) and never shown back. The original file is not kept, unless a later decision needs it.
+- Vektra extracts the text with the existing parser sidecar, the same one that reads student submissions. The extracted text is stored encrypted like the pasted text (ADR-0031 envelope). "Mostra" (FEAT-030) shows the file name and the extracted text, so the teacher checks what the assistant reads. The original file is not kept, unless a later decision needs it.
 - A file with no extractable text (a scan, no OCR) is refused at save with a clear field error, not discovered during a discussion.
 - Documents get a higher size limit than the 20 000 characters of pasted text. The save checks the discussion token budget: an extract that cannot fit the prompt is refused at save, with the reason.
+- Open decisions (2026-11-19, to settle in design): text and file together, or one source per field with the latest replacing the other (proposed: one source); scanned PDFs refused with a warning (proposed) rather than OCR.
 - The student never sees the document. The solution document follows the existing "show the solution" switch (default OFF), exactly like the text.
 
 **Work split**:

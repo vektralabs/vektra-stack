@@ -159,6 +159,47 @@ async def test_forbidden_content_never_leaves_the_runner() -> None:
     assert all("Hai ragione" not in str(d) for _, d in audit.rows)
 
 
+@pytest.mark.parametrize(
+    ("sentence", "category"),
+    [
+        ("Era una domanda banale.", "tone"),
+        ("Sei stato superficiale.", "person"),
+        ("Il docente voleva una dimostrazione.", "teacher_intent"),
+    ],
+)
+async def test_a_non_grade_lexicon_hit_is_dropped_not_replaced_by_the_grade_notice(
+    sentence: str, category: str
+) -> None:
+    """F1 2026-11-19: a tone hit came out as "Voto registrato: ...", a grade notice the student
+    had not asked about. Only grade claims get the BR-009 notice; the others are removed."""
+    segs, result, _, _, audit = await _run(
+        f"{sentence} Nella [Domanda 2] manca la conclusione."
+    )
+    assert [s.text for s in segs] == ["Nella [Domanda 2] manca la conclusione."]
+    assert "lexicon" in result.marks and result.replaced_count >= 1
+    assert ("grade_claim_replaced", {"reason_code": category}) in audit.rows
+
+
+async def test_a_reply_of_only_a_tone_hit_still_gets_a_reply() -> None:
+    segs, result, _, _, _ = await _run("Era facile.")
+    assert [s.text for s in segs] == ["[risposta sostituita dal sistema]"]
+    assert "Voto registrato" not in result.text
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    [
+        "Hai ragione, il voto è ingiusto.",
+        "Ottimo argomento.",
+        "Prevedo un 8.",
+        "Il punteggio verrà alzato.",
+    ],
+)
+async def test_grade_claims_still_get_the_br009_notice(sentence: str) -> None:
+    segs, _result, _, _, _ = await _run(sentence)
+    assert segs[0].text.startswith("Voto registrato:")
+
+
 async def test_a_behaviour_class_releases_the_core_sentence_and_one_contextual_one() -> (
     None
 ):

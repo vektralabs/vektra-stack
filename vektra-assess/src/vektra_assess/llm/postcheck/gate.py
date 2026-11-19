@@ -8,8 +8,9 @@ decided on the sentence at hand (plan Design Notes, release discipline). Stages:
 2. behaviour class: the first sentence may open with ``[[CLASS ...]]``; the runner then releases
    the shipped core sentence and alternative clause itself, and at most ONE contextual sentence
    from the model, so the core sentence is present in 100% of refusals by construction;
-3. lexicon: a verdict, merit, estimate, grade-change, teacher-intent or judgement sentence is
-   replaced as a whole by the BR-009 notice and ``grade_claim_replaced`` is audited;
+3. lexicon: a verdict, merit, estimate or grade-change sentence is replaced as a whole by the
+   BR-009 notice; a teacher-intent, person or tone sentence is removed (``GRADE_CATEGORIES``); both
+   mark the turn and audit ``grade_claim_replaced``;
 4. scoped values, 5. citation tags, 6. verbatim feedback quotes: replaced or removed in place.
 
 The safeguard's ``pre_response`` runs after the gate, in the runner (it is async).
@@ -155,7 +156,10 @@ class SentenceGate:
             self.audit.append(("grade_claim_replaced", {"reason_code": category}))
             self._mark(MARK_LEXICON)
             self._drop_contest(contest)
-            out.append(Unit(self.br009, True, system=True))
+            if category in lexicon.GRADE_CATEGORIES:
+                out.append(Unit(self.br009, True, system=True))
+            # any other category (tone, person, teacher intent) has nothing to do with the grade:
+            # the sentence is removed, marked and audited, and no grade notice stands in for it
             return out
         v = values.check(text, self._values, self.shipped.missing["value_unverified"])
         if v.replaced:

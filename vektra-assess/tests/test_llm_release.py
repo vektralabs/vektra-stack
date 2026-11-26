@@ -101,7 +101,7 @@ async def test_no_segment_is_yielded_before_its_sentence_passed_the_gate(
     for i in yields:
         released = events[i][1]
         passed = [j for j, e in enumerate(events[:i]) if e == ("passed", released)]
-        if released != "[risposta sostituita dal sistema]":
+        if released != "[risposta filtrata dal controllo automatico]":
             assert passed, f"segment yielded without passing the gate: {released!r}"
         # every gate input was a whole sentence: it ends with a terminator, a closing quote or
         # bracket, or is the final flush

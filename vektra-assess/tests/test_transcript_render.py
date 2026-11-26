@@ -162,7 +162,7 @@ def test_header_fields_come_from_rows_and_markers_are_shown() -> None:
             3,
             "bot",
             "normal",
-            "x [risposta sostituita dal sistema]",
+            "x [risposta filtrata dal controllo automatico]",
             T0,
             flagged=True,
             marks=("values",),
@@ -177,8 +177,8 @@ def test_header_fields_come_from_rows_and_markers_are_shown() -> None:
     allowlist.check(out.encode())
     for text in (
         "EA-2026", "Sessione #1 di 1", "tentativo #2 di 4", "relazione.pdf: letto",
-        "scan.pdf: nessun testo", "italiano, inglese", "[risposta sostituita dal sistema]",
-        "[valore sostituito dal sistema]", "segnalato dallo studente", "[risposta interrotta]",
+        "scan.pdf: nessun testo", "italiano, inglese", "[risposta filtrata dal controllo automatico]",
+        "[parte filtrata dal controllo automatico: valore non verificato]", "segnalato dallo studente", "[risposta interrotta]",
         "Riepilogo generato dall&#39;assistente", "corretto dallo studente",
         "conclusa dallo studente", "d" * 64,
     ):  # fmt: skip
@@ -452,3 +452,33 @@ def test_deeply_nested_tex_falls_back_instead_of_failing_the_render() -> None:
     assert b'<code aria-label="formula in formato TeX">' in out
     shallow = mathml.tex_to_math("\\frac{1}{\\frac{2}{3}}", display=False)
     assert isinstance(shallow, mathml.Math)
+
+
+# FEAT-033: a marker says that the automatic filter acted and on what, in the same words in the
+# chat and in the transcript, and a legend explains them; the filtered text is never shown
+
+
+def test_every_marker_names_the_automatic_filter() -> None:
+    for code, label in {**render.MARK_LABELS, "other": render.MARK_OTHER}.items():
+        assert label.startswith("[") and label.endswith("]"), code
+        assert "controllo automatico" in label, code
+    assert render.MARK_LABELS["refusal_repeat"] != render.MARK_OTHER
+
+
+def test_the_chat_and_the_transcript_use_the_same_marker_per_category() -> None:
+    from vektra_assess.llm import shipped
+
+    sh = shipped.get("it")
+    assert render.MARK_LABELS["values"] == sh.missing["value_unverified"]
+    assert render.MARK_LABELS["feedback_quote"] == sh.missing["quote_unverified"]
+    assert render.MARK_LABELS["safeguard"] == sh.missing["replaced_by_system"]
+    assert render.MARK_LABELS["values"] == (
+        "[parte filtrata dal controllo automatico: valore non verificato]"
+    )
+
+
+def test_the_transcript_explains_the_markers_once() -> None:
+    out = render.render(render.build_doc(_input())).decode()
+    allowlist.check(out.encode())
+    assert out.count(render.MARKERS_LEGEND.replace("'", "&#39;")) == 1
+    assert "non viene conservato" in render.MARKERS_LEGEND

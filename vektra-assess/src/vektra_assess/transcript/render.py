@@ -59,19 +59,33 @@ CONTEST_STATUS = {
     "confirmed": "confermato dallo studente",
     "corrected": "corretto dallo studente",
 }
-#: post-check stage codes (``TurnResult.marks``) and the marker each one shows
+#: post-check stage codes (``TurnResult.marks``) and the marker each one shows (FEAT-033): each
+#: names the automatic filter and the category. The three the chat shows inline (values, quotes,
+#: a reply replaced as a whole) are the shipped strings word for word (a test pins them), so the
+#: teacher reads the same note the student saw. "marker" removed only the model's internal
+#: markup, never text the student would have read.
+_FILTERED = "[parte filtrata dal controllo automatico: {}]"
 MARK_LABELS = {
-    "safeguard": "[risposta sostituita dal sistema]",
-    "lexicon": "[frase sostituita dal sistema]",
-    "values": "[valore sostituito dal sistema]",
-    "feedback_quote": "[citazione sostituita dal sistema]",
-    "citations": "[citazione rimossa dal sistema]",
-    "marker": "[marcatore rimosso dal sistema]",
+    "safeguard": "[risposta filtrata dal controllo automatico]",
+    "lexicon": _FILTERED.format("frase non consentita"),
+    "values": _FILTERED.format("valore non verificato"),
+    "feedback_quote": _FILTERED.format("commento del docente non verificato"),
+    "citations": _FILTERED.format("riferimento non trovato"),
+    "refusal_repeat": _FILTERED.format("rifiuto ripetuto"),
+    "marker": "[controllo automatico: annotazione interna scartata]",
 }
-MARK_OTHER = "[testo modificato dal sistema]"
+MARK_OTHER = "[parte filtrata dal controllo automatico]"
+#: what the markers mean, once per transcript. True by construction: only the delivered text of a
+#: reply is persisted (the turn ciphertext); traces and audit rows are content-free.
+MARKERS_LEGEND = (
+    "Note tra parentesi quadre: «parte filtrata dal controllo automatico» o «risposta filtrata "
+    "dal controllo automatico» indica che il filtro automatico ha rimosso o sostituito una parte "
+    "della risposta dell'assistente, o tutta la risposta, prima che arrivasse allo studente. "
+    "Il testo originale non viene conservato."
+)
 #: shipped strings (``vektra_assess.llm.shipped``, Italian), handed in by the composition root:
 #: this package may not import ``vektra_assess.llm`` (import-linter). A test pins them equal.
-REPLACED = "[risposta sostituita dal sistema]"
+REPLACED = "[risposta filtrata dal controllo automatico]"
 BR009_TEMPLATE = (
     "Voto registrato: {grade} (letto il {date}). Il voto NON è stato modificato da questa "
     "discussione; decide il docente"
@@ -129,6 +143,7 @@ class TranscriptDoc:
     contests_heading: str = "PUNTI CONTESTATI"
     contests_label: str = "Riepilogo generato dall'assistente"
     contests_empty: str = "Nessun punto contestato registrato."
+    markers_legend: str = MARKERS_LEGEND
     tex_label: str = "formula in formato TeX"
 
 

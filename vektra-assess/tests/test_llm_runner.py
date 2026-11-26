@@ -153,7 +153,7 @@ async def test_forbidden_content_never_leaves_the_runner() -> None:
     for forbidden in ("Hai ragione", "4 punti", "Domanda 9", "voleva"):
         assert forbidden not in out
     assert "Il voto NON è stato modificato" in out
-    assert "[valore non verificato" in out
+    assert "[parte filtrata dal controllo automatico: valore non verificato]" in out
     assert set(result.marks) == {"lexicon", "values", "citations"}
     assert [e for e, _ in audit.rows].count("grade_claim_replaced") == 2
     assert all("Hai ragione" not in str(d) for _, d in audit.rows)
@@ -182,7 +182,7 @@ async def test_a_non_grade_lexicon_hit_is_dropped_not_replaced_by_the_grade_noti
 
 async def test_a_reply_of_only_a_tone_hit_still_gets_a_reply() -> None:
     segs, result, _, _, _ = await _run("Era facile.")
-    assert [s.text for s in segs] == ["[risposta sostituita dal sistema]"]
+    assert [s.text for s in segs] == ["[risposta filtrata dal controllo automatico]"]
     assert "Voto registrato" not in result.text
 
 
@@ -633,7 +633,7 @@ async def test_a_refused_sentence_is_replaced_whole() -> None:
 
     segs, result, _, _, _ = await _run("Prima. Seconda con Rossi.", guard=Refuse())
     assert (
-        segs[1].text == "[risposta sostituita dal sistema]"
+        segs[1].text == "[risposta filtrata dal controllo automatico]"
         and "safeguard" in result.marks
     )
 

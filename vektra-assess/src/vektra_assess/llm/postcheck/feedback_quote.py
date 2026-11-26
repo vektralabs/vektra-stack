@@ -24,7 +24,9 @@ from vektra_assess.context import strings as S
 from vektra_assess.context.bundle import ContextBundle
 from vektra_assess.llm.postcheck.values import cited_labels
 
-MISSING = "[commento del docente non verificato: vedi la pagina di revisione]"
+MISSING = (
+    "[parte filtrata dal controllo automatico: commento del docente non verificato]"
+)
 
 #: the words that present a quotation as the teacher's (shared with the sentence splitter)
 LEAD = r"(?:Commento del docente(?:\s+dice)?|Teacher(?:['\u2019]s)? (?:comment|feedback)(?:\s+says)?)"

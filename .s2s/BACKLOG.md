@@ -60,9 +60,9 @@
 
 ---
 
-### FEAT-033: guardrail markers that say what the automatic filter did
+### FEAT-033: ~~guardrail markers that say what the automatic filter did~~
 
-**Status**: planned | **Priority**: high | **Created**: 2026-11-26
+**Status**: completed | **Priority**: high | **Created**: 2026-11-26 | **Completed**: 2026-11-26
 **Origin**: product owner feedback after the F1 demo (2026-11-20): "[valore sostituito dal sistema]" in a transcript was not understood. Branch `fix/assess-call-feedback`.
 
 **Context**: the post-check replaces or removes parts of a reply before the student sees it (values, quotes, citations, lexicon, safeguard). The markers were short and generic; the teacher could not tell that the assistant would have said more and that an automatic filter stopped it.
@@ -75,8 +75,23 @@
 **Note**: the inline texts are shipped strings (`llm/strings/*.yaml`): `prompt_version` moves, production needs a new NFR-023 activation.
 
 **Acceptance criteria**:
-- [ ] Chat inline markers and transcript markers use the same wording per category
-- [ ] The transcript legend states only what the code guarantees (original text not stored)
+- [x] Chat inline markers and transcript markers use the same wording per category
+- [x] The transcript legend states only what the code guarantees (original text not stored)
+
+**Done** (Italian; English inline texts aligned, "[part filtered by the automatic check: ...]"):
+
+| Post-check stage | Marker (chat inline and transcript) |
+|---|---|
+| values | `[parte filtrata dal controllo automatico: valore non verificato]` |
+| feedback_quote | `[parte filtrata dal controllo automatico: commento del docente non verificato]` |
+| safeguard (whole reply) | `[risposta filtrata dal controllo automatico]` |
+| lexicon | `[parte filtrata dal controllo automatico: frase non consentita]` (transcript only; a grade claim still becomes the BR-009 notice in the chat) |
+| citations | `[parte filtrata dal controllo automatico: riferimento non trovato]` (transcript only) |
+| refusal_repeat | `[parte filtrata dal controllo automatico: rifiuto ripetuto]` (transcript only) |
+| marker | `[controllo automatico: annotazione interna scartata]` (transcript only: nothing the student would have read) |
+| any other code | `[parte filtrata dal controllo automatico]` |
+
+Removals that leave no inline text in the chat (citations, lexicon removals, repeated refusals) keep doing so: an inline note there would break the sentence; the transcript lists them per turn. Legend at the top of the conversation: "Note tra parentesi quadre: «parte filtrata dal controllo automatico» o «risposta filtrata dal controllo automatico» indica che il filtro automatico ha rimosso o sostituito una parte della risposta dell'assistente, o tutta la risposta, prima che arrivasse allo studente. Il testo originale non viene conservato." True by construction: only the delivered text is persisted, traces and audit rows are content-free. The eval scorer accepts both the old and the new wording.
 
 **Traceability**: REQ-074, REQ-096, REQ-097, BR-016.
 

@@ -25,9 +25,9 @@ classes:
     core: "I am sorry you feel this way: it is normal for an assessment to weigh on you."
     alternative: "{support_text}"
 missing:
-  value_unverified: "[value not verified: see the review page]"
-  quote_unverified: "[teacher comment not verified: see the review page]"
-  replaced_by_system: "[reply replaced by the system]"
+  value_unverified: "[part filtered by the automatic check: value not verified]"
+  quote_unverified: "[part filtered by the automatic check: teacher comment not verified]"
+  replaced_by_system: "[reply filtered by the automatic check]"
 unsupported_language: "I am replying in Italian: this discussion supports only Italian and English."
 default_support_text: "If you need it, talk to your teacher."
 # REQ-099 (b) / REQ-077: the D3 disclosure of the solution-oracle limitation, shown in the

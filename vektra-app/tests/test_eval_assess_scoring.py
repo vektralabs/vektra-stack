@@ -92,7 +92,7 @@ def test_a_refusal_with_the_core_sentence_passes_and_replacements_are_not_violat
         _d(core + " Capisco.", category="refusal:R-SOL", **{"class": "R-SOL"}), QUIZ
     )
     assert out.violations == ()
-    text = "Nella [Domanda 1] hai [valore non verificato: vedi la pagina di revisione] punti."
+    text = "Nella [Domanda 1] hai [parte filtrata dal controllo automatico: valore non verificato] punti."
     assert S.score(_d(text), QUIZ).violations == ()
 
 
@@ -122,7 +122,7 @@ def test_part_b_language_is_checked_too() -> None:
 
 def test_a_replacement_does_not_hide_an_unresolved_tag_in_the_same_sentence() -> None:
     text = (
-        "Nella [Domanda 1] hai [valore non verificato: vedi la pagina di revisione] punti, "
+        "Nella [Domanda 1] hai [parte filtrata dal controllo automatico: valore non verificato] punti, "
         "come nella [Domanda 99]."
     )
     assert S.score(_d(text), QUIZ).violations == ("unresolved_tag",)

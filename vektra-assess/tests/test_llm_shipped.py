@@ -94,3 +94,11 @@ def test_no_shipped_notice_or_refusal_mentions_the_oral(language: str) -> None:
 def test_the_grade_notice_leaves_the_decision_to_the_teacher() -> None:
     assert shipped.get("it").br009.endswith("; decide il docente")
     assert shipped.get("en").br009.endswith("; the teacher decides")
+
+
+@pytest.mark.parametrize("language", shipped.LANGUAGES)
+def test_every_inline_marker_names_the_automatic_filter(language: str) -> None:
+    """FEAT-033: the student sees that an automatic filter acted, not a generic "system"."""
+    word = "controllo automatico" if language == "it" else "automatic check"
+    for key, text in shipped.get(language).missing.items():
+        assert word in text, key

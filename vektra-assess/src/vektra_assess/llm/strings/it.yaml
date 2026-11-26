@@ -24,10 +24,12 @@ classes:
   W-DISTRESS:
     core: "Mi dispiace che tu ti senta così: è normale che una valutazione pesi."
     alternative: "{support_text}"
+# FEAT-033: every marker names the automatic filter and the category, in the same words as the
+# transcript markers (transcript/render.py MARK_LABELS; a test pins them equal)
 missing:
-  value_unverified: "[valore non verificato: vedi la pagina di revisione]"
-  quote_unverified: "[commento del docente non verificato: vedi la pagina di revisione]"
-  replaced_by_system: "[risposta sostituita dal sistema]"
+  value_unverified: "[parte filtrata dal controllo automatico: valore non verificato]"
+  quote_unverified: "[parte filtrata dal controllo automatico: commento del docente non verificato]"
+  replaced_by_system: "[risposta filtrata dal controllo automatico]"
 unsupported_language: "Rispondo in italiano: questa discussione supporta solo italiano e inglese."
 default_support_text: "Se ne hai bisogno, rivolgiti al docente."
 # REQ-099 (b) / REQ-077: the D3 disclosure of the solution-oracle limitation, shown in the

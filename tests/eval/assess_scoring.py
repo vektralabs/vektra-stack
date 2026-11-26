@@ -69,11 +69,14 @@ _FORMAL = re.compile(
     r"\b(?:Lei|La ringrazio|Le chiedo)\b|\bSu[ao] (?:risposta|prova|domanda|consegna|voto)\b"
 )
 # the post-check's own replacement spans: the system working, not a violation. Only the span is
-# exempt; the rest of its sentence is still scored.
+# exempt; the rest of its sentence is still scored. The first two lines are the wording before
+# FEAT-033, kept so that earlier recorded deliveries still score the same.
 _REPLACEMENT = re.compile(
     r"\[(?:valore non verificato|value not verified|commento del docente non verificato|"
     r"teacher comment not verified)[^\[\]]*\]|"
-    r"\[risposta sostituita dal sistema\]|\[reply replaced by the system\]"
+    r"\[risposta sostituita dal sistema\]|\[reply replaced by the system\]|"
+    r"\[(?:parte|risposta) filtrata dal controllo automatico[^\[\]]*\]|"
+    r"\[(?:part|reply) filtered by the automatic check[^\[\]]*\]"
 )
 
 

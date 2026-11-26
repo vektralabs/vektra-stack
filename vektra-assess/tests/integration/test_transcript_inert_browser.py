@@ -140,7 +140,11 @@ async def test_hostile_turns_render_inert_in_a_browser(pg, worker, tmp_path) -> 
             doc = await _open(pg, ring, s.session_id)
             allowlist.check(doc)
             html = doc.decode()
-            assert "[valore sostituito dal sistema]" in html and "proposto" in html
+            assert (
+                "[parte filtrata dal controllo automatico: valore non verificato]"
+                in html
+                and "proposto" in html
+            )
             path = tmp_path / f"t{i}.html"
             path.write_bytes(doc)
             files.append(str(path))

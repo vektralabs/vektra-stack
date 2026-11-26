@@ -28,6 +28,7 @@
 <main>
 <section aria-labelledby="h-turns">
 <h2 id="h-turns">{{ doc.turns_heading }}</h2>
+<p class="notice">{{ doc.markers_legend }}</p>
 <ol>
 {% for t in doc.turns %}<li class="turn {{ t.role }}" lang="{{ t.lang }}"><p class="meta"><strong>{{ t.role_label }}</strong> <time datetime="{{ t.at_iso }}">{{ t.at_label }}</time>{% for m in t.markers %} <span class="marker">{{ m }}</span>{% endfor %}</p><p class="text">{% for s in t.segments %}{% if s.kind == "math" %}{{ mnode(s.node) }}{% elif s.kind == "tex" %}<code aria-label="{{ doc.tex_label }}">{{ s.tex }}</code>{% else %}{{ s.text }}{% endif %}{% endfor %}</p></li>
 {% endfor %}</ol>

@@ -44,7 +44,7 @@ from vektra_assess.context.bundle import ContextBundle
 from vektra_assess.context.references import PASTED_CRITERION
 from vektra_assess.context.snapshot import GradeKind
 
-REPLACEMENT = "[valore non verificato: vedi la pagina di revisione]"
+REPLACEMENT = "[parte filtrata dal controllo automatico: valore non verificato]"
 
 _NUM = r"[-\u2212]?\d+(?:[.,]\d+)?"  # an optional ASCII or Unicode minus sign is part of the value
 _PTS = r"(?:punt[io]|points?)"

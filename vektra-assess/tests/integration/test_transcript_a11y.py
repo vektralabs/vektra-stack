@@ -44,7 +44,7 @@ TURNS = (
         "normal",
         "Perché \\(\\frac{3}{4}\\) e non $$\\sqrt{x^2+1}$$? <b>grassetto</b>",
     ),
-    ("bot", "normal", "Hai indicato C1. [risposta sostituita dal sistema]"),
+    ("bot", "normal", "Hai indicato C1. [risposta filtrata dal controllo automatico]"),
     ("student", "normal", "I think the rubric was misapplied on C1."),
     ("bot", "interrupted", "[risposta interrotta]"),
 )

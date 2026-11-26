@@ -246,7 +246,7 @@ class DiscussionTurnRunner:
             else:
                 text = prior.text
             changed = changed or text != prior.text
-            out.append(PriorTurn(prior.role, text))
+            out.append(replace(prior, text=text))
         return tuple(out), changed
 
     def _outage(
@@ -298,7 +298,12 @@ class DiscussionTurnRunner:
         dropped = 0
         while True:
             head, past, tail = self._renderer.turn_parts(
-                bundle, history, text, language, material=tuple(chunks)
+                bundle,
+                history,
+                text,
+                language,
+                material=tuple(chunks),
+                contested=turn.contested,
             )
             try:
                 prompt = fit(

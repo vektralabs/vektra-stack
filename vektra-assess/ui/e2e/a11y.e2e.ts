@@ -16,7 +16,7 @@ import {
 
 const TAGS = ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"];
 
-/** Every state the plan lists, plus the unavailable text and the flag dialog. */
+/** Every state the plan lists, plus the unavailable text, the rating dialog and the reason box. */
 const STATES = [
   "awaiting",
   "unavailable",
@@ -25,7 +25,8 @@ const STATES = [
   "streaming",
   "outage",
   "confirm dialog",
-  "flag dialog",
+  "rating dialog",
+  "reason box",
   "closed",
 ] as const;
 
@@ -99,11 +100,18 @@ test("axe: 0 WCAG 2.1 A/AA violations in every state", async ({ page, request })
   await page.keyboard.press("Escape"); // Escape cancels like Annulla
   await expect(ui.locator("dialog[open]")).toHaveCount(0);
 
-  await tabTo(page, ui, "button.flag");
+  await tabTo(page, ui, "button.rate-up");
   await page.keyboard.press("Enter");
   await expect(ui.locator("dialog[open]")).toBeVisible();
-  await scan(page, "flag dialog", scanned);
+  await scan(page, "rating dialog", scanned);
   await page.keyboard.press("Escape");
+
+  await tabTo(page, ui, "button.rate-down");
+  await page.keyboard.press("Enter");
+  await expect(ui.locator(".contest-box")).toBeVisible();
+  await scan(page, "reason box", scanned);
+  await tabTo(page, ui, "button.contest-cancel");
+  await page.keyboard.press("Enter");
 
   await tabTo(page, ui, "button.finish");
   await page.keyboard.press("Enter");

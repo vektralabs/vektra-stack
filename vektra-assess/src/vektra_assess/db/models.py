@@ -289,7 +289,8 @@ class StartAttemptOrm(Base):
 
 
 class TurnFlagOrm(Base):
-    """REQ-103 'segnalato dallo studente' marker (revision 0030): one per bot turn."""
+    """REQ-103 rating of one bot turn (revision 0030; a0009, FEAT-034): ``down`` (contested,
+    ``reason_turn_no`` = the student turn carrying the reason, none on older rows) or ``up``."""
 
     __tablename__ = "assess_turn_flags"
 
@@ -298,6 +299,8 @@ class TurnFlagOrm(Base):
     )
     turn_no: Mapped[int] = mapped_column(INTEGER, primary_key=True)
     created_at: Mapped[datetime] = _ts(default=True)
+    rating: Mapped[str] = mapped_column(TEXT, server_default="down")
+    reason_turn_no: Mapped[int | None] = mapped_column(INTEGER)
 
 
 class StartBreakerOrm(Base):

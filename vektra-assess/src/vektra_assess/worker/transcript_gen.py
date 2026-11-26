@@ -120,9 +120,13 @@ _KEY = text(
 )
 _TURNS = text(
     "SELECT t.turn_no, t.role, t.kind, t.ciphertext, t.turn_hash, t.prev_hash, t.created_at, "
-    "(f.turn_no IS NOT NULL) AS flagged, n.marks, n.contests, n.lang "
+    "f.rating, f.reason_turn_no, r.turn_no AS contests_turn, n.marks, n.contests, n.lang "
     "FROM assess_turns t LEFT JOIN assess_turn_flags f ON f.session_id = t.session_id "
-    "AND f.turn_no = t.turn_no LEFT JOIN assess_turn_notes n ON n.session_id = t.session_id "
+    "AND f.turn_no = t.turn_no "
+    # FEAT-034: the student turn that carries a thumbs-down reason, linked to its reply
+    "LEFT JOIN assess_turn_flags r ON r.session_id = t.session_id "
+    "AND r.reason_turn_no = t.turn_no "
+    "LEFT JOIN assess_turn_notes n ON n.session_id = t.session_id "
     "AND n.turn_no = t.turn_no WHERE t.session_id = :sid ORDER BY t.turn_no"
 )
 _OUTAGES = text(
@@ -392,7 +396,9 @@ def _record(t: Any, text_: str) -> render.TurnRecord:
         kind=str(t.kind),
         text=text_,
         at=t.created_at,
-        flagged=bool(t.flagged),
+        rating=str(t.rating) if t.rating is not None else None,
+        reason_turn=int(t.reason_turn_no) if t.reason_turn_no is not None else None,
+        contests_turn=int(t.contests_turn) if t.contests_turn is not None else None,
         marks=tuple(t.marks or ()),
         contests=tuple(
             (str(c.get("label", "")), str(c.get("status", "")))

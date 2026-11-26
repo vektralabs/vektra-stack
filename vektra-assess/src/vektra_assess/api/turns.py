@@ -59,6 +59,7 @@ from vektra_assess.api.events import (
     status_count,
     status_payload,
 )
+from vektra_assess.api.flag import INSERT_RATING, RATED, RATING_DOWN
 from vektra_assess.api.gate import verify_assess_token_session
 from vektra_assess.api.material import DekCache, Material, load_material
 from vektra_assess.api.models import TurnRequest
@@ -72,6 +73,7 @@ from vektra_assess.context.policy import FrozenPolicy
 from vektra_assess.context.snapshot import from_canonical_bytes
 from vektra_assess.crypto import envelope, hashing
 from vektra_assess.errors import (
+    already_rated,
     assess_unavailable,
     bad_request,
     close_message_code,
@@ -233,13 +235,54 @@ def bundle_of(material: Material, row: SessionRow) -> ContextBundle:
     )
 
 
-def history_of(material: Material) -> tuple[PriorTurn, ...]:
-    return tuple(
-        PriorTurn(
-            "student" if t.role == "student" else "assistant", material.text_of(t)
+#: FEAT-034: the most of a contested reply the model is shown next to the student's reason
+CONTESTED_EXCERPT_CHARS = 400
+
+#: (reason turn, contested reply) pairs of a session: the thumbs-down links (revision a0009)
+_CONTEST_LINKS = text(
+    "SELECT reason_turn_no, turn_no FROM assess_turn_flags "
+    "WHERE session_id = :s AND reason_turn_no IS NOT NULL"
+)
+
+
+def contested_excerpt(reply: str) -> str:
+    """The delivered text of a contested reply, whitespace folded, cut at
+    ``CONTESTED_EXCERPT_CHARS`` with an ellipsis: enough for the model to tell which answer
+    the reason is about (the whole reply is in the history when the budget allows)."""
+    flat = " ".join(reply.split())
+    if len(flat) <= CONTESTED_EXCERPT_CHARS:
+        return flat
+    return flat[: CONTESTED_EXCERPT_CHARS - 1].rstrip() + "…"
+
+
+async def contest_links(conn: Any, sid: UUID) -> dict[int, int]:
+    """reason turn_no -> contested bot turn_no, for every thumbs down given with its reason."""
+    rows = await conn.execute(_CONTEST_LINKS, {"s": sid})
+    return {int(r.reason_turn_no): int(r.turn_no) for r in rows}
+
+
+def history_of(
+    material: Material, links: Mapping[int, int] | None = None
+) -> tuple[PriorTurn, ...]:
+    """Every stored turn as a prior message; a student turn that carries a thumbs-down reason
+    (``links``: reason turn_no -> contested turn_no) quotes an excerpt of the reply it contests."""
+    links = links or {}
+    by_no = {t.turn_no: t for t in material.turns}
+    out: list[PriorTurn] = []
+    for t in material.turns:
+        target = by_no.get(links.get(t.turn_no, -1))
+        out.append(
+            PriorTurn(
+                "student" if t.role == "student" else "assistant",
+                material.text_of(t),
+                contested=(
+                    contested_excerpt(material.text_of(target))
+                    if t.role == "student" and target is not None
+                    else None
+                ),
+            )
         )
-        for t in material.turns
-    )
+    return tuple(out)
 
 
 async def append_turn(
@@ -881,6 +924,20 @@ async def post_turn(
         )
         if material.turns and material.turns[-1].role == "student":
             raise fail(reply_pending())
+        contested: str | None = None
+        if body.contests_turn is not None:
+            # FEAT-034 thumbs down: the reply must be the assistant's and not rated yet (a
+            # rating is final); the message is the student's reason
+            target = next(
+                (t for t in material.turns if t.turn_no == body.contests_turn), None
+            )
+            if target is None or target.role != "bot":
+                raise fail(bad_request("not_a_bot_turn"))
+            rated = (await conn.execute(RATED, {"s": sid, "t": target.turn_no})).first()
+            if rated is not None:
+                raise fail(already_rated(str(rated.rating)))
+            contested = contested_excerpt(material.text_of(target))
+        links = await contest_links(conn, sid)
         turn_no = await append_turn(
             conn,
             material,
@@ -892,13 +949,37 @@ async def post_turn(
         )
         if turn_no is None:
             raise fail(state_conflict(row.state))
+        if body.contests_turn is not None:
+            # in the turn's own transaction: the reason never exists without its link
+            await conn.execute(
+                INSERT_RATING,
+                {
+                    "s": sid,
+                    "t": body.contests_turn,
+                    "r": RATING_DOWN,
+                    "reason": turn_no,
+                },
+            )
+            await write_event(
+                conn,
+                AssessAuditEvent.FLAG_ADDED,
+                actor="api",
+                site_id=row.site_id,
+                session_id=sid,
+                data={
+                    "turn_no": body.contests_turn,
+                    "rating": RATING_DOWN,
+                    "reason_turn_no": turn_no,
+                },
+            )
         bundle = bundle_of(material, row)
         turn = StudentTurn(
             text=body.text,
             turn_index=sum(1 for t in material.turns if t.role == "student") + 1,
-            history=history_of(material),
+            history=history_of(material, links),
             session_id=sid,
             site_id=row.site_id,
+            contested=contested,
         )
     # committed: the reply runs detached from this request from here on
     driver.broker.publish(sid, "turn_accepted", {"turn_no": turn_no})

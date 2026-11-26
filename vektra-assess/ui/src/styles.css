@@ -44,3 +44,10 @@ dialog { max-width: min(30rem, calc(100vw - 2rem)); border: 1px solid var(--bord
 dialog::backdrop { background: rgba(0, 0, 0, 0.4); }
 .dialog-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; justify-content: flex-end; }
 .closing { margin: 1rem 0; }
+/* FEAT-034: the thumbs, the reason box over the composer and the quoted reply of a reason */
+.contest-box { border-left: 4px solid var(--accent); background: var(--bot); padding: 0.5rem 0.75rem; }
+.contest-box[hidden] { display: none; }
+.contest-title, .contest-ref-title { margin: 0; font-size: 0.875rem; color: var(--muted); }
+.contest-help { margin: 0.25rem 0 0.5rem; font-weight: 600; }
+blockquote { margin: 0.25rem 0; padding-left: 0.75rem; border-left: 2px solid var(--border); color: var(--muted); }
+.contest-ref { margin-bottom: 0.5rem; }

@@ -200,6 +200,9 @@ class PriorTurn:
 
     role: Role
     text: str
+    #: FEAT-034: a student message that contests an earlier reply carries an excerpt of that
+    #: reply (delivered text), so the model knows which answer the reason is about
+    contested: str | None = None
 
 
 @dataclass(frozen=True)
@@ -214,6 +217,9 @@ class StudentTurn:
     #: (FEAT-028); None outside a live session (a test, a probe): no material can be read
     session_id: UUID | None = None
     site_id: UUID | None = None
+    #: FEAT-034 thumbs down: an excerpt of the reply this message contests (the text is then
+    #: the student's reason); None for an ordinary message
+    contested: str | None = None
 
 
 @dataclass(frozen=True)

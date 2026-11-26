@@ -84,7 +84,7 @@ def _docs() -> dict[str, bytes]:
                 kind=kind,
                 text=text,
                 at=T0 + timedelta(minutes=i),
-                flagged=i == 2,
+                rating="down" if i == 2 else None,
                 marks=("values",) if i == 2 else (),
                 contests=(("C1", "confirmed"),) if i == 2 else (),
                 lang="en" if i == 3 else ("other" if i == 1 else "it"),

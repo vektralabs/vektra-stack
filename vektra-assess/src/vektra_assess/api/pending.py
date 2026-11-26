@@ -32,6 +32,7 @@ from vektra_assess.api.session_gate import load_row
 from vektra_assess.api.site_binding import reset_site, set_request_site
 from vektra_assess.api.turns import (
     bundle_of,
+    contest_links,
     cut_after_s,
     driver_for_app,
     history_of,
@@ -156,14 +157,16 @@ class PendingTurnDriver:
             )
             if not material.turns or material.turns[-1].role != "student":
                 return None
-            last = material.turns[-1]
-            history = history_of(material)[:-1]
+            # FEAT-034: a pending thumbs-down reason keeps its quoted reply after an outage
+            full = history_of(material, await contest_links(conn, sid))
+            history, current = full[:-1], full[-1]
             turn = StudentTurn(
-                text=material.text_of(last),
+                text=current.text,
                 turn_index=sum(1 for t in material.turns if t.role == "student"),
                 history=history,
                 session_id=sid,
                 site_id=row.site_id,
+                contested=current.contested,
             )
             return row.epoch, bundle_of(material, row), turn, cut_after_s(row)
 

@@ -46,6 +46,7 @@ def test_one_base_revision_on_the_assess_branch() -> None:
         "a0006_assess_rag_attestation.py",  # FEAT-028: the teacher's RAG attestation
         "a0007_assess_material_reads.py",  # FEAT-028: the per-turn eligibility read
         "a0008_assess_config_reveals.py",  # FEAT-030: the teacher's config read-back
+        "a0009_assess_turn_ratings.py",  # FEAT-034: thumbs up / down, the reason's turn
     ]
     mod = _load(revs[0], "assess_base")
     assert mod.revision == "a0001"

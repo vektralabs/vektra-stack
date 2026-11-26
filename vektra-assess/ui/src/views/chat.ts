@@ -9,7 +9,20 @@ export interface Turn {
   role: "student" | "bot" | "system";
   kind: string;
   text: string;
+  /** REQ-103 / FEAT-034: a "down" (contested); kept for the turns served before the thumbs */
   flagged?: boolean;
+  /** FEAT-034: the student's rating of an assistant reply */
+  rating?: "up" | "down" | null;
+  /** FEAT-034: a student turn that is a thumbs-down reason names the reply it contests */
+  contests_turn?: number | null;
+}
+
+/** How much of a contested reply is quoted above the reason (the server's own cap is 400). */
+export const QUOTE_CHARS = 200;
+
+export function quoteOf(text: string): string {
+  const flat = text.split(/\s+/).filter(Boolean).join(" ");
+  return flat.length <= QUOTE_CHARS ? flat : `${flat.slice(0, QUOTE_CHARS - 1).trimEnd()}…`;
 }
 
 // a citation tag as the model writes it, "[Domanda 3]", "[Consegna p.2]": the brackets are for
@@ -42,15 +55,52 @@ export function richText(text: string, tags = false): HTMLElement {
 
 export interface TurnHooks {
   copy?: (turn: Turn, button: HTMLButtonElement) => void;
-  flag?: (turn: Turn, article: HTMLElement) => void;
+  /** FEAT-034 thumbs up (asks once, like the old flag) and thumbs down (opens the reason box) */
+  rateUp?: (turn: Turn, article: HTMLElement) => void;
+  contest?: (turn: Turn, article: HTMLElement) => void;
 }
 
-export function turnElement(turn: Turn, hooks: TurnHooks = {}, lang = "it"): HTMLLIElement {
+/** The rating marker of a rated reply, in place of its two buttons. */
+export function ratingMarker(rating: "up" | "down", focusable = false): HTMLElement {
+  return h("span", {
+    class: "flag-marker",
+    tabindex: focusable ? "-1" : undefined,
+    text: rating === "up" ? M.ratedUp : M.ratedDown,
+  });
+}
+
+function thumb(cls: string, icon: string, text: string, label: string): HTMLButtonElement {
+  // the icon is decoration; the accessible name contains the visible word (WCAG 2.5.3)
+  return h(
+    "button",
+    { type: "button", class: cls, "aria-label": label },
+    h("span", { "aria-hidden": "true", text: icon }),
+    ` ${text}`,
+  );
+}
+
+export function turnElement(
+  turn: Turn,
+  hooks: TurnHooks = {},
+  lang = "it",
+  quoted: string | null = null,
+): HTMLLIElement {
   const label = turn.role === "student" ? M.you : M.assistant;
+  // FEAT-034: a thumbs-down reason shows the reply it contests, like a reply in a messenger
+  const ref =
+    turn.role === "student" && turn.contests_turn
+      ? h(
+          "div",
+          { class: "contest-ref" },
+          h("p", { class: "contest-ref-title", text: M.contestRef }),
+          quoted ? h("blockquote", { text: quoted }) : null,
+        )
+      : null;
   const article = h(
     "article",
     { class: `turn turn-${turn.role}`, "aria-label": label, lang, "data-turn": String(turn.turn_no) },
     h("h3", { class: "turn-role", text: label }),
+    ref,
     richText(turn.text, turn.role === "bot"),
   );
   const actions = h("div", { class: "turn-actions" });
@@ -59,11 +109,14 @@ export function turnElement(turn: Turn, hooks: TurnHooks = {}, lang = "it"): HTM
     copy.addEventListener("click", () => hooks.copy!(turn, copy));
     actions.append(copy);
   }
-  if (turn.flagged) actions.append(h("span", { class: "flag-marker", text: M.flagged }));
-  else if (hooks.flag && turn.role === "bot") {
-    const flag = h("button", { type: "button", class: "flag", text: M.flag });
-    flag.addEventListener("click", () => hooks.flag!(turn, article));
-    actions.append(flag);
+  const rating = turn.rating ?? (turn.flagged ? "down" : null);
+  if (rating) actions.append(ratingMarker(rating));
+  else if (turn.role === "bot" && hooks.rateUp && hooks.contest) {
+    const up = thumb("rate-up", "👍", M.rateUp, M.rateUpLabel);
+    up.addEventListener("click", () => hooks.rateUp!(turn, article));
+    const down = thumb("rate-down", "👎", M.rateDown, M.rateDownLabel);
+    down.addEventListener("click", () => hooks.contest!(turn, article));
+    actions.append(up, down);
   }
   if (actions.childNodes.length) article.append(actions);
   return h("li", {}, article);
@@ -75,6 +128,13 @@ export class ChatView {
   readonly composer: HTMLTextAreaElement;
   readonly send: HTMLButtonElement;
   readonly live: LiveRegion;
+  /** FEAT-034: the reason box over the composer, quoting the contested reply */
+  readonly contestBox: HTMLElement;
+  readonly contestQuote: HTMLQuoteElement;
+  readonly contestCancel: HTMLButtonElement;
+  /** the reply being contested (its number and its opener), null for an ordinary message */
+  contesting: { turn: Turn; opener: HTMLElement | null } | null = null;
+  private texts = new Map<number, string>();
   private streaming: { li: HTMLLIElement; text: string } | null = null;
 
   constructor(
@@ -92,6 +152,7 @@ export class ChatView {
       maxlength: String(2 * maxChars),
       // the status line (composer-help) and the fixed shortcut hint, both read with the field
       "aria-describedby": "composer-help composer-shortcut",
+      "aria-required": "false",
       "aria-keyshortcuts": "Control+Enter Meta+Enter",
     });
     // type="button", never a form submission: the plugin's iframe sandbox has no allow-forms,
@@ -104,9 +165,21 @@ export class ChatView {
       e.preventDefault();
       if (!this.composer.disabled && !this.send.disabled) this.send.click();
     });
+    this.contestQuote = h("blockquote", { id: "contest-quote" });
+    this.contestCancel = h("button", { type: "button", class: "contest-cancel", text: M.contestCancel });
+    this.contestCancel.addEventListener("click", () => this.endContest(true));
+    this.contestBox = h(
+      "div",
+      { class: "contest-box", hidden: true },
+      h("p", { id: "contest-title", class: "contest-title", text: M.contestTitle }),
+      this.contestQuote,
+      h("p", { id: "contest-help", class: "contest-help", text: M.contestHelp }),
+      this.contestCancel,
+    );
     const form = h(
       "form",
       { class: "composer", "aria-label": M.composerLabel },
+      this.contestBox,
       h("label", { for: "composer", text: M.composerLabel }),
       this.composer,
       h("p", { id: "composer-help", class: "help", text: "" }),
@@ -125,13 +198,55 @@ export class ChatView {
    *  reply replaces it. */
   render(turns: Turn[], keepStreaming = false): void {
     const streaming = keepStreaming ? this.streaming : null;
-    this.list.replaceChildren(...turns.map((t) => turnElement(t, this.hooks)));
+    this.texts = new Map(turns.map((t) => [t.turn_no, t.text]));
+    this.list.replaceChildren(...turns.map((t) => this.element(t)));
     if (streaming) this.list.append(streaming.li);
     this.streaming = streaming;
   }
 
   add(turn: Turn): void {
-    this.list.append(turnElement(turn, this.hooks));
+    this.texts.set(turn.turn_no, turn.text);
+    this.list.append(this.element(turn));
+  }
+
+  private element(turn: Turn): HTMLLIElement {
+    const target = turn.contests_turn ? this.texts.get(turn.contests_turn) : undefined;
+    return turnElement(turn, this.hooks, "it", target === undefined ? null : quoteOf(target));
+  }
+
+  /** FEAT-034 thumbs down: the reason box quotes the reply; the next message is its reason. */
+  startContest(turn: Turn, opener: HTMLElement | null): void {
+    this.contesting = { turn, opener };
+    this.contestQuote.textContent = quoteOf(turn.text);
+    this.contestBox.hidden = false;
+    this.composer.setAttribute("aria-required", "true");
+    this.composer.setAttribute(
+      "aria-describedby",
+      "contest-title contest-quote contest-help composer-help composer-shortcut",
+    );
+    if (!this.composer.disabled) this.composer.focus();
+  }
+
+  /** Close the reason box; ``cancelled``: the focus goes back to the thumbs-down button. */
+  endContest(cancelled = false): void {
+    const opener = this.contesting?.opener ?? null;
+    this.contesting = null;
+    this.contestBox.hidden = true;
+    this.contestQuote.textContent = "";
+    this.composer.setAttribute("aria-required", "false");
+    this.composer.setAttribute("aria-describedby", "composer-help composer-shortcut");
+    if (cancelled && opener?.isConnected) opener.focus();
+  }
+
+  /** A reply is rated: its buttons give way to the marker, which takes the focus. */
+  markRated(turnNo: number, rating: "up" | "down", focus = true): void {
+    const article = this.list.querySelector(`article[data-turn="${turnNo}"]`);
+    const actions = article?.querySelector(".turn-actions");
+    if (!actions) return;
+    actions.querySelectorAll("button.rate-up, button.rate-down, .flag-error").forEach((b) => b.remove());
+    const marker = ratingMarker(rating, focus);
+    actions.append(marker);
+    if (focus) marker.focus();
   }
 
   /** A released segment of the reply: shown, not announced (the element is not live). */

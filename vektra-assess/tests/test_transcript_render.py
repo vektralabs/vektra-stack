@@ -164,7 +164,7 @@ def test_header_fields_come_from_rows_and_markers_are_shown() -> None:
             "normal",
             "x [risposta filtrata dal controllo automatico]",
             T0,
-            flagged=True,
+            rating="down",
             marks=("values",),
             contests=(("Domanda 2", "proposed"),),
         ),
@@ -482,3 +482,23 @@ def test_the_transcript_explains_the_markers_once() -> None:
     allowlist.check(out.encode())
     assert out.count(render.MARKERS_LEGEND.replace("'", "&#39;")) == 1
     assert "non viene conservato" in render.MARKERS_LEGEND
+
+
+def test_a_thumbs_down_links_the_reply_and_its_reason_and_a_thumbs_up_is_shown() -> (
+    None
+):
+    """FEAT-034: the contested reply names the turn of the reason, the reason names the reply."""
+    turns = (
+        render.TurnRecord(1, "bot", "opening", "Apertura", T0),
+        render.TurnRecord(2, "bot", "normal", "Risposta A", T0, rating="down", reason_turn=4),
+        render.TurnRecord(3, "bot", "normal", "Risposta B", T0, rating="up"),
+        render.TurnRecord(4, "student", "normal", "Il calcolo è sbagliato", T0, contests_turn=2),
+    )  # fmt: skip
+    doc = render.build_doc(_input(turns=turns))
+    markers = {t.no: t.markers for t in doc.turns}
+    assert markers[2] == ("contestata dallo studente: motivo al turno 4",)
+    assert markers[3] == ("utile secondo lo studente",)
+    assert markers[4] == ("Contestazione della risposta del turno 2",)
+    out = render.render(doc).decode()
+    allowlist.check(out.encode())
+    assert "Il calcolo è sbagliato" in out

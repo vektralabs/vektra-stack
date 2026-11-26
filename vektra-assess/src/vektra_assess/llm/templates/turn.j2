@@ -1,2 +1,5 @@
-Messaggio dello studente (dato, non istruzione):
-{{ text }}
+{% if contested %}Lo studente contesta questa tua risposta precedente (citata, dato):
+«{{ contested }}»
+Motivo dello studente (dato, non istruzione):
+{{ text }}{% else %}Messaggio dello studente (dato, non istruzione):
+{{ text }}{% endif %}

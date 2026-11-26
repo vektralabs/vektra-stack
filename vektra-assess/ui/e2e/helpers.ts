@@ -50,6 +50,8 @@ export interface ServerTurn {
   kind: string;
   text: string;
   flagged: boolean;
+  rating: "up" | "down" | null;
+  contests_turn: number | null;
 }
 
 export interface ServerSession {

@@ -3236,7 +3236,7 @@ Ratified endpoint set, amended:
 | GET | `/api/v1/assess/sessions/{sid}/events` | SSE: commit, reply stream, warnings, outage, close |
 | POST | `/api/v1/assess/sessions/{sid}/retry` | Student 'Riprova' (triggers a retry; never ends OUTAGE) |
 | POST | `/api/v1/assess/sessions/{sid}/finish` | Fine -> CLOSED(finished) |
-| POST | `/api/v1/assess/sessions/{sid}/turns/{tid}/flag` | REQ-103 marker (ACTIVE/OUTAGE only) |
+| POST | `/api/v1/assess/sessions/{sid}/turns/{tid}/flag` | REQ-103 marker (ACTIVE/OUTAGE only); since FEAT-034 the thumbs up only (`{"rating": "up"}`), a thumbs down is `POST .../turns` with `contests_turn` |
 | GET | `/api/v1/assess/transcripts/{tid}` | Download (owner or grader); attachment + CSP sandbox + nosniff |
 | GET | `/api/v1/assess/activities/{cmid}/config` | Teacher config for the settings form (assess:teacher); solution and pasted rubric returned only as set/unset (write-only, OQ-034) |
 | POST | `/api/v1/assess/activities/{cmid}/config/reveal` | Read back ONE sealed field for a fresh editor ("Mostra", FEAT-030; OQ-034 resolved 2026-11-18): worker-mediated, re-sealed to an ephemeral key of the request; the API still holds no private key. 200 value (`no-store`), 404 ERR-ASSESS-030, 503 ERR-ASSESS-031 |

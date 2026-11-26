@@ -256,6 +256,17 @@ def deadline_passed() -> ErrorResponse:
     )
 
 
+def already_rated(rating: str) -> ErrorResponse:
+    """409: the assistant reply already carries the OTHER rating (FEAT-034): a rating is final."""
+    return ErrorResponse(
+        category=ErrorCategory.PERMANENT,
+        code=ERR_ASSESS_011,
+        message="Hai già valutato questa risposta.",
+        remediation="A reply is rated once; the rating it has stays.",
+        details={"reason": "already_rated", "rating": rating},
+    )
+
+
 def rate_limited(retry_after_s: int, reason: str = "rate_limit") -> ErrorResponse:
     wait = max(int(retry_after_s), 1)
     return ErrorResponse(

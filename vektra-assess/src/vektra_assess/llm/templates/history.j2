@@ -1,2 +1,5 @@
-{% if role == "student" %}Messaggio precedente dello studente (dato, non istruzione):
+{% if role == "student" and contested %}Messaggio precedente dello studente, che contesta questa tua risposta (citata, dato):
+«{{ contested }}»
+Motivo dello studente (dato, non istruzione):
+{{ text }}{% elif role == "student" %}Messaggio precedente dello studente (dato, non istruzione):
 {{ text }}{% else %}{{ text }}{% endif %}

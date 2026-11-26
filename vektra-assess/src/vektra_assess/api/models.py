@@ -101,6 +101,16 @@ class SessionView(BaseModel):
 
 class TurnRequest(_Strict):
     text: str = Field(min_length=1)
+    #: FEAT-034 thumbs down: the assistant turn this message contests. The text is then the
+    #: student's mandatory reason; the reply is rated ``down`` in the same transaction.
+    contests_turn: int | None = Field(default=None, ge=1, le=1_000_000)
+
+
+class FlagRequest(_Strict):
+    """``POST .../turns/{turn_no}/flag`` (FEAT-034): only ``up`` is recorded here; a ``down``
+    needs its reason and goes through ``POST .../turns`` with ``contests_turn``."""
+
+    rating: Literal["up", "down"]
 
 
 class TurnAccepted(BaseModel):

@@ -69,8 +69,8 @@ function dialogPolyfill() {
   };
 }
 
-describe("REQ-103 flag", () => {
-  it("one confirmation, one POST, the marker replaces the control; none after closed", async () => {
+describe("FEAT-034 thumbs up / thumbs down", () => {
+  function rig(status = 201) {
     const calls: string[] = [];
     const root = document.createElement("main");
     document.body.replaceChildren(root);
@@ -82,8 +82,9 @@ describe("REQ-103 flag", () => {
       ),
       root,
       (async (url: string, init: RequestInit) => {
-        calls.push(`${init.method ?? "GET"} ${url}`);
-        return new Response("{}", { status: 201 });
+        calls.push(`${init.method ?? "GET"} ${url} ${init.body ?? ""}`.trim());
+        if (url.endsWith("/turns")) return Response.json({ turn_no: 3 }, { status: 202 });
+        return new Response("{}", { status });
       }) as unknown as typeof fetch,
     );
     const priv = a as unknown as { state: unknown; sid: string };
@@ -93,31 +94,98 @@ describe("REQ-103 flag", () => {
       { turn_no: 1, role: "bot", kind: "opening", text: "Benvenuto" },
       { turn_no: 2, role: "student", kind: "normal", text: "ciao" },
     ]);
-    expect(a.chat.list.querySelectorAll("button.flag").length).toBe(1); // bot turns only
     root.append(a.chat.root);
     dialogPolyfill();
-    const flag = a.chat.list.querySelector("button.flag") as HTMLButtonElement;
+    return { a, root, calls };
+  }
+
+  it("a thumbs up: one confirmation, one POST with its rating, the marker replaces both", async () => {
+    const { a, root, calls } = rig();
+    expect(a.chat.list.querySelectorAll("button.rate-up").length).toBe(1); // bot turns only
+    expect(a.chat.list.querySelectorAll("button.rate-down").length).toBe(1);
+    const up = a.chat.list.querySelector("button.rate-up") as HTMLButtonElement;
+    expect(up.getAttribute("aria-label")).toBe("Risposta utile");
     window.confirm = () => {
       throw new Error("window.confirm is blocked in the plugin's sandbox");
     };
     // Annulla: nothing is sent, the focus goes back to the control
-    flag.click();
-    expect(a.flagDialog.dialog.hasAttribute("open")).toBe(true);
-    expect(document.activeElement).toBe(a.flagDialog.no);
-    a.flagDialog.no.click();
+    up.click();
+    expect(a.rateDialog.dialog.hasAttribute("open")).toBe(true);
+    expect(document.activeElement).toBe(a.rateDialog.no);
+    a.rateDialog.no.click();
     await new Promise((r) => setTimeout(r, 0));
     expect(calls).toEqual([]);
-    expect(document.activeElement).toBe(flag);
-    // one confirmation, one POST
-    flag.click();
-    a.flagDialog.yes.click();
+    expect(document.activeElement).toBe(up);
+    up.click();
+    a.rateDialog.yes.click();
     await new Promise((r) => setTimeout(r, 0));
-    expect(calls).toEqual(["POST /api/sessions/S/turns/1/flag"]);
-    expect(a.chat.list.querySelector(".flag-marker")!.textContent).toBe("segnalato dallo studente");
+    expect(calls).toEqual(['POST /api/sessions/S/turns/1/flag {"rating":"up"}']);
+    const marker = a.chat.list.querySelector(".flag-marker") as HTMLElement;
+    expect(marker.textContent).toBe("indicata come utile");
+    expect(document.activeElement).toBe(marker);
+    expect(a.chat.list.querySelectorAll("button.rate-up, button.rate-down").length).toBe(0);
     a.chat.render([{ turn_no: 3, role: "bot", kind: "normal", text: "x" }]);
     const ev = (a as unknown as { onEvent: (e: unknown) => Promise<void> }).onEvent.bind(a);
     await ev({ event: "closed", data: '{"close_reason":"finished"}' });
-    expect(root.querySelectorAll("button.flag").length).toBe(0);
+    expect(root.querySelectorAll("button.rate-up, button.rate-down").length).toBe(0);
+  });
+
+  it("a thumbs down quotes the reply and sends the mandatory reason as the next message", async () => {
+    const { a, calls } = rig();
+    const down = a.chat.list.querySelector("button.rate-down") as HTMLButtonElement;
+    down.click();
+    expect(a.chat.contestBox.hidden).toBe(false);
+    expect(a.chat.contestQuote.textContent).toBe("Benvenuto");
+    expect(a.chat.contestBox.textContent).toContain("Motiva o aggiungi le tue motivazioni");
+    expect(document.activeElement).toBe(a.chat.composer);
+    expect(a.chat.composer.getAttribute("aria-required")).toBe("true");
+    expect(a.chat.composer.getAttribute("aria-describedby")).toContain("contest-quote");
+    // no reason, nothing sent
+    a.chat.send.click();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(calls).toEqual([]);
+    expect(a.chat.root.querySelector("#composer-help")!.textContent).toBe(
+      "Scrivi il motivo della contestazione.",
+    );
+    a.chat.composer.value = "Il massimo era 5";
+    a.chat.send.click();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(calls).toEqual([
+      'POST /api/sessions/S/turns {"text":"Il massimo era 5","contests_turn":1}',
+    ]);
+    expect(a.chat.contestBox.hidden).toBe(true);
+    const bot = a.chat.list.querySelector('article[data-turn="1"]')!;
+    expect(bot.querySelector(".flag-marker")!.textContent).toBe("contestata");
+    const reason = a.chat.list.querySelector('article[data-turn="3"]')!;
+    expect(reason.querySelector(".contest-ref")!.textContent).toBe(
+      "Contestazione della risposta:Benvenuto",
+    );
+  });
+
+  it("Annulla contestazione closes the box and gives the focus back", () => {
+    const { a } = rig();
+    const down = a.chat.list.querySelector("button.rate-down") as HTMLButtonElement;
+    down.click();
+    a.chat.contestCancel.click();
+    expect(a.chat.contestBox.hidden).toBe(true);
+    expect(a.chat.contesting).toBeNull();
+    expect(document.activeElement).toBe(down);
+    expect(a.chat.composer.getAttribute("aria-describedby")).toBe(
+      "composer-help composer-shortcut",
+    );
+  });
+
+  it("served ratings show their markers on reload, the reason its quote", () => {
+    const { a } = rig();
+    a.chat.render([
+      { turn_no: 1, role: "bot", kind: "opening", text: "Benvenuto", rating: "up" },
+      { turn_no: 2, role: "bot", kind: "normal", text: "Due", rating: "down", flagged: true },
+      { turn_no: 3, role: "student", kind: "normal", text: "No", contests_turn: 2 },
+      { turn_no: 4, role: "bot", kind: "normal", text: "Vecchio", flagged: true },
+    ]);
+    const markers = [...a.chat.list.querySelectorAll(".flag-marker")].map((m) => m.textContent);
+    expect(markers).toEqual(["indicata come utile", "contestata", "contestata"]);
+    expect(a.chat.list.querySelector("blockquote")!.textContent).toBe("Due");
   });
 });
 
@@ -314,33 +382,33 @@ describe("review #10: Fine and flag failures", () => {
     expect(priv.state.name).toBe("closed");
   });
 
-  it("a flag that fails shows a message and keeps the control", async () => {
+  it("a thumbs up that fails shows a message and keeps the control", async () => {
     dialogPolyfill();
     const { a } = make((async () => {
       throw new TypeError("network");
     }) as unknown as typeof fetch);
     a.chat.render(active.turns as never);
-    const flag = a.chat.list.querySelector("button.flag") as HTMLButtonElement;
-    flag.click();
-    a.flagDialog.yes.click();
+    const up = a.chat.list.querySelector("button.rate-up") as HTMLButtonElement;
+    up.click();
+    a.rateDialog.yes.click();
     await new Promise((r) => setTimeout(r, 0));
     const article = a.chat.list.querySelector("article")!;
     expect(article.querySelector(".flag-error")!.textContent).toBe(
-      "Segnalazione non inviata. Riprova.",
+      "Valutazione non inviata. Riprova.",
     );
-    expect(article.querySelector("button.flag")).not.toBeNull();
+    expect(article.querySelector("button.rate-up")).not.toBeNull();
     expect(article.querySelector(".flag-marker")).toBeNull();
   });
 
-  it("a flag the server refuses shows the same message", async () => {
+  it("a thumbs up the server refuses shows the same message", async () => {
     dialogPolyfill();
     const { a } = make((async () => new Response("", { status: 429 })) as unknown as typeof fetch);
     a.chat.render(active.turns as never);
-    (a.chat.list.querySelector("button.flag") as HTMLButtonElement).click();
-    a.flagDialog.yes.click();
+    (a.chat.list.querySelector("button.rate-up") as HTMLButtonElement).click();
+    a.rateDialog.yes.click();
     await new Promise((r) => setTimeout(r, 0));
     expect(a.chat.list.querySelector(".flag-error")!.textContent).toBe(
-      "Segnalazione non inviata. Riprova.",
+      "Valutazione non inviata. Riprova.",
     );
   });
 });
@@ -412,7 +480,7 @@ describe("snapshot ordering (4501070026, 4501070021, review 5811279241 app.ts 29
     pending[0].resolve(view([{ turn_no: 1, role: "bot", text: "a" }]));
     await late;
     expect(priv.state.name).toBe("closed");
-    expect(root.querySelectorAll("button.flag").length).toBe(0);
+    expect(root.querySelectorAll("button.rate-up, button.rate-down").length).toBe(0);
   });
 
   it("a 202 read after a snapshot that already holds the turn adds nothing and owes nothing", async () => {
@@ -669,15 +737,18 @@ describe("download timers (4501067245)", () => {
   });
 });
 
-describe("the flag dialog at the close (4501067248)", () => {
-  it("is closed when the session closes", async () => {
+describe("the rating dialog and the reason box at the close (4501067248)", () => {
+  it("are closed when the session closes", async () => {
     dialogPolyfill();
     const { a, priv } = harness();
     a.chat.render([{ turn_no: 1, role: "bot", kind: "opening", text: "a" }]);
-    (a.chat.list.querySelector("button.flag") as HTMLButtonElement).click();
-    expect(a.flagDialog.dialog.hasAttribute("open")).toBe(true);
+    (a.chat.list.querySelector("button.rate-down") as HTMLButtonElement).click();
+    expect(a.chat.contestBox.hidden).toBe(false);
+    (a.chat.list.querySelector("button.rate-up") as HTMLButtonElement).click();
+    expect(a.rateDialog.dialog.hasAttribute("open")).toBe(true);
     await priv.onEvent({ event: "closed", data: '{"close_reason":"timed_out"}' });
-    expect(a.flagDialog.dialog.hasAttribute("open")).toBe(false);
+    expect(a.rateDialog.dialog.hasAttribute("open")).toBe(false);
+    expect(a.chat.contestBox.hidden).toBe(true);
   });
 });
 

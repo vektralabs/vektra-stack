@@ -126,12 +126,13 @@ def session(
     transcript: Any = None,
     state: str = "CLOSED",
     flagged: int = 0,
+    liked: int = 0,
 ) -> Any:
     return SimpleNamespace(
         id=uuid.uuid4(), student_userid=user, session_no=no, state=state,
         close_reason="timeout" if state == "CLOSED" else None, committed_at=T0,
         closed_at=T0 if state == "CLOSED" else None, transcript_id=transcript,
-        flagged_count=flagged,
+        flagged_count=flagged, liked_count=liked,
     )  # fmt: skip
 
 
@@ -169,7 +170,7 @@ def test_the_list_groups_sessions_deliveries_resets_and_extra_time_per_student(
             "AS t WHERE u > :after": students(41, 42),
             "LEFT JOIN assess_transcripts": Result(
                 [
-                    session(41, 1, transcript=tid, flagged=2),
+                    session(41, 1, transcript=tid, flagged=2, liked=3),
                     session(41, 2, state="ACTIVE"),
                 ]
             ),
@@ -196,6 +197,8 @@ def test_the_list_groups_sessions_deliveries_resets_and_extra_time_per_student(
     assert [s["session_no"] for s in first["sessions"]] == [1, 2]
     # REQ-103 extended: the teacher sees how many replies the student flagged per session
     assert [s["flagged_count"] for s in first["sessions"]] == [2, 0]
+    # FEAT-034: the thumbs up are counted apart, never in flagged_count
+    assert [s["liked_count"] for s in first["sessions"]] == [3, 0]
     (d,) = first["sessions"][0]["deliveries"]
     assert d == {
         "round": 1, "recipient_kind": "teacher", "status": "SENT", "attempts": 1,

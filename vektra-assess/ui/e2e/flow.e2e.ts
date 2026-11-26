@@ -75,7 +75,7 @@ test("a valid token posted from the wrong origin is ignored: no request", async 
   expect((await serverSession(request, t)).session_id).toBeNull();
 });
 
-test("start, two turns, warning, outage and Riprova, flag, Annulla and Fine: keyboard only", async ({
+test("start, two turns, warning, outage and Riprova, thumbs up and down, Annulla and Fine: keyboard only", async ({
   page,
   request,
 }) => {
@@ -123,16 +123,29 @@ test("start, two turns, warning, outage and Riprova, flag, Annulla and Fine: key
   await expect.poll(() => said(ui, TEXT.replyDone)).toBe(3);
   expect((await serverSession(request, t)).state).toBe("ACTIVE");
 
-  // REQ-103 flag, inside the plugin's sandbox (no allow-modals): an in-page dialog asks once
-  await tabTo(page, ui, "button.flag");
+  // FEAT-034 thumbs up, inside the plugin's sandbox (no allow-modals): an in-page dialog asks once
+  await tabTo(page, ui, "button.rate-up");
   await page.keyboard.press("Enter");
   await expect(ui.locator("dialog[open]")).toBeVisible();
-  await page.keyboard.press("Tab"); // Annulla -> Segnala
+  await page.keyboard.press("Tab"); // Annulla -> Conferma
   await page.keyboard.press("Enter");
   await expect(ui.locator(".flag-marker")).toHaveCount(1);
   await expect
-    .poll(async () => (await serverSession(request, t)).turns.filter((x) => x.flagged).length)
+    .poll(async () => (await serverSession(request, t)).turns.filter((x) => x.rating === "up").length)
     .toBe(1);
+
+  // FEAT-034 thumbs down: the reason box quotes the reply, the reason is the next message
+  await tabTo(page, ui, "button.rate-down");
+  await page.keyboard.press("Enter");
+  await expect(ui.locator(".contest-box")).toBeVisible();
+  expect(await ui.evaluate(() => document.activeElement?.id)).toBe("composer");
+  await page.keyboard.type("Il criterio C1 non chiedeva questo.");
+  await page.keyboard.press("Control+Enter");
+  await expect.poll(() => botReplies(request, t), { timeout: 30_000 }).toBe(4);
+  const contested = await serverSession(request, t);
+  expect(contested.turns.filter((x) => x.flagged).length).toBe(1);
+  expect(contested.turns.filter((x) => x.contests_turn !== null).length).toBe(1);
+  await expect(ui.locator(".contest-ref")).toHaveCount(1);
 
   // Fine, Annulla: nothing changes on the server, the focus returns to Fine (REQ-072)
   const before = await serverSession(request, t);

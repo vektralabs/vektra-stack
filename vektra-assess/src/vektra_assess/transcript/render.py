@@ -92,6 +92,10 @@ BR009_TEMPLATE = (
 )
 INTERRUPTED = "[risposta interrotta]"
 FLAGGED = "segnalato dallo studente"
+#: FEAT-034: the thumbs on a reply and the student turn that carries a thumbs-down reason
+CONTESTED = "contestata dallo studente: motivo al turno {no}"
+LIKED = "utile secondo lo studente"
+CONTESTS = "Contestazione della risposta del turno {no}"
 NOT_AVAILABLE = "non disponibile"
 
 
@@ -154,7 +158,12 @@ class TurnRecord:
     kind: str
     text: str
     at: datetime
-    flagged: bool = False
+    #: FEAT-034: the reply's rating, "up" or "down" (a REQ-103 flag); None when not rated
+    rating: str | None = None
+    #: a "down" given with its reason: the student turn that carries the reason
+    reason_turn: int | None = None
+    #: a student turn that IS a thumbs-down reason: the reply it contests
+    contests_turn: int | None = None
     marks: tuple[str, ...] = ()
     contests: tuple[tuple[str, str], ...] = ()  # (label, status)
     lang: str | None = None
@@ -259,8 +268,14 @@ def _markers(t: TurnRecord) -> tuple[str, ...]:
         label = MARK_LABELS.get(code, MARK_OTHER)
         if label not in out:
             out.append(label)
-    if t.flagged:
-        out.append(FLAGGED)
+    if t.contests_turn is not None:
+        out.append(CONTESTS.format(no=t.contests_turn))
+    if t.rating == "down":
+        out.append(
+            CONTESTED.format(no=t.reason_turn) if t.reason_turn is not None else FLAGGED
+        )
+    elif t.rating == "up":
+        out.append(LIKED)
     return tuple(out)
 
 

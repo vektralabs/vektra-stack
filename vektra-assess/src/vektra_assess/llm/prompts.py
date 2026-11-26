@@ -165,10 +165,13 @@ class PromptRenderer:
         text: str,
         language: str,
         material: Sequence[MaterialChunk] = (),
+        contested: str | None = None,
     ) -> list[Message]:
         """System, context, the course material (if any), the history (oldest first) and the
         student's message."""
-        head, past, tail = self.turn_parts(bundle, history, text, language, material)
+        head, past, tail = self.turn_parts(
+            bundle, history, text, language, material, contested
+        )
         return [*head, *past, *tail]
 
     def turn_parts(
@@ -178,20 +181,31 @@ class PromptRenderer:
         text: str,
         language: str,
         material: Sequence[MaterialChunk] = (),
+        contested: str | None = None,
     ) -> tuple[list[Message], list[Message], list[Message]]:
         """(system + context [+ material], history, current message): the budget trims the
-        middle only."""
+        middle only. ``contested``: the excerpt of the reply a thumbs-down reason contests."""
         head = [self._system(bundle, language), self._bundle(bundle)]
         if material:
             head.append(self._material(material))
         past = [
             Message(
                 role="user" if prior.role == "student" else "assistant",
-                content=self._render("history", role=prior.role, text=prior.text),
+                content=self._render(
+                    "history",
+                    role=prior.role,
+                    text=prior.text,
+                    contested=prior.contested,
+                ),
             )
             for prior in history
         ]
-        tail = [Message(role="user", content=self._render("turn", text=text))]
+        tail = [
+            Message(
+                role="user",
+                content=self._render("turn", text=text, contested=contested),
+            )
+        ]
         return head, past, tail
 
     def part_b_messages(self, bundle: ContextBundle, language: str) -> list[Message]:

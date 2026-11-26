@@ -64,6 +64,18 @@ async function errorCode(r: Response): Promise<string | null> {
   }
 }
 
+type Envelope = { details?: { reason?: string } };
+
+/** The ``details.reason`` of an error envelope, or null. */
+async function errorReason(r: Response): Promise<string | null> {
+  try {
+    const body = (await r.json()) as { error?: Envelope; detail?: { error?: Envelope } };
+    return (body.error ?? body.detail?.error)?.details?.reason ?? null;
+  } catch {
+    return null;
+  }
+}
+
 export class App {
   private state: UiState = INITIAL;
   private token: string | null = null; // the session (or pre-session) token, memory only
@@ -95,11 +107,12 @@ export class App {
   readonly banner = h("div", { class: "banner", role: "region", "aria-label": M.outage, hidden: true });
   readonly chat: ChatView;
   readonly controls: ControlsView;
-  readonly flagDialog = new ConfirmDialog(
-    "flag-confirm",
-    M.flagConfirm,
-    M.flagConfirmText,
-    M.flagYes,
+  // FEAT-034: a thumbs up is final, so it is asked once, as the REQ-103 flag was
+  readonly rateDialog = new ConfirmDialog(
+    "rate-confirm",
+    M.rateUpConfirm,
+    M.rateUpConfirmText,
+    M.rateUpYes,
     M.confirmNo,
   );
   private readonly main: HTMLElement;
@@ -117,7 +130,12 @@ export class App {
           const target = button.closest("article") as HTMLElement;
           void copyText(turn.text, target).then((ok) => ok && this.live.say(M.copied));
         },
-        flag: (turn, article) => void this.flagTurn(turn, article),
+        rateUp: (turn, article) => void this.rateUp(turn, article),
+        // a thumbs down is the next message: the reason box opens over the composer
+        contest: (turn, article) => {
+          if (this.state.name !== "active" && this.state.name !== "outage") return;
+          this.chat.startContest(turn, article.querySelector("button.rate-down"));
+        },
       },
       this.live,
       maxChars,
@@ -133,7 +151,7 @@ export class App {
       this.status,
       this.banner,
       this.live.el,
-      this.flagDialog.dialog,
+      this.rateDialog.dialog,
     );
     this.setStatus(M.waiting);
     setInterval(() => this.tick(), 15_000);
@@ -498,6 +516,10 @@ export class App {
 
   private async sendTurn(): Promise<void> {
     const text = this.chat.composer.value;
+    const contest = this.chat.contesting?.turn ?? null;
+    // a thumbs down needs its reason (the server refuses an empty one too)
+    if (!text.trim() && contest && this.state.name === "active")
+      return this.chat.setEnabled(true, M.reasonRequired);
     if (!text.trim() || this.state.name !== "active") return;
     // the server's count: code points; the student keeps the text to shorten it
     if ([...text].length > this.maxChars) return this.chat.setEnabled(true, M.tooLong(this.maxChars));
@@ -509,21 +531,36 @@ export class App {
       r = await this.fetchImpl(`${this.cfg.apiBase}/sessions/${this.sid}/turns`, {
         method: "POST",
         headers: { ...this.headers(), "Content-Type": "application/json" },
-        body: JSON.stringify({ text }),
+        body: JSON.stringify(contest ? { text, contests_turn: contest.turn_no } : { text }),
       });
     } catch {
       return this.sendFailed(M.sendFailed);
     }
     if (r.status === 202) {
       this.chat.composer.value = "";
+      if (contest) {
+        this.chat.endContest();
+        this.chat.markRated(contest.turn_no, "down", false);
+      }
       const body = (await r.json()) as { turn_no: number };
       // a snapshot applied meanwhile may already hold this turn (and its reply): it is the
       // server's word (its reply_pending included), so nothing is added
       if (body.turn_no > this.lastTurnNo) {
-        this.chat.add({ turn_no: body.turn_no, role: "student", kind: "normal", text });
+        this.chat.add({
+          turn_no: body.turn_no,
+          role: "student",
+          kind: "normal",
+          text,
+          contests_turn: contest?.turn_no ?? null,
+        });
         this.lastTurnNo = body.turn_no;
       }
       return this.syncComposer();
+    }
+    if (r.status === 409 && contest && (await errorReason(r)) === "already_rated") {
+      // the reply was rated meanwhile (another tab): the text stays, the box closes
+      this.chat.endContest();
+      return this.sendFailed(M.alreadyRated);
     }
     if (r.status === 409) return this.chat.setEnabled(false, M.replyPending);
     this.sendFailed(r.status === 429 ? M.waitAFewSeconds : M.sendFailed);
@@ -572,29 +609,34 @@ export class App {
     }
   }
 
-  private async flagTurn(turn: Turn, article: HTMLElement): Promise<void> {
+  /** FEAT-034 thumbs up: one confirmation, one POST; the marker replaces both thumbs. */
+  private async rateUp(turn: Turn, article: HTMLElement): Promise<void> {
     if (this.state.name !== "active" && this.state.name !== "outage") return;
-    const button = article.querySelector("button.flag") as HTMLButtonElement | null;
-    if (!button || !(await this.flagDialog.ask(button))) return;
+    const button = article.querySelector("button.rate-up") as HTMLButtonElement | null;
+    if (!button || !(await this.rateDialog.ask(button))) return;
     if (this.state.name !== "active" && this.state.name !== "outage") return;
     article.querySelector(".flag-error")?.remove();
     let r: Response | null = null;
     try {
       r = await this.fetchImpl(
         `${this.cfg.apiBase}/sessions/${this.sid}/turns/${turn.turn_no}/flag`,
-        { method: "POST", headers: this.headers() },
+        {
+          method: "POST",
+          headers: { ...this.headers(), "Content-Type": "application/json" },
+          body: JSON.stringify({ rating: "up" }),
+        },
       );
     } catch {
       r = null;
     }
     if (!r || !r.ok) {
+      const rated = r?.status === 409 && (await errorReason(r)) === "already_rated";
       // the control stays: the student may try again; the text is announced once
-      button.after(h("p", { class: "flag-error", role: "status", text: M.flagFailed }));
+      const text = rated ? M.alreadyRated : M.rateFailed;
+      button.parentElement?.append(h("p", { class: "flag-error", role: "status", text }));
       return;
     }
-    const marker = h("span", { class: "flag-marker", tabindex: "-1", text: M.flagged });
-    button.replaceWith(marker);
-    marker.focus();
+    this.chat.markRated(turn.turn_no, "up");
   }
 
   /** Tell the parent once, with the reason. A close learnt from a 409 has no reason yet: the
@@ -662,7 +704,7 @@ export class App {
       this.status,
       this.banner,
       this.live.el,
-      this.flagDialog.dialog,
+      this.rateDialog.dialog,
     ];
     switch (s.name) {
       case "preparing":
@@ -694,11 +736,14 @@ export class App {
         this.chat.setEnabled(false, "");
         const closing = new ClosingView(s.reason, this.closedAt, () => this.requestDownload());
         this.banner.hidden = true;
-        // a question about a session that no longer takes flags is withdrawn
-        if (this.flagDialog.dialog.open) this.flagDialog.dialog.close("cancel");
+        // a question about a session that no longer takes ratings is withdrawn
+        if (this.rateDialog.dialog.open) this.rateDialog.dialog.close("cancel");
+        this.chat.endContest();
         if (this.controls.dialog.open) this.controls.dialog.close("cancel");
         this.main.replaceChildren(...(keep as Node[]), closing.root, this.chat.root);
-        this.chat.list.querySelectorAll("button.flag").forEach((b) => b.remove());
+        this.chat.list
+          .querySelectorAll("button.rate-up, button.rate-down")
+          .forEach((b) => b.remove());
         this.noticeClosed(s.reason);
         closing.focus();
         return;
@@ -721,7 +766,8 @@ export class App {
         // nothing can be sent any more: no composer, no Fine, no dialog left open over it
         this.controls.disable();
         if (this.controls.dialog.open) this.controls.dialog.close("cancel");
-        if (this.flagDialog.dialog.open) this.flagDialog.dialog.close("cancel");
+        if (this.rateDialog.dialog.open) this.rateDialog.dialog.close("cancel");
+        this.chat.endContest();
         this.chat.setEnabled(false, "");
         this.live.say(M.unavailable);
         return this.setStatus(M.unavailable);

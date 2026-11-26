@@ -97,20 +97,43 @@ Removals that leave no inline text in the chat (citations, lexicon removals, rep
 
 ---
 
-### FEAT-034: thumbs up / thumbs down on each assistant reply, with a mandatory reason for thumbs down
+### FEAT-034: ~~thumbs up / thumbs down on each assistant reply, with a mandatory reason for thumbs down~~
 
-**Status**: planned | **Priority**: high | **Created**: 2026-11-26
+**Status**: completed | **Priority**: high | **Created**: 2026-11-26 | **Completed**: 2026-11-26
 **Origin**: product owner feedback after the F1 demo (2026-11-20). Branch `fix/assess-call-feedback` (API and discussion UI, both in this repo: the plugin only embeds the iframe; the plugin renders the teacher-page count).
 
 **Context**: "Segnala un errore dell'assistente" (REQ-103) records a flag without saying why, so the teacher cannot tell what the student contested.
 
-**Change**: each assistant reply has thumbs up and thumbs down. Thumbs up records a positive mark, no text. Thumbs down opens a reply-like box that quotes the contested reply; the reason is mandatory and is sent as the student's next message linked to that reply: the assistant answers it, and the transcript shows "Contestazione della risposta N" next to the flag. API contract below once implemented.
+**Change**: each assistant reply has thumbs up and thumbs down. Thumbs up records a positive mark, no text. Thumbs down opens a reply-like box that quotes the contested reply; the reason is mandatory and is sent as the student's next message linked to that reply: the assistant answers it, and the transcript shows "Contestazione della risposta del turno N" next to the reason and "contestata dallo studente: motivo al turno M" next to the reply.
+
+**Design**: revision `a0009` adds `rating` (`up` | `down`, default `down`: every older flag is a thumbs down) and `reason_turn_no` (the student turn carrying the reason; FK to `assess_turns`, unique, only on `down`, always after the reply) to `assess_turn_flags`. No text is stored there: the reason is an ordinary student turn (encrypted under the session DEK, hash-chained, counted by the message rate and the turn budget, passed through the pre-query safeguard). A rating is final (one row per reply, PK unchanged). The model receives the reason with an excerpt (<= 400 chars) of the contested reply, in the current turn and in the history (`turn.j2`, `history.j2`), and a short "RISPOSTE CONTESTATE" rule in `system.j2`: `prompt_version` moves.
+
+**API contract** (for the plugin and the discussion UI; error envelope as every assess route: `{"detail": {"error": {"code", "message", "remediation", "details"}}}`):
+
+1. Thumbs up: `POST /api/v1/assess/sessions/{sid}/turns/{turn_no}/flag`, session token, body `{"rating": "up"}` (strict: any other field is a 400).
+   - `201 {"session_id": "<uuid>", "turn_no": <int>, "rating": "up"}`; `200` same body when the reply is already `up` (nothing written).
+   - `400 ERR-ASSESS-014` `details.reason`: `not_a_bot_turn` (no such turn, or a student turn); `reason_required` (body `{"rating": "down"}`: a thumbs down goes through 2.); `body_not_object` (no body: the old body-less flag is gone); `literal_error:rating` / `extra_forbidden:<field>` (malformed body).
+   - `409 ERR-ASSESS-011` `details: {"reason": "already_rated", "rating": "down"}`: the reply is already contested.
+   - `409 ERR-ASSESS-009`: session closed. `429 ERR-ASSESS-012` `details.reason = "flag_rate"` (`VEKTRA_ASSESS_FLAG_RPM`). Allowed in ACTIVE and OUTAGE.
+   - Audit `assess_flag_added` `data: {"turn_no", "rating": "up"}`.
+2. Thumbs down with its reason: `POST /api/v1/assess/sessions/{sid}/turns`, session token, body `{"text": "<reason>", "contests_turn": <int >= 1>}`.
+   - Same rules as any student turn: ACTIVE only, `text` non-blank and at most `VEKTRA_ASSESS_MAX_MESSAGE_CHARS` (default 2000) code points, one reply at a time, `VEKTRA_ASSESS_MESSAGES_PER_MIN`, fresh enrolment, deadline.
+   - `202 {"session_id", "turn_no"}` (`turn_no` = the reason's student turn); the assistant's answer streams on the events as for any turn. In the same transaction: the reply `contests_turn` is rated `down` with `reason_turn_no = turn_no`, and the audit `assess_flag_added` `data: {"turn_no": <contested>, "rating": "down", "reason_turn_no": <reason>}` is written.
+   - `400 ERR-ASSESS-014` `details.reason`: `message_empty`, `message_too_long`, `not_a_bot_turn` (`contests_turn` is not an assistant turn of the session).
+   - `409 ERR-ASSESS-011` `details: {"reason": "already_rated", "rating": "up" | "down"}`; `409 ERR-ASSESS-010` reply pending; `409 ERR-ASSESS-011` `deadline_passed` / state; `429 ERR-ASSESS-012` `message_rate`; `503 ERR-ASSESS-001` `enrolment_freshness`.
+3. `GET /api/v1/assess/sessions/{sid}` turns: `{"turn_no", "role", "kind", "text", "rating": "up" | "down" | null, "flagged": <rating == "down">, "contests_turn": <int> | null}` (`contests_turn` on the student turn that is a reason).
+4. Teacher page `GET /api/v1/assess/activities/{cmid}/sessions`: per session `flagged_count` keeps its name and type and now counts the thumbs down only (every flag before this change was one); new additive field `liked_count` (thumbs up). The plugin label "N risposte segnalate" stays valid; showing `liked_count` is optional.
+5. Transcript (Italian, both copies): on the reply "contestata dallo studente: motivo al turno M" (an older flag without a reason keeps "segnalato dallo studente"), "utile secondo lo studente" for a thumbs up; on the reason "Contestazione della risposta del turno N".
+
+**UI** (this repo, `vektra-assess/ui`): two buttons per assistant reply, "👍 Utile" (accessible name "Risposta utile") and "👎 Contesta" ("Contesta questa risposta"); the emoji is `aria-hidden`. Thumbs up asks once in the in-page dialog ("Segnare questa risposta come utile?", Annulla / Conferma), like the old flag. Thumbs down opens a box over the composer that quotes the reply ("Contesti questa risposta dell'assistente:", subtitle "Motiva o aggiungi le tue motivazioni", "Annulla contestazione"); the composer becomes `aria-required` and is described by the quote; an empty send says "Scrivi il motivo della contestazione.". The reason in the conversation shows "Contestazione della risposta:" with the quote. Markers: "indicata come utile", "contestata".
+
+**Note**: `prompt_version` moves (templates). Revision a0009 needs `alembic upgrade` before the new API runs.
 
 **Acceptance criteria**:
-- [ ] Thumbs down without a reason is impossible (UI and API)
-- [ ] The reason is a normal, encrypted student turn: budget, rate, gates and hash chain unchanged
-- [ ] The audit stays content-free
-- [ ] The transcript links the contested reply and its reason
+- [x] Thumbs down without a reason is impossible (UI and API)
+- [x] The reason is a normal, encrypted student turn: budget, rate, gates and hash chain unchanged
+- [x] The audit stays content-free
+- [x] The transcript links the contested reply and its reason
 
 **Traceability**: REQ-103, REQ-074, REQ-083.
 

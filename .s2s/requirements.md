@@ -1624,6 +1624,12 @@ Modular open-source platform for Retrieval-Augmented Generation (RAG) with speci
   Amendment 2026-11-15 (product owner, end-to-end test): the teacher's session list carries
   the number of flagged replies per session (`flagged_count`), shown by the plugin next to the
   session, so a teacher does not have to search every transcript for the marker.
+  Amendment 2026-11-26 (product owner, F1 demo; FEAT-034): the flag becomes thumbs up / thumbs
+  down on each assistant reply. Thumbs up records a positive mark, no text. Thumbs down requires
+  the student's reason, sent as the student's next message linked to the contested reply: the
+  assistant answers it, and the transcript shows "Contestazione della risposta del turno N" on the
+  reason and "contestata dallo studente: motivo al turno M" on the reply. A rating is final.
+  `flagged_count` counts the thumbs down; `liked_count` the thumbs up.
 
 - **Acceptance Criteria**:
   - [ ] One flag -> exactly one marker; copies hash-equal

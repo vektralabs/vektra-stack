@@ -1363,7 +1363,11 @@ ALTER TABLE public.assess_transcripts OWNER TO <owner>;
 CREATE TABLE public.assess_turn_flags (
     session_id uuid NOT NULL,
     turn_no integer NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    rating text DEFAULT 'down'::text NOT NULL,
+    reason_turn_no integer,
+    CONSTRAINT ck_assess_turn_flags_rating CHECK ((rating = ANY (ARRAY['up'::text, 'down'::text]))),
+    CONSTRAINT ck_assess_turn_flags_reason CHECK (((reason_turn_no IS NULL) OR ((rating = 'down'::text) AND (reason_turn_no > turn_no))))
 );
 
 ALTER TABLE public.assess_turn_flags OWNER TO <owner>;
@@ -1944,6 +1948,8 @@ CREATE UNIQUE INDEX uq_source_documents_filename ON public.source_documents USIN
 
 CREATE UNIQUE INDEX uq_source_documents_hash ON public.source_documents USING btree (namespace_id, content_hash) WHERE (deleted_at IS NULL);
 
+CREATE UNIQUE INDEX ux_assess_turn_flags_reason ON public.assess_turn_flags USING btree (session_id, reason_turn_no) WHERE (reason_turn_no IS NOT NULL);
+
 CREATE TRIGGER trg_assess_audit_events_append_only BEFORE DELETE OR UPDATE ON public.assess_audit_events FOR EACH ROW EXECUTE FUNCTION public.assess_audit_events_append_only();
 
 CREATE TRIGGER trg_assess_audit_sealed_change AFTER INSERT OR UPDATE ON public.assess_activity_config_sealed FOR EACH ROW EXECUTE FUNCTION public.assess_audit_sealed_change();
@@ -2059,6 +2065,9 @@ ALTER TABLE ONLY public.assess_transcripts
 
 ALTER TABLE ONLY public.assess_turn_flags
     ADD CONSTRAINT assess_turn_flags_session_id_fkey FOREIGN KEY (session_id) REFERENCES public.assess_sessions(id) ON DELETE CASCADE;
+
+ALTER TABLE ONLY public.assess_turn_flags
+    ADD CONSTRAINT assess_turn_flags_session_id_reason_turn_no_fkey FOREIGN KEY (session_id, reason_turn_no) REFERENCES public.assess_turns(session_id, turn_no) ON DELETE CASCADE;
 
 ALTER TABLE ONLY public.assess_turn_flags
     ADD CONSTRAINT assess_turn_flags_session_id_turn_no_fkey FOREIGN KEY (session_id, turn_no) REFERENCES public.assess_turns(session_id, turn_no) ON DELETE CASCADE;

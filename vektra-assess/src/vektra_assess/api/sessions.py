@@ -15,6 +15,7 @@ epoch: a second tab of the same owner keeps working and is serialized by the pen
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any
 from uuid import UUID
 
@@ -49,7 +50,9 @@ from vektra_assess.tokens import PreClaims, SessionClaims, TokenError
 
 router = APIRouter()
 
-_FLAGGED = text("SELECT turn_no FROM assess_turn_flags WHERE session_id = :s")
+_RATINGS = text(
+    "SELECT turn_no, rating, reason_turn_no FROM assess_turn_flags WHERE session_id = :s"
+)
 _OUTAGE_OPEN = text(
     "SELECT started_at, reason_code FROM assess_outage_incidents "
     "WHERE session_id = :s AND ended_at IS NULL ORDER BY started_at DESC LIMIT 1"
@@ -64,13 +67,18 @@ def view(
     row: SessionRow,
     material: Material | None,
     paused_at: Any = None,
-    flagged: frozenset[int] = frozenset(),
+    ratings: Mapping[int, tuple[str, int | None]] | None = None,
     outage_code: Any = None,
 ) -> dict[str, Any]:
     """``paused_at``: the open outage's start while the session is in OUTAGE: the timer is
     paused there, so the time left is measured against it. ``outage_code``: that interval's
     ``reason_code``, served as the closed ``outage_reason`` (OUTAGE only, optional)."""
     turns = []
+    ratings = ratings or {}
+    # FEAT-034: the student turn that carries a thumbs-down reason -> the reply it contests
+    contests = {
+        reason: no for no, (_r, reason) in ratings.items() if reason is not None
+    }
     if material is not None:
         turns = [
             {
@@ -78,8 +86,11 @@ def view(
                 "role": t.role,
                 "kind": t.kind,
                 "text": material.text_of(t),
-                # REQ-103 "segnalato dallo studente": served back on reload and resume
-                "flagged": t.turn_no in flagged,
+                # REQ-103 / FEAT-034, served back on reload and resume: the reply's rating
+                # ("up", "down" or None); ``flagged`` is a "down", as before the thumbs
+                "rating": ratings[t.turn_no][0] if t.turn_no in ratings else None,
+                "flagged": ratings.get(t.turn_no, ("", None))[0] == "down",
+                "contests_turn": contests.get(t.turn_no),
             }
             for t in material.turns
         ]
@@ -164,16 +175,22 @@ async def get_session(
                 else None
             )
             paused_at = outage.started_at if outage is not None else None
-            flagged = (
-                frozenset(int(r[0]) for r in await conn.execute(_FLAGGED, {"s": sid}))
+            ratings = (
+                {
+                    int(r.turn_no): (
+                        str(r.rating),
+                        int(r.reason_turn_no) if r.reason_turn_no is not None else None,
+                    )
+                    for r in await conn.execute(_RATINGS, {"s": sid})
+                }
                 if material is not None
-                else frozenset()
+                else {}
             )
             body = view(
                 row,
                 material,
                 paused_at,
-                flagged,
+                ratings,
                 outage.reason_code if outage is not None else None,
             )
             if resume:

@@ -3286,6 +3286,8 @@ The backend stores conversation turns in the database (used for multi-turn query
 
 **Note**: the lexicon change moves `LEXICON_VERSION` and `prompt_version`: production needs a new NFR-023 activation.
 
+**Follow-up (2026-11-26, F1 demo of 2026-11-20, open-answer activity with a pasted rubric)**: a value was still replaced with fix 3 live. Not a gap: the delivered sentence was "probabilmente hai preso i punti relativi alla descrizione base ... ma hai perso i [marker] punti legati a 'apprendimento latente' e 'S-O-R contro S-R'"; only "6" (3 + 3, i.e. 10 - 4) reproduces it. The sentence cites no item, so the value is checked against the context, where 6 is written nowhere, and "preso"/"perso" is score wording: either reason alone replaces it, as fix 3 intends (the model was guessing how a 4/10 splits across sub-criteria, a split the LMS does not hold). Pinned by `test_a_derived_lost_score_is_replaced_like_any_invented_one`. Possible extension, not planned: accept "perso / mancano N punti" when attributed to an item with a snapshot mark and N = max - mark (would not have helped here: no item cited).
+
 **Acceptance criteria**:
 - [x] Regression tests from the transcript sentences; real belittling, verdicts and grade claims still caught
 - [x] An obtained or invented score is still replaced, rubric number or not

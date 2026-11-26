@@ -311,3 +311,23 @@ def test_points_in_the_solution_in_context_are_accepted() -> None:
     sentence = "La soluzione chiede un esempio (5 punti)."
     assert check(sentence, _sub_index(sol)).replaced == 0
     assert check(sentence, _sub_index()).replaced == 1  # not in context: not accepted
+
+
+def test_a_derived_lost_score_is_replaced_like_any_invented_one() -> None:
+    """F1 demo 2026-11-20 (open-answer activity, pasted rubric "esperimento descritto (4),
+    apprendimento latente (3), S-O-R contro S-R (3)"): the model guessed how a 4/10 splits and
+    wrote "hai perso i 6 punti" (3 + 3). No such split exists in the context, and "perso" is
+    score wording: the value is replaced by design. A written sub-score in neutral wording
+    still passes."""
+    idx = _sub_index()
+    demo = (
+        "- La mia lettura (da verificare all'orale): probabilmente hai preso i punti relativi "
+        "alla descrizione base del labirinto ma hai perso i 6 punti legati a "
+        "“apprendimento latente” e “S-O-R contro S-R”."
+    )
+    out = check(demo, idx)
+    assert out.replaced == 1 and f"hai perso i {REPLACEMENT} punti" in out.text
+    assert (
+        check("Mancano i 6 punti legati all'apprendimento latente.", idx).replaced == 1
+    )
+    assert check("Mancano i 3 punti dell'apprendimento latente.", idx).replaced == 0

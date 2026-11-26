@@ -279,7 +279,8 @@ def test_the_pasted_rubric_and_the_solution_are_labelled_sections() -> None:
     flags = s.header.flags.model_copy(update={"show_solution": True})
     s = s.model_copy(update={"header": s.header.model_copy(update={"flags": flags})})
     text = _payload(s)
-    assert "## Rubrica fornita dal docente\nRubrica: chiarezza" in text
+    # FEAT-031: the Italian label is "criteri di valutazione", never "rubrica"
+    assert "## Criteri di valutazione forniti dal docente\nRubrica: chiarezza" in text
     assert "## Soluzione fornita dal docente\nLa soluzione" in text
 
 

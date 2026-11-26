@@ -24,7 +24,7 @@
 
 ### FEAT-031: "criteri di valutazione" instead of "rubrica" in every Italian text
 
-**Status**: planned | **Priority**: medium | **Created**: 2026-11-26
+**Status**: in_progress (Vektra side completed 2026-11-26; plugin labels open) | **Priority**: medium | **Created**: 2026-11-26
 **Origin**: product owner feedback after the F1 demo (2026-11-20). Branch `fix/assess-call-feedback` (from `feat/assess-rag-exclusion`) for the Vektra side.
 
 **Context**: "rubrica" is not the word the teachers use; the product owner asked for "criteri di valutazione" in what students and teachers read.
@@ -36,7 +36,7 @@
 **Note**: the system prompt and the context labels feed `prompt_version`: production needs a new NFR-023 activation.
 
 **Acceptance criteria**:
-- [ ] No Italian text shipped by vektra-assess says "rubrica"
+- [x] No Italian text shipped by vektra-assess says "rubrica" (system prompt: "chiamali sempre \"criteri di valutazione\""; model context section "## Criteri di valutazione forniti dal docente", `PAYLOAD_VERSION` 2 -> 3)
 - [ ] Plugin form labels changed (plugin repo)
 
 **Traceability**: REQ-094, REQ-098, REQ-074.

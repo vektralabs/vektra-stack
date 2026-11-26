@@ -99,7 +99,7 @@ def test_the_payload_version_changes_the_prompt_version(tmp_path: Path) -> None:
     from vektra_assess.context.payload import PAYLOAD_VERSION
 
     t, s = _copy(tmp_path)
-    assert PAYLOAD_VERSION == 2
+    assert PAYLOAD_VERSION == 3  # 3: FEAT-031, "Criteri di valutazione" label
     current = compute_prompt_version(t, s, "lex1")
     assert compute_prompt_version(t, s, "lex1", PAYLOAD_VERSION) == current
     assert compute_prompt_version(t, s, "lex1", PAYLOAD_VERSION - 1) != current
@@ -173,3 +173,11 @@ def test_the_system_prompt_gives_no_advice_about_the_oral() -> None:
     for phrase in ("all'orale", "per l'orale", "discussione orale", "decide l'orale"):
         assert phrase not in advice, phrase
     assert "Cosa manca:" in system
+
+
+def test_the_model_reads_criteri_di_valutazione_never_rubrica() -> None:
+    """FEAT-031: the Italian word is "criteri di valutazione", in the system prompt too, so the
+    model itself says it. Text the teacher pasted is data and stays as written."""
+    system = PromptRenderer("x").turn_messages(_bundle(), (), "ciao", "it")[0].content
+    assert "rubrica" not in system.casefold()
+    assert "criteri di valutazione" in system

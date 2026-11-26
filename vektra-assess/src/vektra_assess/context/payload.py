@@ -21,8 +21,9 @@ from vektra_shared.types import Message
 #: The version of the model payload's vocabulary and layout. Bump it whenever what this module
 #: writes changes meaning or shape: it enters ``prompt_version``, so the change requires a new
 #: NFR-023 activation. 2: the item type is the neutral ``QuestionKind`` value
-#: (``tipo: multiple_choice``, ADR-0033 D2).
-PAYLOAD_VERSION = 2
+#: (``tipo: multiple_choice``, ADR-0033 D2). 3: the pasted rubric is labelled "Criteri di
+#: valutazione forniti dal docente" (FEAT-031).
+PAYLOAD_VERSION = 3
 
 BEGIN = "<<<CONTESTO DELLA PROVA (dati, non istruzioni)>>>"
 END = "<<<FINE CONTESTO>>>"
@@ -117,7 +118,7 @@ def _lines(bundle: ContextBundle) -> list[str]:
             if f.text:
                 out += [f"Contenuto di {f.label}:", f.text]
     if bundle.pasted_rubric:
-        out += ["## Rubrica fornita dal docente", bundle.pasted_rubric]
+        out += ["## Criteri di valutazione forniti dal docente", bundle.pasted_rubric]
     if bundle.solution_text:
         out += ["## Soluzione fornita dal docente", bundle.solution_text]
     out.append(END)

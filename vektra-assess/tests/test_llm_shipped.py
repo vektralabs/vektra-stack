@@ -76,3 +76,21 @@ def test_the_d3_disclosure_is_shipped_verbatim() -> None:
     d3 = shipped.get("it").oracle_disclosure
     assert d3 in flat
     assert shipped.get("en").oracle_disclosure
+
+
+# FEAT-035: the oral exam may not take place, so no shipped notice or refusal tells the student
+# what happens at the oral: they refer to the teacher instead
+_ORAL = ("orale", "the oral")
+
+
+@pytest.mark.parametrize("language", shipped.LANGUAGES)
+def test_no_shipped_notice_or_refusal_mentions_the_oral(language: str) -> None:
+    s = shipped.get(language)
+    texts = [s.br009] + [s.refusal(k) for k in sorted(CLASS_CODES)]
+    for text in texts:
+        assert not any(word in text.casefold() for word in _ORAL), text
+
+
+def test_the_grade_notice_leaves_the_decision_to_the_teacher() -> None:
+    assert shipped.get("it").br009.endswith("; decide il docente")
+    assert shipped.get("en").br009.endswith("; the teacher decides")

@@ -163,3 +163,13 @@ def test_part_b_names_the_activity_kind() -> None:
     s = _assign()
     assign = PromptRenderer("x").part_b_messages(assemble_context(s, _frozen(s)), "it")
     assert "la prova è un COMPITO" in assign[2].content
+
+
+def test_the_system_prompt_gives_no_advice_about_the_oral() -> None:
+    """FEAT-035: the oral may not take place. The only mention kept is the interpretation
+    prefix the product owner accepted; the R-GRADE class still recognises questions about it."""
+    system = PromptRenderer("x").turn_messages(_bundle(), (), "ciao", "it")[0].content
+    advice = system.replace("La mia lettura (da verificare all'orale)", "")
+    for phrase in ("all'orale", "per l'orale", "discussione orale", "decide l'orale"):
+        assert phrase not in advice, phrase
+    assert "Cosa manca:" in system

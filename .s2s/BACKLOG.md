@@ -101,9 +101,9 @@
 
 ---
 
-### FEAT-035: the assistant's advice no longer refers to the oral exam
+### FEAT-035: ~~the assistant's advice no longer refers to the oral exam~~
 
-**Status**: planned | **Priority**: high | **Created**: 2026-11-26
+**Status**: completed | **Priority**: high | **Created**: 2026-11-26 | **Completed**: 2026-11-26
 **Origin**: product owner feedback after the F1 demo (2026-11-20): the oral exam may not take place, so the assistant must not say "da spiegare all'orale", "per l'orale" or "decide l'orale". Branch `fix/assess-call-feedback`.
 
 **Change**: system prompt (role, the contested-point instruction, advice phrasing: "Cosa manca: ..."), the BR-009 notice ("...; decide il docente") in every copy (shipped strings, Part A, transcript), refusal texts that mention the oral now refer to the teacher. Kept on purpose: the interpretation prefix "La mia lettura (da verificare all'orale)", accepted by the product owner, and the lexicon pattern that catches predictions about the oral (a safety net, not advice). English counterparts aligned.
@@ -111,8 +111,10 @@
 **Note**: `prompt_version` moves: production needs a new NFR-023 activation.
 
 **Acceptance criteria**:
-- [ ] No shipped advice or notice tells the student what happens at the oral
-- [ ] BR-009 copies stay byte-equal (tests pin them)
+- [x] No shipped advice or notice tells the student what happens at the oral
+- [x] BR-009 copies stay byte-equal (tests pin them)
+
+**Done**: role sentence ("capire la valutazione che ha ricevuto e che cosa rivedere"), advice as "Cosa manca: ...", no assumption that an oral takes place, contested point recorded "per il docente"; BR-009 "...; decide il docente" / "...; the teacher decides"; R-SOL and R-GRADE texts refer to the teacher (the R-GRADE core no longer names the oral either).
 
 **Traceability**: BR-009, REQ-097, REQ-098.
 

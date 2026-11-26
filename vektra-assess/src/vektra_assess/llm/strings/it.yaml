@@ -1,11 +1,11 @@
 # Vektra-shipped Italian strings of the discussion (REQ-098, BR-009). The LMS's strings never override
 # them. Final wording is by UX and is validated in the moderated student pilot. Any change here
 # changes prompt_version and requires a new NFR-023 activation.
-br009: "Voto registrato: {grade} (letto il {date}). Il voto NON è stato modificato da questa discussione; decide l'orale"
+br009: "Voto registrato: {grade} (letto il {date}). Il voto NON è stato modificato da questa discussione; decide il docente"
 classes:
   R-SOL:
     core: "Non posso risolvere, verificare o confrontare le opzioni di questa domanda."
-    alternative: "Puoi discuterne con il docente all'orale."
+    alternative: "Puoi discuterne con il docente."
   R-OTHER:
     core: "Posso parlare solo dei dati di questa prova."
     alternative: "Per altre informazioni rivolgiti al docente."
@@ -19,8 +19,8 @@ classes:
     core: "Non posso scrivere al posto tuo un testo da consegnare."
     alternative: "Possiamo invece preparare insieme i punti da rivedere."
   R-GRADE:
-    core: "Non posso fare previsioni o stime sul voto o sull'orale."
-    alternative: "Posso aiutarti a preparare i punti da discutere all'orale."
+    core: "Non posso fare previsioni o stime sul voto."
+    alternative: "Posso aiutarti a capire che cosa rivedere e quali punti chiarire con il docente."
   W-DISTRESS:
     core: "Mi dispiace che tu ti senta così: è normale che una valutazione pesi."
     alternative: "{support_text}"

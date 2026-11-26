@@ -74,7 +74,7 @@ MARK_OTHER = "[testo modificato dal sistema]"
 REPLACED = "[risposta sostituita dal sistema]"
 BR009_TEMPLATE = (
     "Voto registrato: {grade} (letto il {date}). Il voto NON è stato modificato da questa "
-    "discussione; decide l'orale"
+    "discussione; decide il docente"
 )
 INTERRUPTED = "[risposta interrotta]"
 FLAGGED = "segnalato dallo studente"

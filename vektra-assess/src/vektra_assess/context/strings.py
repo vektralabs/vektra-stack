@@ -8,7 +8,7 @@ from __future__ import annotations
 
 BR009_TEMPLATE = (
     "Voto registrato: {grade} (letto il {date}). Il voto NON è stato modificato da questa "
-    "discussione; decide l'orale"
+    "discussione; decide il docente"
 )
 
 ACTIVITY = {"quiz": "Quiz", "assign": "Compito"}

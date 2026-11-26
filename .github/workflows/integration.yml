@@ -269,6 +269,19 @@ jobs:
           echo "startup_ms=$ELAPSED_MS" >> "$GITHUB_OUTPUT"
           echo "::notice::Container startup: ${ELAPSED_MS}ms (NFR-004 limit: 60000ms)"
 
+      # #227: an orphan of a `docker exec` (the healthcheck's curl, once Docker kills its
+      # shell on timeout) is reparented to PID 1. Without an init the app is PID 1 and
+      # never reaps it, so it stays a zombie. Make one and require that it is reaped.
+      # Without `init: true` and the image's tini this counts 1, not 0.
+      - name: The app container reaps orphaned processes (#227)
+        run: |
+          test "$(docker image inspect -f '{{index .Config.Entrypoint 0}}' vektra-stack)" = tini
+          docker compose exec -T vektra sh -c 'sleep 1 >/dev/null 2>&1 &'
+          sleep 3
+          Z=$(docker compose exec -T vektra sh -c "grep -s '^State:' /proc/[0-9]*/status | grep -c 'Z (zombie)'" || true)
+          echo "pid1=$(docker compose exec -T vektra cat /proc/1/comm) zombies=$Z"
+          test "$Z" = 0
+
       # test_startup.py (ARCH-057) asserts the 11 startup steps against the logs of the
       # stack this job has just brought up. Its docstring said it ran here; it did not,
       # because this step named tests/integration/ and nothing named tests/ (DEBT-031).

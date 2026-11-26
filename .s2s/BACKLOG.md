@@ -22,6 +22,146 @@
 
 ## Planned
 
+### FEAT-031: "criteri di valutazione" instead of "rubrica" in every Italian text
+
+**Status**: planned | **Priority**: medium | **Created**: 2026-11-26
+**Origin**: product owner feedback after the F1 demo (2026-11-20). Branch `fix/assess-call-feedback` (from `feat/assess-rag-exclusion`) for the Vektra side.
+
+**Context**: "rubrica" is not the word the teachers use; the product owner asked for "criteri di valutazione" in what students and teachers read.
+
+**Scope**:
+- Vektra side (this repo): the Italian texts a student or a teacher can see (Part A, transcript, shipped strings, model context labels) and the system prompt, so the model itself says "criteri di valutazione". Internal identifiers, API fields (`pasted_rubric`, `rubric_source`), the database and the English texts do not change.
+- Plugin side (vektra-moodle-discuss): the activity form labels and help texts. Tracked there.
+
+**Note**: the system prompt and the context labels feed `prompt_version`: production needs a new NFR-023 activation.
+
+**Acceptance criteria**:
+- [ ] No Italian text shipped by vektra-assess says "rubrica"
+- [ ] Plugin form labels changed (plugin repo)
+
+**Traceability**: REQ-094, REQ-098, REQ-074.
+
+---
+
+### FEAT-032: course-material search on by default in the activity form
+
+**Status**: planned | **Priority**: medium | **Created**: 2026-11-26
+**Origin**: product owner feedback after the F1 demo (2026-11-20). Plugin repo (vektra-moodle-discuss), no change in this repo.
+
+**Context**: FEAT-028 made course-material retrieval opt-in. The product owner wants it on by default when a teacher creates the activity.
+
+**Constraint**: the default changes the checkbox only. The teacher attestation that no course material is restricted to groups or groupings (FEAT-028, a0006) stays required: with the attestation unchecked the form still refuses to save with material on, so the default never enables retrieval silently.
+
+**Acceptance criteria**:
+- [ ] A new activity opens with course material on and the attestation unchecked
+- [ ] Saving without the attestation is refused with a clear message, as today
+
+**Traceability**: FEAT-028, REQ-096.
+
+---
+
+### FEAT-033: guardrail markers that say what the automatic filter did
+
+**Status**: planned | **Priority**: high | **Created**: 2026-11-26
+**Origin**: product owner feedback after the F1 demo (2026-11-20): "[valore sostituito dal sistema]" in a transcript was not understood. Branch `fix/assess-call-feedback`.
+
+**Context**: the post-check replaces or removes parts of a reply before the student sees it (values, quotes, citations, lexicon, safeguard). The markers were short and generic; the teacher could not tell that the assistant would have said more and that an automatic filter stopped it.
+
+**Change**:
+- every marker names the automatic filter and the category, one short text per category, identical in the chat and in the transcript (the student copy stays equal to the teacher copy);
+- the transcript gets a short legend: bracketed notes mark text the automatic filter removed or replaced before it reached the student, and the original text is not kept;
+- the filtered text itself is never exposed.
+
+**Note**: the inline texts are shipped strings (`llm/strings/*.yaml`): `prompt_version` moves, production needs a new NFR-023 activation.
+
+**Acceptance criteria**:
+- [ ] Chat inline markers and transcript markers use the same wording per category
+- [ ] The transcript legend states only what the code guarantees (original text not stored)
+
+**Traceability**: REQ-074, REQ-096, REQ-097, BR-016.
+
+---
+
+### FEAT-034: thumbs up / thumbs down on each assistant reply, with a mandatory reason for thumbs down
+
+**Status**: planned | **Priority**: high | **Created**: 2026-11-26
+**Origin**: product owner feedback after the F1 demo (2026-11-20). Branch `fix/assess-call-feedback` (API and discussion UI, both in this repo: the plugin only embeds the iframe; the plugin renders the teacher-page count).
+
+**Context**: "Segnala un errore dell'assistente" (REQ-103) records a flag without saying why, so the teacher cannot tell what the student contested.
+
+**Change**: each assistant reply has thumbs up and thumbs down. Thumbs up records a positive mark, no text. Thumbs down opens a reply-like box that quotes the contested reply; the reason is mandatory and is sent as the student's next message linked to that reply: the assistant answers it, and the transcript shows "Contestazione della risposta N" next to the flag. API contract below once implemented.
+
+**Acceptance criteria**:
+- [ ] Thumbs down without a reason is impossible (UI and API)
+- [ ] The reason is a normal, encrypted student turn: budget, rate, gates and hash chain unchanged
+- [ ] The audit stays content-free
+- [ ] The transcript links the contested reply and its reason
+
+**Traceability**: REQ-103, REQ-074, REQ-083.
+
+---
+
+### FEAT-035: the assistant's advice no longer refers to the oral exam
+
+**Status**: planned | **Priority**: high | **Created**: 2026-11-26
+**Origin**: product owner feedback after the F1 demo (2026-11-20): the oral exam may not take place, so the assistant must not say "da spiegare all'orale", "per l'orale" or "decide l'orale". Branch `fix/assess-call-feedback`.
+
+**Change**: system prompt (role, the contested-point instruction, advice phrasing: "Cosa manca: ..."), the BR-009 notice ("...; decide il docente") in every copy (shipped strings, Part A, transcript), refusal texts that mention the oral now refer to the teacher. Kept on purpose: the interpretation prefix "La mia lettura (da verificare all'orale)", accepted by the product owner, and the lexicon pattern that catches predictions about the oral (a safety net, not advice). English counterparts aligned.
+
+**Note**: `prompt_version` moves: production needs a new NFR-023 activation.
+
+**Acceptance criteria**:
+- [ ] No shipped advice or notice tells the student what happens at the oral
+- [ ] BR-009 copies stay byte-equal (tests pin them)
+
+**Traceability**: BR-009, REQ-097, REQ-098.
+
+---
+
+### FEAT-036: the teacher opens a transcript in a new browser tab
+
+**Status**: planned | **Priority**: low | **Created**: 2026-11-26
+**Origin**: product owner feedback after the F1 demo (2026-11-20). Plugin repo (vektra-moodle-discuss), no change in this repo.
+
+**Context**: on the teacher page a transcript replaces the page; the teacher wants to keep the session list open.
+
+**Acceptance criteria**:
+- [ ] The transcript link opens in a new tab (`target="_blank"` with `rel="noopener"`), the download token flow unchanged
+
+**Traceability**: REQ-074, INT-001.
+
+---
+
+### FEAT-037: edit or delete the pasted rubric in its own textarea
+
+**Status**: planned | **Priority**: medium | **Created**: 2026-11-26
+**Origin**: product owner feedback after the F1 demo (2026-11-20). Plugin repo (vektra-moodle-discuss), no change in this repo.
+
+**Context**: today a stored rubric can only be replaced as a whole ("sostituisci"). The teacher wants to change a line or clear it in the textarea itself.
+
+**Approach**: reuse the FEAT-030 reveal ("Mostra") to prefill the textarea with the stored text; saving writes the edited text, an empty textarea clears the field. Nothing new on the Vektra side.
+
+**Acceptance criteria**:
+- [ ] The textarea shows the stored text after an explicit reveal, never by default
+- [ ] Edited text saved; empty text clears the rubric
+
+**Traceability**: FEAT-030, ARCH-071.
+
+---
+
+### FEAT-038: IDEA, a proactive main tutor that reads existing quiz results
+
+**Status**: draft | **Priority**: low | **Created**: 2026-11-26
+**Origin**: product owner idea after the F1 demo (2026-11-20). Needs specification; not planned.
+
+**Idea**: the main course tutor (vektra-learn) reads the student's existing quiz results at request time, builds no persistent student profile (GDPR: nothing stored beyond the request), works in the background and offers a short "lightbulb" suggestion (for example a topic to review) the student can open or ignore.
+
+**Open points**: legal basis and transparency notice; which LMS reads (reuse of `LmsProvider`); how a suggestion is shown in the widget; how to evaluate that suggestions help.
+
+**Traceability**: vektra-learn, ADR-0033.
+
+---
+
 ### BUG-032: a session-bound chat token expires before a long discussion ends
 
 **Status**: draft | **Priority**: high | **Created**: 2026-11-19

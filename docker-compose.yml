@@ -63,6 +63,9 @@ services:
         # the host. Compose reads it from the same .env the server does.
         VEKTRA_EMBEDDING_MODEL: ${VEKTRA_EMBEDDING_MODEL:-paraphrase-multilingual-MiniLM-L12-v2}
     image: vektra-stack
+    # An init as PID 1 reaps the healthcheck's curl when Docker kills its shell on
+    # timeout (#227). The image's tini does the same; this also covers older images.
+    init: true
     environment:
       CMD_TARGET: server
       VEKTRA_DATABASE_URL: postgresql+asyncpg://vektra:${POSTGRES_PASSWORD:-vektra}@postgres:5432/vektra

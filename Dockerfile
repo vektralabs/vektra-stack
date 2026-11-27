@@ -149,8 +149,9 @@ fi
 # Runtime system dependencies:
 #   libmagic1  - content type detection via python-magic (vektra-ingest)
 #   curl       - Docker HEALTHCHECK against /health endpoint
+#   tini       - PID 1 that reaps orphaned processes (see ENTRYPOINT)
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends libmagic1 curl libgl1 \
+    && apt-get install -y --no-install-recommends libmagic1 curl libgl1 tini \
     && rm -rf /var/lib/apt/lists/*
 
 # Non-root user (uid 1000)
@@ -216,7 +217,12 @@ EXPOSE 8000
 HEALTHCHECK --interval=10s --timeout=5s --start-period=30s --retries=3 \
     CMD curl -so /dev/null http://localhost:8000/health || exit 1
 
-ENTRYPOINT ["/app/entrypoint.sh"]
+# tini runs as PID 1 and reaps orphans (#227). Without it the app is PID 1 and never
+# waits on children it did not start: when Docker kills the healthcheck's shell on
+# timeout, its curl is reparented to the app and stays a zombie for the container's
+# life. -s registers tini as a subreaper, so it stays quiet when Compose `init: true`
+# already put docker-init in front of it.
+ENTRYPOINT ["tini", "-s", "--", "/app/entrypoint.sh"]
 # No CMD: entrypoint.sh already defaults CMD_TARGET to "server" when no
 # positional argument is given. A CMD here would always win over the
 # CMD_TARGET env var (Docker always passes CMD as $1), making
